@@ -7,17 +7,20 @@ namespace XelsCombatAI;
 public sealed class Configuration : IPluginConfiguration
 {
     public const float DefaultMeleeRange = 2.6f;
-    public const float DefaultRangedRange = 10f;
-    public const float DefaultPhysicalRangedRange = 10f;
-    public const float DefaultHealerRange = 10f;
-    public const float DefaultMagicRangedRange = 10f;
+    public const float DefaultRangedRange = 15f;
+    public const float DefaultPhysicalRangedRange = 15f;
+    public const float DefaultHealerRange = 15f;
+    public const float DefaultMagicRangedRange = 20f;
     public const float DefaultAoEMeleeRange = 2.6f;
-    public const float DefaultAoERangedRange = 12f;
+    public const float DefaultAoERangedRange = 15f;
+    public const float DefaultAoEPhysicalRangedRange = 15f;
+    public const float DefaultAoEHealerRange = 15f;
+    public const float DefaultAoEMagicRangedRange = 20f;
     public const int DefaultAoEEnemyThreshold = 2;
     public const float DefaultEnemyCountRadius = 15f;
     public const float DefaultPreferredForbiddenZoneDistance = 1f;
 
-    public int Version { get; set; } = 2;
+    public int Version { get; set; } = 3;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -31,6 +34,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool ReturnToLeylines { get; set; } = true;
     public bool RoleBasedRange { get; set; } = true;
     public bool AoERangeInMultiTarget { get; set; } = true;
+    public bool AoEHealerMeleeRange { get; set; } = false;
     public bool EchoStatusToChat { get; set; } = true;
     public float MeleeRange { get; set; } = DefaultMeleeRange;
     public float RangedRange { get; set; } = DefaultRangedRange;
@@ -39,6 +43,9 @@ public sealed class Configuration : IPluginConfiguration
     public float MagicRangedRange { get; set; } = DefaultMagicRangedRange;
     public float AoEMeleeRange { get; set; } = DefaultAoEMeleeRange;
     public float AoERangedRange { get; set; } = DefaultAoERangedRange;
+    public float AoEPhysicalRangedRange { get; set; } = DefaultAoEPhysicalRangedRange;
+    public float AoEHealerRange { get; set; } = DefaultAoEHealerRange;
+    public float AoEMagicRangedRange { get; set; } = DefaultAoEMagicRangedRange;
     public int AoEEnemyThreshold { get; set; } = DefaultAoEEnemyThreshold;
     public float EnemyCountRadius { get; set; } = DefaultEnemyCountRadius;
     public float PreferredForbiddenZoneDistance { get; set; } = DefaultPreferredForbiddenZoneDistance;
@@ -52,6 +59,14 @@ public sealed class Configuration : IPluginConfiguration
             this.MagicRangedRange = this.RangedRange;
             this.Version = 2;
         }
+
+        if (this.Version < 3)
+        {
+            this.AoEPhysicalRangedRange = this.AoERangedRange;
+            this.AoEHealerRange = this.AoERangedRange;
+            this.AoEMagicRangedRange = this.AoERangedRange;
+            this.Version = 3;
+        }
     }
 
     internal void Clamp()
@@ -63,6 +78,9 @@ public sealed class Configuration : IPluginConfiguration
         this.MagicRangedRange = Math.Clamp(this.MagicRangedRange, 1f, 30f);
         this.AoEMeleeRange = Math.Clamp(this.AoEMeleeRange, 1f, 30f);
         this.AoERangedRange = Math.Clamp(this.AoERangedRange, 1f, 30f);
+        this.AoEPhysicalRangedRange = Math.Clamp(this.AoEPhysicalRangedRange, 1f, 30f);
+        this.AoEHealerRange = Math.Clamp(this.AoEHealerRange, 1f, 30f);
+        this.AoEMagicRangedRange = Math.Clamp(this.AoEMagicRangedRange, 1f, 30f);
         this.AoEEnemyThreshold = Math.Clamp(this.AoEEnemyThreshold, 1, 10);
         this.EnemyCountRadius = Math.Clamp(this.EnemyCountRadius, 1f, 30f);
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);
@@ -77,6 +95,9 @@ public sealed class Configuration : IPluginConfiguration
         this.MagicRangedRange = DefaultMagicRangedRange;
         this.AoEMeleeRange = DefaultAoEMeleeRange;
         this.AoERangedRange = DefaultAoERangedRange;
+        this.AoEPhysicalRangedRange = DefaultAoEPhysicalRangedRange;
+        this.AoEHealerRange = DefaultAoEHealerRange;
+        this.AoEMagicRangedRange = DefaultAoEMagicRangedRange;
         this.AoEEnemyThreshold = DefaultAoEEnemyThreshold;
         this.EnemyCountRadius = DefaultEnemyCountRadius;
         this.PreferredForbiddenZoneDistance = DefaultPreferredForbiddenZoneDistance;
