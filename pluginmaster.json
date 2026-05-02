@@ -3,7 +3,7 @@
     "Author": "xeltor",
     "Name": "Xel's Combat AI",
     "InternalName": "XelsCombatAI",
-    "AssemblyVersion": "0.0.0.1",
+    "AssemblyVersion": "1.0.0.0",
     "Description": "Updates a dedicated BossMod Reborn preset during combat using Avarice and current combat state. XCAI manages positionals, target range, forbidden-zone cushion, and party-role follow while avoiding any out-of-combat movement behavior.",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 15,
@@ -21,6 +21,7 @@
     "DownloadLinkUpdate": "https://github.com/xeltor/XelsCombatAI/releases/latest/download/XelsCombatAI.zip",
     "DownloadLinkTesting": "https://github.com/xeltor/XelsCombatAI/releases/latest/download/XelsCombatAI.zip",
     "RepoUrl": "https://github.com/xeltor/XelsCombatAI",
+    "IconUrl": "https://raw.githubusercontent.com/xeltor/XelsCombatAI/master/XelsCombatAI/images/icon.png",
     "Tags": [
       "combat",
       "bossmod",

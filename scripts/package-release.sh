@@ -21,6 +21,7 @@ cp "$BUILD_DIR/XelsCombatAI.dll" "$PUBLISH/"
 cp "$BUILD_DIR/XelsCombatAI.deps.json" "$PUBLISH/" 2>/dev/null || true
 cp "$BUILD_DIR/XelsCombatAI.json" "$PUBLISH/"
 cp "$BUILD_DIR/ECommons.dll" "$PUBLISH/" 2>/dev/null || true
+cp "$BUILD_DIR/icon.png" "$PUBLISH/" 2>/dev/null || true
 
 (
   cd "$PUBLISH"
