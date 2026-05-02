@@ -35,7 +35,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\AutoDuty\ECommons\ECommons\ECommons.csproj" />
+    <ProjectReference Include="..\..\AutoDuty\ECommons\ECommons\ECommons.csproj" Condition="Exists('..\..\AutoDuty\ECommons\ECommons\ECommons.csproj')" />
+    <ProjectReference Include="..\..\ECommons\ECommons\ECommons.csproj" Condition="!Exists('..\..\AutoDuty\ECommons\ECommons\ECommons.csproj') And Exists('..\..\ECommons\ECommons\ECommons.csproj')" />
     <Reference Include="Dalamud.Common">
       <HintPath>$(DalamudLibPath)Dalamud.Common.dll</HintPath>
     </Reference>

@@ -9,15 +9,29 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      DALAMUD_HOME: /tmp/dalamud
     steps:
       - uses: actions/checkout@v4
+
+      - name: Checkout ECommons
+        uses: actions/checkout@v4
+        with:
+          repository: NightmareXIV/ECommons
+          path: ECommons
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+
+      - name: Download Dalamud
+        run: |
+          wget https://goatcorp.github.io/dalamud-distrib/stg/latest.zip -O /tmp/dalamud.zip
+          unzip /tmp/dalamud.zip -d ${{ env.DALAMUD_HOME }}
+
       - name: Build package
         run: scripts/package-release.sh
-        env:
-          DALAMUD_HOME: ${{ github.workspace }}/dalamud
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
