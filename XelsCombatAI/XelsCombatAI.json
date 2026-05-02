@@ -1,0 +1,14 @@
+{
+  "Author": "xeltor",
+  "Name": "Xel's Combat AI",
+  "Punchline": "Personal BossMod Reborn combat AI helpers.",
+  "Description": "Updates a dedicated BossMod Reborn preset during combat using Avarice and current combat state. XCAI manages positionals, target range, forbidden-zone cushion, and party-role follow while avoiding any out-of-combat movement behavior.",
+  "InternalName": "XelsCombatAI",
+  "DalamudApiLevel": "15",
+  "MinimumDalamudVersion": "15.0.0.0",
+  "Tags": [
+    "combat",
+    "bossmod",
+    "ai"
+  ]
+}
