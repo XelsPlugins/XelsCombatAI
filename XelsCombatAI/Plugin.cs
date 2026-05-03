@@ -20,6 +20,7 @@ public sealed class Plugin : IDalamudPlugin
 {
     private const string CommandName = "/xcai";
     private const string AvaricePositionalStatusKey = "Avarice.PositionalStatus";
+    private const float GapCloserSafetyWindowSeconds = 8f;
     private const uint TrueNorthActionId = 7546;
     private const uint TrueNorthStatusId = 1250;
 
@@ -439,7 +440,7 @@ public sealed class Plugin : IDalamudPlugin
 
         if (ActionManager.Instance()->AnimationLock > 0) return;
         if (player.IsCasting) return;
-        if (!this.bossMod.IsDashToPositionSafe(player.Position, target.Position)) return;
+        if (!this.bossMod.IsSafeToEngage(GapCloserSafetyWindowSeconds)) return;
 
         var jobId = player.ClassJob.RowId;
         var targetId = target.GameObjectId;
