@@ -393,7 +393,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         {
             var input = value;
             ImGui.SetKeyboardFocusHere(0);
-            if (ImGui.InputFloat(id, ref input, 0f, 0f, default, ImGuiInputTextFlags.EnterReturnsTrue))
+            if (ImGui.InputFloat(id, ref input, 0f, 0f, "%.1f", ImGuiInputTextFlags.EnterReturnsTrue))
             {
                 this.editingSliders.Remove(label);
                 input = Math.Clamp(input, min, max);
@@ -415,7 +415,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         var current = value;
-        var changed = ImGui.SliderFloat(id, ref current, min, max);
+        var changed = ImGui.SliderFloat(id, ref current, min, max, "%.1f");
         var sliderHovered = ImGui.IsItemHovered();
         if (IsResetRequested(labelHovered || sliderHovered))
         {
