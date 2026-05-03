@@ -440,7 +440,7 @@ public sealed class Plugin : IDalamudPlugin
         var rangeRole = GetCurrentRangeRole();
         if (this.config.AoERangeInMultiTarget && TargetManager.Target != null)
         {
-            var enemyCount = ObjectFunctions.GetAttackableEnemyCountAroundPoint(TargetManager.Target.Position, this.config.EnemyCountRadius);
+            var enemyCount = ObjectFunctions.GetAttackableEnemyCountAroundPoint(TargetManager.Target.Position, Configuration.EnemyCountRadius);
             if (enemyCount > this.config.AoEEnemyThreshold)
             {
                 var classJobId = ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;

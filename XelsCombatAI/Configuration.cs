@@ -20,8 +20,8 @@ public sealed class Configuration : IPluginConfiguration
     public const float DefaultAoEHealerRange = 15f;
     public const float DefaultAoEMagicRangedRange = 20f;
     public const int DefaultAoEEnemyThreshold = 2;
-    public const float DefaultEnemyCountRadius = 15f;
     public const float DefaultPreferredForbiddenZoneDistance = 1f;
+    public const float EnemyCountRadius = 5f;
 
     public int Version { get; set; } = 4;
 
@@ -58,7 +58,6 @@ public sealed class Configuration : IPluginConfiguration
     public float AoEHealerRange { get; set; } = DefaultAoEHealerRange;
     public float AoEMagicRangedRange { get; set; } = DefaultAoEMagicRangedRange;
     public int AoEEnemyThreshold { get; set; } = DefaultAoEEnemyThreshold;
-    public float EnemyCountRadius { get; set; } = DefaultEnemyCountRadius;
     public float PreferredForbiddenZoneDistance { get; set; } = DefaultPreferredForbiddenZoneDistance;
 
     [JsonProperty("ManageTrueNorthInRsr")]
@@ -105,7 +104,6 @@ public sealed class Configuration : IPluginConfiguration
         this.AoEHealerRange = Math.Clamp(this.AoEHealerRange, BossModMinRange, BossModMaxRange);
         this.AoEMagicRangedRange = Math.Clamp(this.AoEMagicRangedRange, BossModMinRange, BossModMaxRange);
         this.AoEEnemyThreshold = Math.Clamp(this.AoEEnemyThreshold, 1, 10);
-        this.EnemyCountRadius = Math.Clamp(this.EnemyCountRadius, 1f, 30f);
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);
         this.CombatStyle = Enum.IsDefined(this.CombatStyle) ? this.CombatStyle : CombatStyle.Normal;
     }
@@ -123,7 +121,6 @@ public sealed class Configuration : IPluginConfiguration
         this.AoEHealerRange = DefaultAoEHealerRange;
         this.AoEMagicRangedRange = DefaultAoEMagicRangedRange;
         this.AoEEnemyThreshold = DefaultAoEEnemyThreshold;
-        this.EnemyCountRadius = DefaultEnemyCountRadius;
         this.PreferredForbiddenZoneDistance = DefaultPreferredForbiddenZoneDistance;
     }
 

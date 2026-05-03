@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
@@ -34,7 +35,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.manageTrueNorthEnabled = manageTrueNorthEnabled;
         this.SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new(420, 280),
+            MinimumSize = new(480, 360),
             MaximumSize = new(float.MaxValue, float.MaxValue)
         };
     }
@@ -65,57 +66,46 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         this.DrawEnabledCheckbox(dependencyWarningText);
+        ImGui.Spacing();
+
+        if (ImGui.BeginTabBar("##xcai_tabs"))
+        {
+            if (ImGui.BeginTabItem("General"))
+            {
+                ImGui.Spacing();
+                changed |= this.DrawGeneralTab();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Ranges"))
+            {
+                ImGui.Spacing();
+                changed |= this.DrawRangesTab();
+                ImGui.EndTabItem();
+            }
+
+            ImGui.EndTabBar();
+        }
+
+        if (changed)
+        {
+            this.config.Clamp();
+            this.resetRuntimeState();
+            this.save();
+        }
+    }
+
+    private bool DrawGeneralTab()
+    {
+        var changed = false;
+
+        this.DrawSectionHeader("Movement");
         changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v);
-
-        // Manage range
-        if (this.CollapsingCheckbox("Manage range", this.config.ManageRange, this.defaultConfig.ManageRange, v => { this.config.ManageRange = v; changed = true; }))
-        {
-            ImGui.Indent();
-
-            // Single target distance
-            if (this.CollapsingCheckbox("Single target distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => { this.config.RoleBasedRange = v; changed = true; }, this.config.ManageRange))
-            {
-                ImGui.Indent();
-                changed |= this.SliderFloat("Melee max distance", this.config.MeleeRange, this.defaultConfig.MeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MeleeRange = v);
-                changed |= this.SliderFloat("Physical ranged max distance", this.config.PhysicalRangedRange, this.defaultConfig.PhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.PhysicalRangedRange = v);
-                changed |= this.SliderFloat("Healer max distance", this.config.HealerRange, this.defaultConfig.HealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.HealerRange = v);
-                changed |= this.SliderFloat("Magic ranged max distance", this.config.MagicRangedRange, this.defaultConfig.MagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MagicRangedRange = v);
-                ImGui.Unindent();
-            }
-
-            // AoE range in multi-target
-            if (this.CollapsingCheckbox("AoE target distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => { this.config.AoERangeInMultiTarget = v; changed = true; }, this.config.ManageRange))
-            {
-                ImGui.Indent();
-                if (this.config.RoleBasedRange)
-                    changed |= this.Checkbox("WHM/SCH/SGE use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v);
-                changed |= this.SliderFloat("AoE melee max distance", this.config.AoEMeleeRange, this.defaultConfig.AoEMeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMeleeRange = v);
-                if (this.config.RoleBasedRange)
-                {
-                    changed |= this.SliderFloat("AoE physical ranged max distance", this.config.AoEPhysicalRangedRange, this.defaultConfig.AoEPhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEPhysicalRangedRange = v);
-                    changed |= this.SliderFloat("AoE healer max distance", this.config.AoEHealerRange, this.defaultConfig.AoEHealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEHealerRange = v);
-                    changed |= this.SliderFloat("AoE magic ranged max distance", this.config.AoEMagicRangedRange, this.defaultConfig.AoEMagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMagicRangedRange = v);
-                }
-                else
-                {
-                    changed |= this.SliderFloat("AoE ranged max distance", this.config.AoERangedRange, this.defaultConfig.AoERangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoERangedRange = v);
-                }
-                changed |= this.SliderInt("AoE enemy threshold", this.config.AoEEnemyThreshold, this.defaultConfig.AoEEnemyThreshold, 1, 10, v => this.config.AoEEnemyThreshold = v);
-                ImGui.Unindent();
-            }
-
-            ImGui.Unindent();
-        }
-
-        // Manage forbidden-zone distance
-        if (this.CollapsingCheckbox("Manage forbidden-zone distance", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => { this.config.ManageForbiddenZoneDistance = v; changed = true; }))
-        {
-            ImGui.Indent();
-            changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, this.defaultConfig.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v);
-            ImGui.Unindent();
-        }
-
         changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Stays close to the tank when your target has no boss module. Automatically disabled on boss encounters.");
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        this.DrawSectionHeader("Positioning");
         if (this.CollapsingCheckbox("Manage positionals", this.config.ManagePositionals, this.defaultConfig.ManagePositionals, v => { this.config.ManagePositionals = v; changed = true; }))
         {
             ImGui.Indent();
@@ -127,7 +117,16 @@ internal sealed class ConfigWindow : Window, IDisposable
                 "XCAI will use True North and disable RSR's Auto True North via IPC to prevent conflicts. The RSR setting is not restored when this is disabled.");
             ImGui.Unindent();
         }
-        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal keeps BossMod moving directly to its destination. Greed lets BossMod balance uptime against mechanic safety.");
+
+        if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Only manages existing Ley Lines placement — will not put down Ley Lines."))
+        {
+            ImGui.Indent();
+            changed |= this.Checkbox("Use Between the Lines", this.config.UseBetweenTheLines, this.defaultConfig.UseBetweenTheLines, v => this.config.UseBetweenTheLines = v);
+            changed |= this.Checkbox("Use Retrace", this.config.UseRetrace, this.defaultConfig.UseRetrace, v => this.config.UseRetrace = v);
+            changed |= this.Checkbox("Walk back to Ley Lines", this.config.ReturnToLeylines, this.defaultConfig.ReturnToLeylines, v => this.config.ReturnToLeylines = v);
+            ImGui.Unindent();
+        }
+
         if (this.CollapsingCheckbox("Use gap closer to re-engage", this.config.UseGapCloser, this.defaultConfig.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Holes in the floor will absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
         {
             ImGui.Indent();
@@ -139,21 +138,81 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.Unindent();
         }
 
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
 
-        // Manage Ley Lines
-        if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Only manages existing Ley Lines placement — will not put down Ley Lines."))
-        {
-            ImGui.Indent();
-            changed |= this.Checkbox("Use Between the Lines", this.config.UseBetweenTheLines, this.defaultConfig.UseBetweenTheLines, v => this.config.UseBetweenTheLines = v);
-            changed |= this.Checkbox("Use Retrace", this.config.UseRetrace, this.defaultConfig.UseRetrace, v => this.config.UseRetrace = v);
-            changed |= this.Checkbox("Walk back to Ley Lines", this.config.ReturnToLeylines, this.defaultConfig.ReturnToLeylines, v => this.config.ReturnToLeylines = v);
-            ImGui.Unindent();
-        }
+        this.DrawSectionHeader("Combat Behavior");
+        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal keeps BossMod moving directly to its destination. Greed lets BossMod balance uptime against mechanic safety.");
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
 
+        this.DrawSectionHeader("Feedback");
         changed |= this.Checkbox("Echo command status to chat", this.config.EchoStatusToChat, this.defaultConfig.EchoStatusToChat, v => this.config.EchoStatusToChat = v);
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
 
         ImGui.Separator();
+        if (ImGui.Button("Reset all"))
+        {
+            this.config.ResetAll();
+            changed = true;
+        }
 
+        return changed;
+    }
+
+    private bool DrawRangesTab()
+    {
+        var changed = false;
+
+        changed |= this.Checkbox("Manage range", this.config.ManageRange, this.defaultConfig.ManageRange, v => this.config.ManageRange = v);
+        ImGui.Spacing();
+
+        if (!this.config.ManageRange)
+            ImGui.BeginDisabled();
+
+        this.DrawSectionHeader("Single Target Distance");
+        changed |= this.Checkbox("Single target distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => this.config.RoleBasedRange = v);
+        if (!this.config.RoleBasedRange)
+            ImGui.BeginDisabled();
+        changed |= this.SliderFloat("Melee max distance", this.config.MeleeRange, this.defaultConfig.MeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MeleeRange = v);
+        changed |= this.SliderFloat("Physical ranged max distance", this.config.PhysicalRangedRange, this.defaultConfig.PhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.PhysicalRangedRange = v);
+        changed |= this.SliderFloat("Healer max distance", this.config.HealerRange, this.defaultConfig.HealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.HealerRange = v);
+        changed |= this.SliderFloat("Magic ranged max distance", this.config.MagicRangedRange, this.defaultConfig.MagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MagicRangedRange = v);
+        if (!this.config.RoleBasedRange)
+            ImGui.EndDisabled();
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        this.DrawSectionHeader("AoE Target Distance");
+        changed |= this.Checkbox("AoE target distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v);
+        if (!this.config.AoERangeInMultiTarget)
+            ImGui.BeginDisabled();
+        changed |= this.Checkbox("WHM/SCH/SGE use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v);
+        changed |= this.SliderFloat("AoE melee max distance", this.config.AoEMeleeRange, this.defaultConfig.AoEMeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMeleeRange = v);
+        changed |= this.SliderFloat("AoE physical ranged max distance", this.config.AoEPhysicalRangedRange, this.defaultConfig.AoEPhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEPhysicalRangedRange = v);
+        changed |= this.SliderFloat("AoE healer max distance", this.config.AoEHealerRange, this.defaultConfig.AoEHealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEHealerRange = v);
+        changed |= this.SliderFloat("AoE magic ranged max distance", this.config.AoEMagicRangedRange, this.defaultConfig.AoEMagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMagicRangedRange = v);
+        changed |= this.SliderInt("AoE enemy threshold", this.config.AoEEnemyThreshold, this.defaultConfig.AoEEnemyThreshold, 1, 10, v => this.config.AoEEnemyThreshold = v);
+        if (!this.config.AoERangeInMultiTarget)
+            ImGui.EndDisabled();
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        if (!this.config.ManageRange)
+            ImGui.EndDisabled();
+
+        this.DrawSectionHeader("Forbidden Zone");
+        changed |= this.Checkbox("Manage forbidden-zone distance", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => this.config.ManageForbiddenZoneDistance = v);
+        if (!this.config.ManageForbiddenZoneDistance)
+            ImGui.BeginDisabled();
+        changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, this.defaultConfig.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v);
+        if (!this.config.ManageForbiddenZoneDistance)
+            ImGui.EndDisabled();
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        ImGui.Separator();
         if (ImGui.Button("Reset ranges"))
         {
             this.config.ResetRanges();
@@ -167,12 +226,16 @@ internal sealed class ConfigWindow : Window, IDisposable
             changed = true;
         }
 
-        if (changed)
-        {
-            this.config.Clamp();
-            this.resetRuntimeState();
-            this.save();
-        }
+        return changed;
+    }
+
+    // Emits a tinted section title followed by a separator and an indent.
+    // Callers must call ImGui.Unindent(8f) after their section contents.
+    private void DrawSectionHeader(string title)
+    {
+        ImGui.TextColored(new Vector4(0.75f, 0.75f, 1.0f, 1.0f), title);
+        ImGui.Separator();
+        ImGui.Indent(8f);
     }
 
     // Renders a toggle triangle button + checkbox on the same line. Triangle is disabled (and
