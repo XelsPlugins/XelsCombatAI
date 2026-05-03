@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using Dalamud.Game.Command;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Gui.Dtr;
@@ -209,6 +210,9 @@ public sealed class Plugin : IDalamudPlugin
                 this.config.ManageLeylines && this.config.UseBetweenTheLines,
                 this.config.ManageLeylines && this.config.UseRetrace,
                 this.config.ManageLeylines && this.config.ReturnToLeylines);
+
+            if (this.config.UseGapCloser)
+                this.TryUseGapCloser();
         }
         catch (Exception ex)
         {
@@ -394,6 +398,38 @@ public sealed class Plugin : IDalamudPlugin
                                 : RangeRole.Melee;
     }
 
+    private unsafe void TryUseGapCloser()
+    {
+        var player = ObjectTable.LocalPlayer;
+        var target = TargetManager.Target;
+        if (player == null || target == null) return;
+
+        var dist = Vector3.Distance(player.Position, target.Position) - player.HitboxRadius - target.HitboxRadius;
+        if (dist <= 3f) return;
+
+        if (ActionManager.Instance()->AnimationLock > 0) return;
+        if (player.IsCasting) return;
+        if (!this.bossMod.IsSafeToEngage()) return;
+
+        var jobId = player.ClassJob.RowId;
+        var targetId = target.GameObjectId;
+
+        uint? actionId = jobId switch
+        {
+            2 or 20 when this.config.GapCloserMNK => 25762u,               // PGL/MNK: Thunderclap
+            4 or 22 when this.config.GapCloserDRG => player.Level >= 68 ? 16478u : 92u, // LNC/DRG: High Jump or Jump
+            29 or 30 when this.config.GapCloserNIN => HasStatus(2690) ? (uint?)25777u : null, // ROG/NIN: Forked Raiju
+            34 when this.config.GapCloserSAM => 7492u,                     // SAM: Hissatsu: Gyoten
+            41 when this.config.GapCloserVPR => 34646u,                    // VPR: Slither
+            _ => null
+        };
+
+        if (actionId == null) return;
+        if (ActionManager.Instance()->GetActionStatus(ActionType.Action, actionId.Value) != 0) return;
+
+        ActionManager.Instance()->UseAction(ActionType.Action, actionId.Value, targetId);
+    }
+
     private static Positional ReadAvaricePositional()
     {
         if (!EzSharedData.TryGet<uint[]>(AvaricePositionalStatusKey, out var status) || status.Length < 2)
@@ -417,6 +453,11 @@ public sealed class Plugin : IDalamudPlugin
     private static bool HasActiveTrueNorth()
     {
         return ObjectTable.LocalPlayer?.StatusList.Any(status => status.StatusId == TrueNorthStatusId && status.RemainingTime > 0) == true;
+    }
+
+    private static bool HasStatus(uint statusId)
+    {
+        return ObjectTable.LocalPlayer?.StatusList.Any(status => status.StatusId == statusId) == true;
     }
 
     private static unsafe uint GetTrueNorthCharges()

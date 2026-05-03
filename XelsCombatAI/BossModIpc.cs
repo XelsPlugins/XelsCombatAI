@@ -50,6 +50,8 @@ internal sealed class BossModIpc
     private readonly ICallGateSubscriber<uint, bool> hasModuleByDataId;
     private readonly ICallGateSubscriber<string, bool, bool> disableModule;
     private readonly ICallGateSubscriber<string, string, string, string, bool> addTransientStrategy;
+    private readonly ICallGateSubscriber<float> nextDamageIn;
+    private readonly ICallGateSubscriber<float> specialModeIn;
 
     public BossModIpc(IDalamudPluginInterface pluginInterface)
     {
@@ -59,6 +61,8 @@ internal sealed class BossModIpc
         this.hasModuleByDataId = pluginInterface.GetIpcSubscriber<uint, bool>("BossMod.HasModuleByDataId");
         this.disableModule = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Configuration.DisableModule");
         this.addTransientStrategy = pluginInterface.GetIpcSubscriber<string, string, string, string, bool>("BossMod.Presets.AddTransientStrategy");
+        this.nextDamageIn = pluginInterface.GetIpcSubscriber<float>("BossMod.Hints.NextDamageIn");
+        this.specialModeIn = pluginInterface.GetIpcSubscriber<float>("BossMod.Hints.SpecialModeIn");
     }
 
     public bool EnsurePreset()
@@ -156,6 +160,20 @@ internal sealed class BossModIpc
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Goal",
             enabled ? "Enabled" : "Disabled");
+    }
+
+    public bool IsSafeToEngage(float withinSeconds = 3f)
+    {
+        try
+        {
+            if (this.nextDamageIn.InvokeFunc() <= withinSeconds) return false;
+            if (this.specialModeIn.InvokeFunc() <= withinSeconds) return false;
+            return true;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     public bool HasModuleByDataId(uint dataId) => this.hasModuleByDataId.InvokeFunc(dataId);

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 
 namespace XelsCombatAI;
@@ -96,8 +97,19 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.Unindent();
         }
 
-        changed |= this.Checkbox("Manage party-role follow", this.config.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v);
+        changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Stays close to the tank when your target has no boss module. Automatically disabled on boss encounters.");
         changed |= this.Checkbox("Manage positionals", this.config.ManagePositionals, v => this.config.ManagePositionals = v);
+        if (this.CollapsingCheckbox("Use gap closer to re-engage", this.config.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Holes in the floor will absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
+        {
+            ImGui.Indent();
+            changed |= this.Checkbox("MNK — Thunderclap", this.config.GapCloserMNK, v => this.config.GapCloserMNK = v);
+            changed |= this.Checkbox("DRG — Jump / High Jump", this.config.GapCloserDRG, v => this.config.GapCloserDRG = v);
+            changed |= this.Checkbox("NIN — Forked Raiju", this.config.GapCloserNIN, v => this.config.GapCloserNIN = v);
+            changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, v => this.config.GapCloserSAM = v);
+            changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, v => this.config.GapCloserVPR = v);
+            ImGui.Unindent();
+        }
+
 
         // Manage Ley Lines
         if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Only manages existing Ley Lines placement — will not put down Ley Lines."))
@@ -136,7 +148,7 @@ internal sealed class ConfigWindow : Window, IDisposable
 
     // Renders a toggle triangle button + checkbox on the same line. Triangle is disabled (and
     // section forced closed) when the parent feature is off. Returns true when expanded.
-    private bool CollapsingCheckbox(string label, bool value, Action<bool> setter, bool enabled = true, string? tooltip = null)
+    private bool CollapsingCheckbox(string label, bool value, Action<bool> setter, bool enabled = true, string? tooltip = null, FontAwesomeIcon? icon = null)
     {
         if (!enabled)
             this.openSections.Remove(label);
@@ -167,6 +179,16 @@ internal sealed class ConfigWindow : Window, IDisposable
         if (tooltip != null && ImGui.IsItemHovered())
             ImGui.SetTooltip(tooltip);
 
+        if (icon != null)
+        {
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextUnformatted(icon.Value.ToIconString());
+            ImGui.PopFont();
+            if (tooltip != null && ImGui.IsItemHovered())
+                ImGui.SetTooltip(tooltip);
+        }
+
         return isOpen && enabled && value;
     }
 
@@ -187,14 +209,18 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.setEnabled(current);
     }
 
-    private bool Checkbox(string label, bool value, Action<bool> setter)
+    private bool Checkbox(string label, bool value, Action<bool> setter, string? tooltip = null)
     {
         var current = value;
         if (!ImGui.Checkbox(label, ref current))
         {
+            if (tooltip != null && ImGui.IsItemHovered())
+                ImGui.SetTooltip(tooltip);
             return false;
         }
 
+        if (tooltip != null && ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
         setter(current);
         return true;
     }

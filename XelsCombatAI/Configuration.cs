@@ -35,6 +35,12 @@ public sealed class Configuration : IPluginConfiguration
     public bool RoleBasedRange { get; set; } = true;
     public bool AoERangeInMultiTarget { get; set; } = true;
     public bool AoEHealerMeleeRange { get; set; } = false;
+    public bool UseGapCloser { get; set; } = false;
+    public bool GapCloserMNK { get; set; } = true;
+    public bool GapCloserDRG { get; set; } = true;
+    public bool GapCloserNIN { get; set; } = true;
+    public bool GapCloserSAM { get; set; } = true;
+    public bool GapCloserVPR { get; set; } = true;
     public bool EchoStatusToChat { get; set; } = true;
     public float MeleeRange { get; set; } = DefaultMeleeRange;
     public float RangedRange { get; set; } = DefaultRangedRange;
@@ -117,6 +123,12 @@ public sealed class Configuration : IPluginConfiguration
         this.ReturnToLeylines = true;
         this.RoleBasedRange = true;
         this.AoERangeInMultiTarget = true;
+        this.UseGapCloser = false;
+        this.GapCloserMNK = true;
+        this.GapCloserDRG = true;
+        this.GapCloserNIN = true;
+        this.GapCloserSAM = true;
+        this.GapCloserVPR = true;
         this.EchoStatusToChat = true;
         this.ResetRanges();
     }
