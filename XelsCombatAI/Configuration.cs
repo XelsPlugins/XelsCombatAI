@@ -6,6 +6,8 @@ namespace XelsCombatAI;
 
 public sealed class Configuration : IPluginConfiguration
 {
+    public const float BossModMinRange = 1.1f;
+    public const float BossModMaxRange = 30f;
     public const float DefaultMeleeRange = 2.6f;
     public const float DefaultRangedRange = 15f;
     public const float DefaultPhysicalRangedRange = 15f;
@@ -77,16 +79,16 @@ public sealed class Configuration : IPluginConfiguration
 
     internal void Clamp()
     {
-        this.MeleeRange = Math.Clamp(this.MeleeRange, 1f, 30f);
-        this.RangedRange = Math.Clamp(this.RangedRange, 1f, 30f);
-        this.PhysicalRangedRange = Math.Clamp(this.PhysicalRangedRange, 1f, 30f);
-        this.HealerRange = Math.Clamp(this.HealerRange, 1f, 30f);
-        this.MagicRangedRange = Math.Clamp(this.MagicRangedRange, 1f, 30f);
-        this.AoEMeleeRange = Math.Clamp(this.AoEMeleeRange, 1f, 30f);
-        this.AoERangedRange = Math.Clamp(this.AoERangedRange, 1f, 30f);
-        this.AoEPhysicalRangedRange = Math.Clamp(this.AoEPhysicalRangedRange, 1f, 30f);
-        this.AoEHealerRange = Math.Clamp(this.AoEHealerRange, 1f, 30f);
-        this.AoEMagicRangedRange = Math.Clamp(this.AoEMagicRangedRange, 1f, 30f);
+        this.MeleeRange = Math.Clamp(this.MeleeRange, BossModMinRange, BossModMaxRange);
+        this.RangedRange = Math.Clamp(this.RangedRange, BossModMinRange, BossModMaxRange);
+        this.PhysicalRangedRange = Math.Clamp(this.PhysicalRangedRange, BossModMinRange, BossModMaxRange);
+        this.HealerRange = Math.Clamp(this.HealerRange, BossModMinRange, BossModMaxRange);
+        this.MagicRangedRange = Math.Clamp(this.MagicRangedRange, BossModMinRange, BossModMaxRange);
+        this.AoEMeleeRange = Math.Clamp(this.AoEMeleeRange, BossModMinRange, BossModMaxRange);
+        this.AoERangedRange = Math.Clamp(this.AoERangedRange, BossModMinRange, BossModMaxRange);
+        this.AoEPhysicalRangedRange = Math.Clamp(this.AoEPhysicalRangedRange, BossModMinRange, BossModMaxRange);
+        this.AoEHealerRange = Math.Clamp(this.AoEHealerRange, BossModMinRange, BossModMaxRange);
+        this.AoEMagicRangedRange = Math.Clamp(this.AoEMagicRangedRange, BossModMinRange, BossModMaxRange);
         this.AoEEnemyThreshold = Math.Clamp(this.AoEEnemyThreshold, 1, 10);
         this.EnemyCountRadius = Math.Clamp(this.EnemyCountRadius, 1f, 30f);
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);

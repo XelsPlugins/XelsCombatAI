@@ -46,7 +46,9 @@ internal sealed class BossModIpc
 
     private readonly ICallGateSubscriber<string, string?> getPreset;
     private readonly ICallGateSubscriber<string, bool, bool> createPreset;
+    private readonly ICallGateSubscriber<string?> getActivePreset;
     private readonly ICallGateSubscriber<string, bool> setActivePreset;
+    private readonly ICallGateSubscriber<bool> clearActivePreset;
     private readonly ICallGateSubscriber<uint, bool> hasModuleByDataId;
     private readonly ICallGateSubscriber<string, bool, bool> disableModule;
     private readonly ICallGateSubscriber<string, string, string, string, bool> addTransientStrategy;
@@ -57,7 +59,9 @@ internal sealed class BossModIpc
     {
         this.getPreset = pluginInterface.GetIpcSubscriber<string, string?>("BossMod.Presets.Get");
         this.createPreset = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Presets.Create");
+        this.getActivePreset = pluginInterface.GetIpcSubscriber<string?>("BossMod.Presets.GetActive");
         this.setActivePreset = pluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.SetActive");
+        this.clearActivePreset = pluginInterface.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive");
         this.hasModuleByDataId = pluginInterface.GetIpcSubscriber<uint, bool>("BossMod.HasModuleByDataId");
         this.disableModule = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Configuration.DisableModule");
         this.addTransientStrategy = pluginInterface.GetIpcSubscriber<string, string, string, string, bool>("BossMod.Presets.AddTransientStrategy");
@@ -89,6 +93,10 @@ internal sealed class BossModIpc
     }
 
     public bool SetActive(string presetName) => this.setActivePreset.InvokeFunc(presetName);
+
+    public string? GetActive() => this.getActivePreset.InvokeFunc();
+
+    public bool ClearActive() => this.clearActivePreset.InvokeFunc();
 
     public bool SetPositional(string presetName, Positional positional)
     {

@@ -9,6 +9,7 @@ namespace XelsCombatAI;
 internal sealed class ConfigWindow : Window, IDisposable
 {
     private readonly Configuration config;
+    private readonly Configuration defaultConfig = new();
     private readonly Action save;
     private readonly Action resetRuntimeState;
     private readonly Action<bool> setEnabled;
@@ -47,42 +48,42 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         this.DrawEnabledCheckbox(dependencyWarningText);
-        changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, v => this.config.ManageMovement = v);
+        changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v);
 
         // Manage range
-        if (this.CollapsingCheckbox("Manage range", this.config.ManageRange, v => { this.config.ManageRange = v; changed = true; }))
+        if (this.CollapsingCheckbox("Manage range", this.config.ManageRange, this.defaultConfig.ManageRange, v => { this.config.ManageRange = v; changed = true; }))
         {
             ImGui.Indent();
 
             // Single target distance
-            if (this.CollapsingCheckbox("Single target distance", this.config.RoleBasedRange, v => { this.config.RoleBasedRange = v; changed = true; }, this.config.ManageRange))
+            if (this.CollapsingCheckbox("Single target distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => { this.config.RoleBasedRange = v; changed = true; }, this.config.ManageRange))
             {
                 ImGui.Indent();
-                changed |= this.SliderFloat("Melee max distance", this.config.MeleeRange, 1f, 30f, v => this.config.MeleeRange = v);
-                changed |= this.SliderFloat("Physical ranged max distance", this.config.PhysicalRangedRange, 1f, 30f, v => this.config.PhysicalRangedRange = v);
-                changed |= this.SliderFloat("Healer max distance", this.config.HealerRange, 1f, 30f, v => this.config.HealerRange = v);
-                changed |= this.SliderFloat("Magic ranged max distance", this.config.MagicRangedRange, 1f, 30f, v => this.config.MagicRangedRange = v);
+                changed |= this.SliderFloat("Melee max distance", this.config.MeleeRange, this.defaultConfig.MeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MeleeRange = v);
+                changed |= this.SliderFloat("Physical ranged max distance", this.config.PhysicalRangedRange, this.defaultConfig.PhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.PhysicalRangedRange = v);
+                changed |= this.SliderFloat("Healer max distance", this.config.HealerRange, this.defaultConfig.HealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.HealerRange = v);
+                changed |= this.SliderFloat("Magic ranged max distance", this.config.MagicRangedRange, this.defaultConfig.MagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MagicRangedRange = v);
                 ImGui.Unindent();
             }
 
             // AoE range in multi-target
-            if (this.CollapsingCheckbox("AoE target distance", this.config.AoERangeInMultiTarget, v => { this.config.AoERangeInMultiTarget = v; changed = true; }, this.config.ManageRange))
+            if (this.CollapsingCheckbox("AoE target distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => { this.config.AoERangeInMultiTarget = v; changed = true; }, this.config.ManageRange))
             {
                 ImGui.Indent();
                 if (this.config.RoleBasedRange)
-                    changed |= this.Checkbox("WHM/SCH/SGE use melee AoE range", this.config.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v);
-                changed |= this.SliderFloat("AoE melee max distance", this.config.AoEMeleeRange, 1f, 30f, v => this.config.AoEMeleeRange = v);
+                    changed |= this.Checkbox("WHM/SCH/SGE use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v);
+                changed |= this.SliderFloat("AoE melee max distance", this.config.AoEMeleeRange, this.defaultConfig.AoEMeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMeleeRange = v);
                 if (this.config.RoleBasedRange)
                 {
-                    changed |= this.SliderFloat("AoE physical ranged max distance", this.config.AoEPhysicalRangedRange, 1f, 30f, v => this.config.AoEPhysicalRangedRange = v);
-                    changed |= this.SliderFloat("AoE healer max distance", this.config.AoEHealerRange, 1f, 30f, v => this.config.AoEHealerRange = v);
-                    changed |= this.SliderFloat("AoE magic ranged max distance", this.config.AoEMagicRangedRange, 1f, 30f, v => this.config.AoEMagicRangedRange = v);
+                    changed |= this.SliderFloat("AoE physical ranged max distance", this.config.AoEPhysicalRangedRange, this.defaultConfig.AoEPhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEPhysicalRangedRange = v);
+                    changed |= this.SliderFloat("AoE healer max distance", this.config.AoEHealerRange, this.defaultConfig.AoEHealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEHealerRange = v);
+                    changed |= this.SliderFloat("AoE magic ranged max distance", this.config.AoEMagicRangedRange, this.defaultConfig.AoEMagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMagicRangedRange = v);
                 }
                 else
                 {
-                    changed |= this.SliderFloat("AoE ranged max distance", this.config.AoERangedRange, 1f, 30f, v => this.config.AoERangedRange = v);
+                    changed |= this.SliderFloat("AoE ranged max distance", this.config.AoERangedRange, this.defaultConfig.AoERangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoERangedRange = v);
                 }
-                changed |= this.SliderInt("AoE enemy threshold", this.config.AoEEnemyThreshold, 1, 10, v => this.config.AoEEnemyThreshold = v);
+                changed |= this.SliderInt("AoE enemy threshold", this.config.AoEEnemyThreshold, this.defaultConfig.AoEEnemyThreshold, 1, 10, v => this.config.AoEEnemyThreshold = v);
                 ImGui.Unindent();
             }
 
@@ -90,38 +91,38 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         // Manage forbidden-zone distance
-        if (this.CollapsingCheckbox("Manage forbidden-zone distance", this.config.ManageForbiddenZoneDistance, v => { this.config.ManageForbiddenZoneDistance = v; changed = true; }))
+        if (this.CollapsingCheckbox("Manage forbidden-zone distance", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => { this.config.ManageForbiddenZoneDistance = v; changed = true; }))
         {
             ImGui.Indent();
-            changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v);
+            changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, this.defaultConfig.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v);
             ImGui.Unindent();
         }
 
-        changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Stays close to the tank when your target has no boss module. Automatically disabled on boss encounters.");
-        changed |= this.Checkbox("Manage positionals", this.config.ManagePositionals, v => this.config.ManagePositionals = v);
-        if (this.CollapsingCheckbox("Use gap closer to re-engage", this.config.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Holes in the floor will absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
+        changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Stays close to the tank when your target has no boss module. Automatically disabled on boss encounters.");
+        changed |= this.Checkbox("Manage positionals", this.config.ManagePositionals, this.defaultConfig.ManagePositionals, v => this.config.ManagePositionals = v);
+        if (this.CollapsingCheckbox("Use gap closer to re-engage", this.config.UseGapCloser, this.defaultConfig.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Holes in the floor will absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
         {
             ImGui.Indent();
-            changed |= this.Checkbox("MNK — Thunderclap", this.config.GapCloserMNK, v => this.config.GapCloserMNK = v);
-            changed |= this.Checkbox("DRG — Jump / High Jump", this.config.GapCloserDRG, v => this.config.GapCloserDRG = v);
-            changed |= this.Checkbox("NIN — Forked Raiju", this.config.GapCloserNIN, v => this.config.GapCloserNIN = v);
-            changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, v => this.config.GapCloserSAM = v);
-            changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, v => this.config.GapCloserVPR = v);
+            changed |= this.Checkbox("MNK — Thunderclap", this.config.GapCloserMNK, this.defaultConfig.GapCloserMNK, v => this.config.GapCloserMNK = v);
+            changed |= this.Checkbox("DRG — Jump / High Jump", this.config.GapCloserDRG, this.defaultConfig.GapCloserDRG, v => this.config.GapCloserDRG = v);
+            changed |= this.Checkbox("NIN — Forked Raiju", this.config.GapCloserNIN, this.defaultConfig.GapCloserNIN, v => this.config.GapCloserNIN = v);
+            changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, this.defaultConfig.GapCloserSAM, v => this.config.GapCloserSAM = v);
+            changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, this.defaultConfig.GapCloserVPR, v => this.config.GapCloserVPR = v);
             ImGui.Unindent();
         }
 
 
         // Manage Ley Lines
-        if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Only manages existing Ley Lines placement — will not put down Ley Lines."))
+        if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Only manages existing Ley Lines placement — will not put down Ley Lines."))
         {
             ImGui.Indent();
-            changed |= this.Checkbox("Use Between the Lines", this.config.UseBetweenTheLines, v => this.config.UseBetweenTheLines = v);
-            changed |= this.Checkbox("Use Retrace", this.config.UseRetrace, v => this.config.UseRetrace = v);
-            changed |= this.Checkbox("Walk back to Ley Lines", this.config.ReturnToLeylines, v => this.config.ReturnToLeylines = v);
+            changed |= this.Checkbox("Use Between the Lines", this.config.UseBetweenTheLines, this.defaultConfig.UseBetweenTheLines, v => this.config.UseBetweenTheLines = v);
+            changed |= this.Checkbox("Use Retrace", this.config.UseRetrace, this.defaultConfig.UseRetrace, v => this.config.UseRetrace = v);
+            changed |= this.Checkbox("Walk back to Ley Lines", this.config.ReturnToLeylines, this.defaultConfig.ReturnToLeylines, v => this.config.ReturnToLeylines = v);
             ImGui.Unindent();
         }
 
-        changed |= this.Checkbox("Echo command status to chat", this.config.EchoStatusToChat, v => this.config.EchoStatusToChat = v);
+        changed |= this.Checkbox("Echo command status to chat", this.config.EchoStatusToChat, this.defaultConfig.EchoStatusToChat, v => this.config.EchoStatusToChat = v);
 
         ImGui.Separator();
 
@@ -148,7 +149,7 @@ internal sealed class ConfigWindow : Window, IDisposable
 
     // Renders a toggle triangle button + checkbox on the same line. Triangle is disabled (and
     // section forced closed) when the parent feature is off. Returns true when expanded.
-    private bool CollapsingCheckbox(string label, bool value, Action<bool> setter, bool enabled = true, string? tooltip = null, FontAwesomeIcon? icon = null)
+    private bool CollapsingCheckbox(string label, bool value, bool defaultValue, Action<bool> setter, bool enabled = true, string? tooltip = null, FontAwesomeIcon? icon = null)
     {
         if (!enabled)
             this.openSections.Remove(label);
@@ -176,7 +177,9 @@ internal sealed class ConfigWindow : Window, IDisposable
         var current = value;
         if (ImGui.Checkbox(label, ref current))
             setter(current);
-        if (tooltip != null && ImGui.IsItemHovered())
+
+        var optionHovered = ImGui.IsItemHovered();
+        if (tooltip != null && optionHovered)
             ImGui.SetTooltip(tooltip);
 
         if (icon != null)
@@ -189,13 +192,24 @@ internal sealed class ConfigWindow : Window, IDisposable
                 ImGui.SetTooltip(tooltip);
         }
 
+        if (IsResetRequested(optionHovered))
+            setter(defaultValue);
+
         return isOpen && enabled && value;
     }
 
     private void DrawEnabledCheckbox(string? dependencyWarningText)
     {
         var current = this.config.Enabled;
-        if (!ImGui.Checkbox("Enabled", ref current))
+        var changed = ImGui.Checkbox("Enabled", ref current);
+        if (IsResetRequested(ImGui.IsItemHovered()))
+        {
+            if (this.config.Enabled != this.defaultConfig.Enabled)
+                this.setEnabled(this.defaultConfig.Enabled);
+            return;
+        }
+
+        if (!changed)
         {
             return;
         }
@@ -209,26 +223,35 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.setEnabled(current);
     }
 
-    private bool Checkbox(string label, bool value, Action<bool> setter, string? tooltip = null)
+    private bool Checkbox(string label, bool value, bool defaultValue, Action<bool> setter, string? tooltip = null)
     {
         var current = value;
-        if (!ImGui.Checkbox(label, ref current))
+        var changed = ImGui.Checkbox(label, ref current);
+        var hovered = ImGui.IsItemHovered();
+        if (tooltip != null && hovered)
+            ImGui.SetTooltip(tooltip);
+
+        if (IsResetRequested(hovered))
         {
-            if (tooltip != null && ImGui.IsItemHovered())
-                ImGui.SetTooltip(tooltip);
-            return false;
+            if (value == defaultValue)
+                return false;
+
+            setter(defaultValue);
+            return true;
         }
 
-        if (tooltip != null && ImGui.IsItemHovered())
-            ImGui.SetTooltip(tooltip);
+        if (!changed)
+            return false;
+
         setter(current);
         return true;
     }
 
-    private bool SliderFloat(string label, float value, float min, float max, Action<float> setter)
+    private bool SliderFloat(string label, float value, float defaultValue, float min, float max, Action<float> setter)
     {
         var id = $"##{label}";
         ImGui.TextUnformatted(label);
+        var labelHovered = ImGui.IsItemHovered();
         ImGui.SetNextItemWidth(-1f);
 
         if (this.editingSliders.Contains(label))
@@ -243,6 +266,13 @@ internal sealed class ConfigWindow : Window, IDisposable
                 return true;
             }
 
+            if (IsResetRequested(labelHovered || ImGui.IsItemHovered()))
+            {
+                this.editingSliders.Remove(label);
+                setter(defaultValue);
+                return true;
+            }
+
             if (ImGui.IsItemDeactivated())
                 this.editingSliders.Remove(label);
 
@@ -250,9 +280,21 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         var current = value;
-        if (!ImGui.SliderFloat(id, ref current, min, max))
+        var changed = ImGui.SliderFloat(id, ref current, min, max);
+        var sliderHovered = ImGui.IsItemHovered();
+        if (IsResetRequested(labelHovered || sliderHovered))
         {
-            if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            this.editingSliders.Remove(label);
+            if (Math.Abs(value - defaultValue) <= 0.01f)
+                return false;
+
+            setter(defaultValue);
+            return true;
+        }
+
+        if (!changed)
+        {
+            if (sliderHovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                 this.editingSliders.Add(label);
             return false;
         }
@@ -261,10 +303,11 @@ internal sealed class ConfigWindow : Window, IDisposable
         return true;
     }
 
-    private bool SliderInt(string label, int value, int min, int max, Action<int> setter)
+    private bool SliderInt(string label, int value, int defaultValue, int min, int max, Action<int> setter)
     {
         var id = $"##{label}";
         ImGui.TextUnformatted(label);
+        var labelHovered = ImGui.IsItemHovered();
         ImGui.SetNextItemWidth(-1f);
 
         if (this.editingSliders.Contains(label))
@@ -279,6 +322,13 @@ internal sealed class ConfigWindow : Window, IDisposable
                 return true;
             }
 
+            if (IsResetRequested(labelHovered || ImGui.IsItemHovered()))
+            {
+                this.editingSliders.Remove(label);
+                setter(defaultValue);
+                return true;
+            }
+
             if (ImGui.IsItemDeactivated())
                 this.editingSliders.Remove(label);
 
@@ -286,14 +336,31 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         var current = value;
-        if (!ImGui.SliderInt(id, ref current, min, max))
+        var changed = ImGui.SliderInt(id, ref current, min, max);
+        var sliderHovered = ImGui.IsItemHovered();
+        if (IsResetRequested(labelHovered || sliderHovered))
         {
-            if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            this.editingSliders.Remove(label);
+            if (value == defaultValue)
+                return false;
+
+            setter(defaultValue);
+            return true;
+        }
+
+        if (!changed)
+        {
+            if (sliderHovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                 this.editingSliders.Add(label);
             return false;
         }
 
         setter(current);
         return true;
+    }
+
+    private static bool IsResetRequested(bool hovered)
+    {
+        return hovered && !ImGui.IsAnyItemActive() && ImGui.IsKeyPressed(ImGuiKey.Backspace);
     }
 }

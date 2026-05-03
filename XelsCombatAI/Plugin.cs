@@ -84,6 +84,11 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        if (this.config.Enabled)
+        {
+            this.DeactivateBossModPreset();
+        }
+
         Framework.Update -= this.OnFrameworkUpdate;
         PluginInterface.UiBuilder.OpenMainUi -= this.OpenConfig;
         PluginInterface.UiBuilder.OpenConfigUi -= this.OpenConfig;
@@ -175,6 +180,30 @@ public sealed class Plugin : IDalamudPlugin
         this.lastPositional = Positional.Any;
         this.lastRange = -1f;
         this.lastPartyRole = null;
+    }
+
+    private void DeactivateBossModPreset()
+    {
+        try
+        {
+            var presetName = BossModIpc.DefaultPresetName;
+
+            this.bossMod.SetMovement(presetName, false);
+            this.bossMod.SetPositional(presetName, Positional.Any);
+            this.bossMod.SetPartyRole(presetName, "None");
+            this.bossMod.SetLeylinesBetweenTheLines(presetName, false);
+            this.bossMod.SetLeylinesRetrace(presetName, false);
+            this.bossMod.SetLeylinesGoal(presetName, false);
+
+            if (this.bossMod.GetActive() == presetName)
+            {
+                this.bossMod.ClearActive();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Verbose(ex, "Could not deactivate BossMod preset.");
+        }
     }
 
     private void UpdateRuntimeBossModStrategies()
@@ -576,6 +605,7 @@ public sealed class Plugin : IDalamudPlugin
         this.config.Enabled = enabled;
         if (!enabled)
         {
+            this.DeactivateBossModPreset();
             this.ResetRuntimeCache();
         }
 
@@ -586,6 +616,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void DisableDueToMissingDependencies(string missing)
     {
+        this.DeactivateBossModPreset();
         this.config.Enabled = false;
         this.ResetRuntimeCache();
         this.SaveConfig();
