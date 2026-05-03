@@ -63,6 +63,7 @@ public sealed class Plugin : IDalamudPlugin
     private bool? rsrTrueNorthDisabled;
     private bool? trueNorthStrategy;
     private bool initializedPreset;
+    private bool wasDead;
     private DateTime nextRuntimeUpdate = DateTime.MinValue;
 
     public Plugin()
@@ -131,16 +132,23 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        if (!this.initializedPreset && !this.InitializePreset())
-        {
-            return;
-        }
+        // BMR sets the preset to ForceDisable (name="") on death (ClearPresetOnDeath=true default).
+        // Detect the dead→alive transition and re-initialize so strategies are re-applied.
+        var isDead = Condition[ConditionFlag.Unconscious];
+        if (this.wasDead && !isDead)
+            this.ResetRuntimeCache();
+        this.wasDead = isDead;
 
         if (DateTime.UtcNow < this.nextRuntimeUpdate)
         {
             return;
         }
         this.nextRuntimeUpdate = DateTime.UtcNow.AddMilliseconds(250);
+
+        if (!this.initializedPreset && !this.InitializePreset())
+        {
+            return;
+        }
 
         this.UpdateRuntimeBossModStrategies();
     }
