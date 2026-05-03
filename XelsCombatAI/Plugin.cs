@@ -52,6 +52,7 @@ public sealed class Plugin : IDalamudPlugin
     private Positional lastPositional = Positional.Any;
     private float lastRange = -1f;
     private bool? lastMovement;
+    private string? lastMovementRangeStrategy;
     private string? lastForbiddenZoneCushion;
     private string? lastPartyRole;
     private bool? lastLeylinesBetweenTheLines;
@@ -191,6 +192,7 @@ public sealed class Plugin : IDalamudPlugin
             var presetName = BossModIpc.DefaultPresetName;
 
             this.bossMod.SetMovement(presetName, false);
+            this.bossMod.SetMovementRangeStrategy(presetName, "Any");
             this.bossMod.SetPositional(presetName, Positional.Any);
             this.bossMod.SetPartyRole(presetName, "None");
             this.bossMod.SetLeylinesBetweenTheLines(presetName, false);
@@ -226,6 +228,8 @@ public sealed class Plugin : IDalamudPlugin
             {
                 this.SetForbiddenZoneCushion(MapForbiddenZoneCushion(this.config.PreferredForbiddenZoneDistance));
             }
+
+            this.SetMovementRangeStrategy(MapCombatStyle(this.config.CombatStyle));
 
             if (this.config.ManagePartyRoleFollow)
             {
@@ -302,6 +306,28 @@ public sealed class Plugin : IDalamudPlugin
         {
             this.lastForbiddenZoneCushion = cushion;
         }
+    }
+
+    private void SetMovementRangeStrategy(string strategy)
+    {
+        if (this.lastMovementRangeStrategy == strategy)
+        {
+            return;
+        }
+
+        if (this.bossMod.SetMovementRangeStrategy(BossModIpc.DefaultPresetName, strategy))
+        {
+            this.lastMovementRangeStrategy = strategy;
+        }
+    }
+
+    private static string MapCombatStyle(CombatStyle style)
+    {
+        return style switch
+        {
+            CombatStyle.Greed => "GreedAutomatic",
+            _ => "Any"
+        };
     }
 
     private static string MapForbiddenZoneCushion(float distance)
@@ -526,7 +552,7 @@ public sealed class Plugin : IDalamudPlugin
                 this.TrySetEnabled(!this.config.Enabled);
                 break;
             case "status":
-                this.Print($"Enabled={this.config.Enabled}, Dependencies={(this.GetDependencyWarning() ?? "OK")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={this.lastPositional}, TrueNorthCharges={GetTrueNorthCharges()}, TrueNorthActive={HasActiveTrueNorth()}, Range={this.lastRange:0.0}, Movement={this.lastMovement}, Cushion={this.lastForbiddenZoneCushion}, Role={this.lastPartyRole}, LeylinesBTL={this.lastLeylinesBetweenTheLines}, LeylinesRetrace={this.lastLeylinesRetrace}, LeylinesGoal={this.lastLeylinesGoal}, Initialized={this.initializedPreset}");
+                this.Print($"Enabled={this.config.Enabled}, Dependencies={(this.GetDependencyWarning() ?? "OK")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={this.lastPositional}, TrueNorthCharges={GetTrueNorthCharges()}, TrueNorthActive={HasActiveTrueNorth()}, Range={this.lastRange:0.0}, Movement={this.lastMovement}, MovementRange={this.lastMovementRangeStrategy}, Cushion={this.lastForbiddenZoneCushion}, Role={this.lastPartyRole}, LeylinesBTL={this.lastLeylinesBetweenTheLines}, LeylinesRetrace={this.lastLeylinesRetrace}, LeylinesGoal={this.lastLeylinesGoal}, Initialized={this.initializedPreset}");
                 break;
             case "config":
                 this.OpenConfig();
@@ -582,6 +608,7 @@ public sealed class Plugin : IDalamudPlugin
         this.lastPositional = Positional.Any;
         this.lastRange = -1f;
         this.lastMovement = null;
+        this.lastMovementRangeStrategy = null;
         this.lastForbiddenZoneCushion = null;
         this.lastPartyRole = null;
         this.lastLeylinesBetweenTheLines = null;

@@ -134,6 +134,15 @@ internal sealed class BossModIpc
             cushion);
     }
 
+    public bool SetMovementRangeStrategy(string presetName, string strategy)
+    {
+        return this.addTransientStrategy.InvokeFunc(
+            presetName,
+            "BossMod.Autorotation.MiscAI.NormalMovement",
+            "Range",
+            strategy);
+    }
+
     public bool SetPartyRole(string presetName, string role)
     {
         return this.addTransientStrategy.InvokeFunc(

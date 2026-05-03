@@ -106,6 +106,7 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Stays close to the tank when your target has no boss module. Automatically disabled on boss encounters.");
         changed |= this.Checkbox("Manage positionals", this.config.ManagePositionals, this.defaultConfig.ManagePositionals, v => this.config.ManagePositionals = v);
+        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal keeps BossMod moving directly to its destination. Greed lets BossMod balance uptime against mechanic safety.");
         if (this.CollapsingCheckbox("Use gap closer to re-engage", this.config.UseGapCloser, this.defaultConfig.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Holes in the floor will absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
         {
             ImGui.Indent();
@@ -251,6 +252,50 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         setter(current);
         return true;
+    }
+
+    private bool Combo<T>(string label, T value, T defaultValue, Action<T> setter, string? tooltip = null)
+        where T : struct, Enum
+    {
+        var changed = false;
+        ImGui.TextUnformatted(label);
+        var labelHovered = ImGui.IsItemHovered();
+        if (tooltip != null && labelHovered)
+            ImGui.SetTooltip(tooltip);
+
+        ImGui.SetNextItemWidth(-1f);
+        if (ImGui.BeginCombo($"##{label}", value.ToString()))
+        {
+            foreach (var option in Enum.GetValues<T>())
+            {
+                var selected = EqualityComparer<T>.Default.Equals(value, option);
+                if (ImGui.Selectable(option.ToString(), selected))
+                {
+                    setter(option);
+                    changed = true;
+                }
+
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        var hovered = labelHovered || ImGui.IsItemHovered();
+        if (tooltip != null && ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
+
+        if (IsResetRequested(hovered))
+        {
+            if (EqualityComparer<T>.Default.Equals(value, defaultValue))
+                return changed;
+
+            setter(defaultValue);
+            return true;
+        }
+
+        return changed;
     }
 
     private bool SliderFloat(string label, float value, float defaultValue, float min, float max, Action<float> setter)

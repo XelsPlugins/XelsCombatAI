@@ -44,6 +44,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool GapCloserSAM { get; set; } = true;
     public bool GapCloserVPR { get; set; } = true;
     public bool EchoStatusToChat { get; set; } = true;
+    public CombatStyle CombatStyle { get; set; } = CombatStyle.Normal;
     public float MeleeRange { get; set; } = DefaultMeleeRange;
     public float RangedRange { get; set; } = DefaultRangedRange;
     public float PhysicalRangedRange { get; set; } = DefaultPhysicalRangedRange;
@@ -92,6 +93,7 @@ public sealed class Configuration : IPluginConfiguration
         this.AoEEnemyThreshold = Math.Clamp(this.AoEEnemyThreshold, 1, 10);
         this.EnemyCountRadius = Math.Clamp(this.EnemyCountRadius, 1f, 30f);
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);
+        this.CombatStyle = Enum.IsDefined(this.CombatStyle) ? this.CombatStyle : CombatStyle.Normal;
     }
 
     internal void ResetRanges()
@@ -132,6 +134,7 @@ public sealed class Configuration : IPluginConfiguration
         this.GapCloserSAM = true;
         this.GapCloserVPR = true;
         this.EchoStatusToChat = true;
+        this.CombatStyle = CombatStyle.Normal;
         this.ResetRanges();
     }
 

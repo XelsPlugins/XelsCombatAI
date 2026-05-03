@@ -5,3 +5,4 @@ artifacts/
 *.suo
 .vs/
 .claude/
+vendor
