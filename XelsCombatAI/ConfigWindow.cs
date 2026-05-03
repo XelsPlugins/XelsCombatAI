@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Dalamud.Game.ClientState.Keys;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
@@ -16,6 +17,8 @@ internal sealed class ConfigWindow : Window, IDisposable
     private readonly Func<string?> dependencyWarning;
     private readonly HashSet<string> editingSliders = [];
     private readonly HashSet<string> openSections = [];
+    private bool backspacePressedThisFrame;
+    private bool wasBackspaceDown;
 
     public ConfigWindow(Configuration config, Action save, Action resetRuntimeState, Action<bool> setEnabled, Func<string?> dependencyWarning)
         : base("Xel's Combat AI Configuration###XelsCombatAIConfig")
@@ -40,6 +43,9 @@ internal sealed class ConfigWindow : Window, IDisposable
     {
         var changed = false;
         var dependencyWarningText = this.dependencyWarning();
+        var backspaceDown = Plugin.KeyState[VirtualKey.BACK];
+        this.backspacePressedThisFrame = backspaceDown && !this.wasBackspaceDown;
+        this.wasBackspaceDown = backspaceDown;
 
         if (dependencyWarningText != null)
         {
@@ -359,8 +365,8 @@ internal sealed class ConfigWindow : Window, IDisposable
         return true;
     }
 
-    private static bool IsResetRequested(bool hovered)
+    private bool IsResetRequested(bool hovered)
     {
-        return hovered && !ImGui.IsAnyItemActive() && ImGui.IsKeyPressed(ImGuiKey.Backspace);
+        return hovered && !ImGui.IsAnyItemActive() && this.backspacePressedThisFrame;
     }
 }
