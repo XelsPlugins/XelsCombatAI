@@ -64,6 +64,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
+    [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
 
     private readonly Configuration config;
     private readonly BossModIpc bossMod;
@@ -542,6 +543,23 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         var distanceToHitbox = DistanceToHitbox(player.Position, player.HitboxRadius, target.Position, target.HitboxRadius);
+
+        // In a light party or larger (4+ members), redirect to the enemy closest to the tank on
+        // trash pulls, but only when a gap close is actually needed (current target out of melee
+        // range). On bosses (target has a BossMod module), keep the current target unchanged.
+        if (distanceToHitbox > MeleeActionRange && PartyList.Count >= 4)
+        {
+            var targetIsBoss = target is IBattleNpc bossCheck && this.bossMod.HasModuleByDataId(bossCheck.BaseId);
+            if (!targetIsBoss)
+            {
+                var bestTrash = FindTrashGapCloserTarget(player);
+                if (bestTrash != null)
+                {
+                    target = bestTrash;
+                    distanceToHitbox = DistanceToHitbox(player.Position, player.HitboxRadius, target.Position, target.HitboxRadius);
+                }
+            }
+        }
         if (distanceToHitbox <= MeleeActionRange || distanceToHitbox > GapCloserMaxRange)
         {
             this.lastGapCloserSafety = "target not in gap closer range";
@@ -551,16 +569,16 @@ public sealed class Plugin : IDalamudPlugin
         var classJobId = player.ClassJob.RowId;
         return classJobId switch
         {
-            1 or 19 when this.config.GapCloserPLD => this.TryUseTargetGapCloser(PaladinInterveneActionId, distanceToHitbox),
-            3 or 21 when this.config.GapCloserWAR => this.TryUseTargetGapCloser(WarriorOnslaughtActionId, distanceToHitbox),
-            32 when this.config.GapCloserDRK => this.TryUseTargetGapCloser(DarkKnightShadowstrideActionId, distanceToHitbox),
-            37 when this.config.GapCloserGNB => this.TryUseTargetGapCloser(GunbreakerTrajectoryActionId, distanceToHitbox),
-            2 or 20 when this.config.GapCloserMNK => this.TryUseTargetGapCloser(MonkThunderclapActionId, distanceToHitbox),
-            4 or 22 when this.config.GapCloserDRG => this.TryUseTargetGapCloser(DragoonWingedGlideActionId, distanceToHitbox),
-            29 or 30 when this.config.GapCloserNIN => this.TryUseNinjaShukuchi(),
-            34 when this.config.GapCloserSAM => this.TryUseTargetGapCloser(SamuraiGyotenActionId, distanceToHitbox),
+            1 or 19 when this.config.GapCloserPLD => this.TryUseTargetGapCloser(PaladinInterveneActionId, distanceToHitbox, target),
+            3 or 21 when this.config.GapCloserWAR => this.TryUseTargetGapCloser(WarriorOnslaughtActionId, distanceToHitbox, target),
+            32 when this.config.GapCloserDRK => this.TryUseTargetGapCloser(DarkKnightShadowstrideActionId, distanceToHitbox, target),
+            37 when this.config.GapCloserGNB => this.TryUseTargetGapCloser(GunbreakerTrajectoryActionId, distanceToHitbox, target),
+            2 or 20 when this.config.GapCloserMNK => this.TryUseTargetGapCloser(MonkThunderclapActionId, distanceToHitbox, target),
+            4 or 22 when this.config.GapCloserDRG => this.TryUseTargetGapCloser(DragoonWingedGlideActionId, distanceToHitbox, target),
+            29 or 30 when this.config.GapCloserNIN => this.TryUseNinjaShukuchi(target),
+            34 when this.config.GapCloserSAM => this.TryUseTargetGapCloser(SamuraiGyotenActionId, distanceToHitbox, target),
             39 when this.config.GapCloserRPR => this.TryUseForwardGapCloser(ReaperHellsIngressActionId, distanceToHitbox),
-            41 when this.config.GapCloserVPR => this.TryUseTargetGapCloser(ViperSlitherActionId, distanceToHitbox),
+            41 when this.config.GapCloserVPR => this.TryUseTargetGapCloser(ViperSlitherActionId, distanceToHitbox, target),
             _ => false
         };
     }
@@ -733,11 +751,10 @@ public sealed class Plugin : IDalamudPlugin
         return classJobId is 25 or 36 or 40 or 42;
     }
 
-    private unsafe bool TryUseTargetGapCloser(uint actionId, float distanceToHitbox)
+    private unsafe bool TryUseTargetGapCloser(uint actionId, float distanceToHitbox, IGameObject target)
     {
         var player = ObjectTable.LocalPlayer;
-        var target = TargetManager.Target;
-        if (player == null || target == null)
+        if (player == null)
         {
             return false;
         }
@@ -815,11 +832,10 @@ public sealed class Plugin : IDalamudPlugin
         return used;
     }
 
-    private unsafe bool TryUseNinjaShukuchi()
+    private unsafe bool TryUseNinjaShukuchi(IGameObject target)
     {
         var player = ObjectTable.LocalPlayer;
-        var target = TargetManager.Target;
-        if (player == null || target == null)
+        if (player == null)
         {
             return false;
         }
@@ -889,6 +905,45 @@ public sealed class Plugin : IDalamudPlugin
                 playerPosition.Y,
                 targetPosition.Z + MathF.Sin(angle) * radius);
         }
+    }
+
+    private static bool IsTankJob(uint classJobId)
+        => classJobId is 1 or 19 or 3 or 21 or 32 or 37;
+
+    private static bool TryFindTankPosition(out Vector3 tankPosition)
+    {
+        foreach (var member in PartyList)
+        {
+            if (IsTankJob(member.ClassJob.RowId) && member.GameObject is { } go && !go.IsDead)
+            {
+                tankPosition = go.Position;
+                return true;
+            }
+        }
+
+        tankPosition = default;
+        return false;
+    }
+
+    private static IBattleNpc? FindTrashGapCloserTarget(IBattleChara player)
+    {
+        var hasTank = TryFindTankPosition(out var tankPos);
+
+        IBattleNpc? best = null;
+        var bestScore = float.MaxValue;
+
+        foreach (var obj in ObjectTable.OfType<IBattleNpc>())
+        {
+            if (obj.BattleNpcKind != BattleNpcSubKind.Combatant) continue;
+            if (!obj.StatusFlags.HasFlag(StatusFlags.InCombat)) continue;
+            var d = DistanceToHitbox(player.Position, player.HitboxRadius, obj.Position, obj.HitboxRadius);
+            if (d <= MeleeActionRange || d > GapCloserMaxRange) continue;
+
+            var score = hasTank ? Vector3.Distance(obj.Position, tankPos) : d;
+            if (score < bestScore) { best = obj; bestScore = score; }
+        }
+
+        return best;
     }
 
     private IEnumerable<IBattleChara> EnumerateFriendlyEscapeTargets(IBattleChara player, float maxRange)
