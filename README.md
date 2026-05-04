@@ -18,7 +18,7 @@ While you are in combat, the plugin automatically:
 - **Stays close to a tank** when your target doesn't have a boss module
 - **Manages your Ley Lines** — returns to them when safe, uses Between the Lines and Retrace if available
 - **Stays clear of forbidden zones** with a configurable buffer distance
-- **Uses BossMod-managed gap closers** to re-engage after being knocked away (optional, off by default)
+- **Uses reflected BossMod-safe gap closers** to re-engage after being knocked away or escape a dangerous spot (optional, off by default)
 - **Manages True North** usage and disables RSR's Auto True North to prevent conflicts (optional, requires RSR)
 
 Out of combat, the plugin stops managing movement entirely and hands control back to you. Settings are automatically re-applied after death and resurrection.
@@ -54,7 +54,8 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 - *Manage positionals* — Moves you to the correct rear/flank position for your rotation.
 - *Manage True North* — Uses True North automatically and disables RSR's Auto True North via IPC to prevent conflicts. Requires RSR.
 - *Manage Ley Lines* — Helps BLM stay on Ley Lines and use Between the Lines / Retrace when available. Does not place Ley Lines.
-- *Use BMR-managed gap closer to re-engage* — Lets BossMod queue supported utility gap closers with its dash safety checks. Disabled by default. Supported actions are MNK Thunderclap, DRG Winged Glide, NIN Shukuchi, and VPR Slither.
+- *Use gap closer to (re)engage* — XCAI casts supported gap closers only after an unsupported reflected BossMod safety check says the destination is safe. If BossMod reflection fails, no gap closer is used. Disabled by default. Supported actions are PLD Intervene, WAR Onslaught, DRK Shadowstride, GNB Trajectory, MNK Thunderclap, DRG Winged Glide, NIN Shukuchi, SAM Hissatsu: Gyoten, RPR Hell's Ingress, and VPR Slither.
+- *Use gap closer to escape danger* — When your current position is dangerous, XCAI can use supported movement abilities to jump to a safe ally or location. If BossMod reflection fails, no escape gap closer is used. Disabled by default. Supported actions are MNK Thunderclap to ally, NIN Shukuchi, RPR Hell's Ingress, VPR Slither to ally, BLM Aetherial Manipulation, SGE Icarus, PCT Smudge, and BLU Loom. In Greed combat style, only BLM, SGE, PCT, and BLU escape actions are allowed; BLM will not use escape while standing in Ley Lines.
 
 **Combat Behavior** — Choose between *Normal* (BossMod moves directly to its destination) and *Greed* (BossMod balances uptime against mechanic safety).
 

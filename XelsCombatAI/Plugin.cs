@@ -4,6 +4,8 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Game.Command;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Gui.Dtr;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
@@ -21,8 +23,27 @@ public sealed class Plugin : IDalamudPlugin
     private const string CommandName = "/xcai";
     private const string AvaricePositionalStatusKey = "Avarice.PositionalStatus";
     private const float MeleeActionRange = 3f;
+    private const float GapCloserMaxRange = 20f;
+    private const float GapCloserDestinationMeleeRange = 2.6f;
+    private const float FixedForwardGapCloserRange = 15f;
     private const uint TrueNorthActionId = 7546;
     private const uint TrueNorthStatusId = 1250;
+    private const uint CircleOfPowerStatusId = 738;
+    private const uint PaladinInterveneActionId = 16461;
+    private const uint WarriorOnslaughtActionId = 7386;
+    private const uint DarkKnightShadowstrideActionId = 36926;
+    private const uint GunbreakerTrajectoryActionId = 36934;
+    private const uint MonkThunderclapActionId = 25762;
+    private const uint DragoonWingedGlideActionId = 36951;
+    private const uint NinjaShukuchiActionId = 2262;
+    private const uint SamuraiGyotenActionId = 7492;
+    private const uint ReaperHellsIngressActionId = 24401;
+    private const uint ViperSlitherActionId = 34646;
+    private const uint BlackMageAetherialManipulationActionId = 155;
+    private const uint SageIcarusActionId = 24295;
+    private const uint PictomancerSmudgeActionId = 34684;
+    private const uint BlueMageLoomActionId = 11401;
+    private static readonly float[] EscapeLocationRadii = [8f, 12f, 16f, 20f];
 
     private enum RangeRole
     {
@@ -46,6 +67,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly Configuration config;
     private readonly BossModIpc bossMod;
+    private readonly BossModReflectionSafety bossModSafety;
     private readonly RotationSolverIpc rotationSolver;
     private readonly WindowSystem windowSystem = new("XelsCombatAI");
     private readonly ConfigWindow configWindow;
@@ -68,6 +90,11 @@ public sealed class Plugin : IDalamudPlugin
     private bool initializedPreset;
     private bool wasDead;
     private DateTime nextRuntimeUpdate = DateTime.MinValue;
+    private DateTime nextGapCloserAttempt = DateTime.MinValue;
+    private DateTime nextEscapeGapCloserAttempt = DateTime.MinValue;
+    private string lastGapCloserSafety = "not checked";
+    private string lastEscapeGapCloserSafety = "not checked";
+    private string? lastMissingDependencies;
 
     public Plugin()
     {
@@ -77,6 +104,7 @@ public sealed class Plugin : IDalamudPlugin
         this.config.Migrate();
         this.config.Clamp();
         this.bossMod = new BossModIpc(PluginInterface);
+        this.bossModSafety = new BossModReflectionSafety(PluginInterface);
         this.rotationSolver = new RotationSolverIpc();
         this.configWindow = new ConfigWindow(this.config, this.SaveConfig, this.ResetRuntimeCache, enabled => this.TrySetEnabled(enabled), this.GetDependencyWarning, this.GetTrueNorthWarning, this.EnsureRsrTrueNorthDisabled);
         this.dtrEntry = DtrBar.Get("XelsCombatAI");
@@ -125,9 +153,11 @@ public sealed class Plugin : IDalamudPlugin
 
         if (!this.DependenciesAvailable(out var missing))
         {
-            this.DisableDueToMissingDependencies(missing);
+            this.WaitForDependencies(missing);
             return;
         }
+
+        this.ClearDependencyWaitState();
 
         if (!Condition[ConditionFlag.InCombat])
         {
@@ -451,13 +481,22 @@ public sealed class Plugin : IDalamudPlugin
 
     private void SetGapClosers()
     {
-        var enabled = this.config.UseGapCloser;
         var presetName = BossModIpc.DefaultPresetName;
 
-        this.SetGapCloser(ref this.lastMonkThunderclap, enabled && this.config.GapCloserMNK, value => this.bossMod.SetMonkThunderclap(presetName, value));
-        this.SetGapCloser(ref this.lastDragoonWingedGlide, enabled && this.config.GapCloserDRG, value => this.bossMod.SetDragoonWingedGlide(presetName, value));
-        this.SetGapCloser(ref this.lastNinjaShukuchi, enabled && this.config.GapCloserNIN, value => this.bossMod.SetNinjaShukuchi(presetName, value));
-        this.SetGapCloser(ref this.lastViperSlither, enabled && this.config.GapCloserVPR, value => this.bossMod.SetViperSlither(presetName, value));
+        this.SetGapCloser(ref this.lastMonkThunderclap, false, value => this.bossMod.SetMonkThunderclap(presetName, value));
+        this.SetGapCloser(ref this.lastDragoonWingedGlide, false, value => this.bossMod.SetDragoonWingedGlide(presetName, value));
+        this.SetGapCloser(ref this.lastNinjaShukuchi, false, value => this.bossMod.SetNinjaShukuchi(presetName, value));
+        this.SetGapCloser(ref this.lastViperSlither, false, value => this.bossMod.SetViperSlither(presetName, value));
+
+        if (this.config.UseEscapeGapCloser && this.TryUseEscapeGapCloser())
+        {
+            return;
+        }
+
+        if (this.config.UseGapCloser)
+        {
+            this.TryUseGapCloser();
+        }
     }
 
     private void SetGapCloser(ref bool? last, bool enabled, Func<bool, bool> setter)
@@ -471,6 +510,454 @@ public sealed class Plugin : IDalamudPlugin
         {
             last = enabled;
         }
+    }
+
+    private unsafe bool TryUseGapCloser()
+    {
+        if (DateTime.UtcNow < this.nextGapCloserAttempt)
+        {
+            return false;
+        }
+
+        this.nextGapCloserAttempt = DateTime.UtcNow.AddMilliseconds(250);
+
+        var player = ObjectTable.LocalPlayer;
+        var target = TargetManager.Target;
+        if (player == null || target == null)
+        {
+            this.lastGapCloserSafety = "missing player or target";
+            return false;
+        }
+
+        if (target is not IBattleNpc battleNpc || battleNpc.BattleNpcKind != BattleNpcSubKind.Combatant)
+        {
+            this.lastGapCloserSafety = "target is not attackable";
+            return false;
+        }
+
+        if (player.IsCasting || ActionManager.Instance()->AnimationLock > 0)
+        {
+            this.lastGapCloserSafety = "player busy";
+            return false;
+        }
+
+        var distanceToHitbox = DistanceToHitbox(player.Position, player.HitboxRadius, target.Position, target.HitboxRadius);
+        if (distanceToHitbox <= MeleeActionRange || distanceToHitbox > GapCloserMaxRange)
+        {
+            this.lastGapCloserSafety = "target not in gap closer range";
+            return false;
+        }
+
+        var classJobId = player.ClassJob.RowId;
+        return classJobId switch
+        {
+            1 or 19 when this.config.GapCloserPLD => this.TryUseTargetGapCloser(PaladinInterveneActionId, distanceToHitbox),
+            3 or 21 when this.config.GapCloserWAR => this.TryUseTargetGapCloser(WarriorOnslaughtActionId, distanceToHitbox),
+            32 when this.config.GapCloserDRK => this.TryUseTargetGapCloser(DarkKnightShadowstrideActionId, distanceToHitbox),
+            37 when this.config.GapCloserGNB => this.TryUseTargetGapCloser(GunbreakerTrajectoryActionId, distanceToHitbox),
+            2 or 20 when this.config.GapCloserMNK => this.TryUseTargetGapCloser(MonkThunderclapActionId, distanceToHitbox),
+            4 or 22 when this.config.GapCloserDRG => this.TryUseTargetGapCloser(DragoonWingedGlideActionId, distanceToHitbox),
+            29 or 30 when this.config.GapCloserNIN => this.TryUseNinjaShukuchi(),
+            34 when this.config.GapCloserSAM => this.TryUseTargetGapCloser(SamuraiGyotenActionId, distanceToHitbox),
+            39 when this.config.GapCloserRPR => this.TryUseForwardGapCloser(ReaperHellsIngressActionId, distanceToHitbox),
+            41 when this.config.GapCloserVPR => this.TryUseTargetGapCloser(ViperSlitherActionId, distanceToHitbox),
+            _ => false
+        };
+    }
+
+    private unsafe bool TryUseEscapeGapCloser()
+    {
+        if (DateTime.UtcNow < this.nextEscapeGapCloserAttempt)
+        {
+            return false;
+        }
+
+        this.nextEscapeGapCloserAttempt = DateTime.UtcNow.AddMilliseconds(250);
+
+        var player = ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            this.lastEscapeGapCloserSafety = "missing player";
+            return false;
+        }
+
+        if (player.IsCasting || ActionManager.Instance()->AnimationLock > 0)
+        {
+            this.lastEscapeGapCloserSafety = "player busy";
+            return false;
+        }
+
+        var classJobId = player.ClassJob.RowId;
+        if (this.config.CombatStyle == CombatStyle.Greed && !CanUseEscapeGapCloserInGreed(classJobId))
+        {
+            this.lastEscapeGapCloserSafety = "disabled in Greed mode";
+            return false;
+        }
+
+        if (this.config.CombatStyle == CombatStyle.Greed && classJobId == 25 && HasActiveCircleOfPower())
+        {
+            this.lastEscapeGapCloserSafety = "disabled in Greed mode while in Ley Lines";
+            return false;
+        }
+
+        if (!this.bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out var currentReason))
+        {
+            this.lastEscapeGapCloserSafety = currentReason;
+            return false;
+        }
+
+        if (currentSafe)
+        {
+            this.lastEscapeGapCloserSafety = "current position safe";
+            return false;
+        }
+
+        return classJobId switch
+        {
+            2 or 20 when this.config.EscapeGapCloserMNK => this.TryUseFriendlyEscapeGapCloser(MonkThunderclapActionId, GapCloserMaxRange),
+            25 when this.config.EscapeGapCloserBLM => this.TryUseFriendlyEscapeGapCloser(BlackMageAetherialManipulationActionId, 25f),
+            29 or 30 when this.config.EscapeGapCloserNIN => this.TryUseLocationEscapeGapCloser(NinjaShukuchiActionId, GapCloserMaxRange, "Shukuchi"),
+            36 when this.config.EscapeGapCloserBLU => this.TryUseLocationEscapeGapCloser(BlueMageLoomActionId, 15f, "Loom"),
+            39 when this.config.EscapeGapCloserRPR => this.TryUseForwardEscapeGapCloser(ReaperHellsIngressActionId),
+            40 when this.config.EscapeGapCloserSGE => this.TryUseFriendlyEscapeGapCloser(SageIcarusActionId, 25f),
+            41 when this.config.EscapeGapCloserVPR => this.TryUseFriendlyEscapeGapCloser(ViperSlitherActionId, GapCloserMaxRange),
+            42 when this.config.EscapeGapCloserPCT => this.TryUseForwardEscapeGapCloser(PictomancerSmudgeActionId),
+            _ => false
+        };
+    }
+
+    private unsafe bool TryUseFriendlyEscapeGapCloser(uint actionId, float maxRange)
+    {
+        var player = ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return false;
+        }
+
+        if (!CanUseAction(actionId))
+        {
+            this.lastEscapeGapCloserSafety = "action unavailable";
+            return false;
+        }
+
+        foreach (var ally in this.EnumerateFriendlyEscapeTargets(player, maxRange))
+        {
+            if (!this.bossModSafety.TryIsDashSafe(player.Position, ally.Position, out var reason))
+            {
+                this.lastEscapeGapCloserSafety = reason;
+                continue;
+            }
+
+            var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, ally.GameObjectId);
+            if (used)
+            {
+                this.lastEscapeGapCloserSafety = $"used {actionId} on ally";
+                return true;
+            }
+
+            this.lastEscapeGapCloserSafety = $"failed to use {actionId} on ally";
+        }
+
+        if (string.IsNullOrEmpty(this.lastEscapeGapCloserSafety) || this.lastEscapeGapCloserSafety == "current position safe")
+        {
+            this.lastEscapeGapCloserSafety = "no safe ally found";
+        }
+
+        return false;
+    }
+
+    private unsafe bool TryUseLocationEscapeGapCloser(uint actionId, float maxRange, string actionName)
+    {
+        var player = ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return false;
+        }
+
+        if (!CanUseAction(actionId))
+        {
+            this.lastEscapeGapCloserSafety = "action unavailable";
+            return false;
+        }
+
+        foreach (var candidate in this.EnumerateEscapeLocationCandidates(player.Position, maxRange))
+        {
+            if (!this.bossModSafety.TryIsDashSafe(player.Position, candidate, out var reason))
+            {
+                this.lastEscapeGapCloserSafety = reason;
+                continue;
+            }
+
+            var location = candidate;
+            var used = ActionManager.Instance()->UseActionLocation(ActionType.Action, actionId, player.GameObjectId, &location);
+            this.lastEscapeGapCloserSafety = used ? $"used escape {actionName}" : $"failed to use escape {actionName}";
+            return used;
+        }
+
+        if (string.IsNullOrEmpty(this.lastEscapeGapCloserSafety) || this.lastEscapeGapCloserSafety == "current position safe")
+        {
+            this.lastEscapeGapCloserSafety = $"no safe {actionName} escape destination";
+        }
+
+        return false;
+    }
+
+    private unsafe bool TryUseForwardEscapeGapCloser(uint actionId)
+    {
+        var player = ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return false;
+        }
+
+        if (!CanUseAction(actionId))
+        {
+            this.lastEscapeGapCloserSafety = "action unavailable";
+            return false;
+        }
+
+        var destination = player.Position + RotationToDirection(player.Rotation) * FixedForwardGapCloserRange;
+        if (!this.bossModSafety.TryIsDashSafe(player.Position, destination, out var reason))
+        {
+            this.lastEscapeGapCloserSafety = reason;
+            return false;
+        }
+
+        var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, player.GameObjectId);
+        this.lastEscapeGapCloserSafety = used ? $"used {actionId}" : $"failed to use {actionId}";
+        return used;
+    }
+
+    private static bool CanUseEscapeGapCloserInGreed(uint classJobId)
+    {
+        return classJobId is 25 or 36 or 40 or 42;
+    }
+
+    private unsafe bool TryUseTargetGapCloser(uint actionId, float distanceToHitbox)
+    {
+        var player = ObjectTable.LocalPlayer;
+        var target = TargetManager.Target;
+        if (player == null || target == null)
+        {
+            return false;
+        }
+
+        if (!CanUseAction(actionId))
+        {
+            this.lastGapCloserSafety = "action unavailable";
+            return false;
+        }
+
+        if (!TryCalculateTargetDashDestination(player.Position, target.Position, distanceToHitbox, out var destination))
+        {
+            this.lastGapCloserSafety = "could not calculate dash destination";
+            return false;
+        }
+
+        if (!this.bossModSafety.TryIsDashSafe(player.Position, destination, out var reason))
+        {
+            this.lastGapCloserSafety = reason;
+            return false;
+        }
+
+        var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, target.GameObjectId);
+        this.lastGapCloserSafety = used ? $"used {actionId}" : $"failed to use {actionId}";
+        return used;
+    }
+
+    private unsafe bool TryUseForwardGapCloser(uint actionId, float distanceToHitbox)
+    {
+        var player = ObjectTable.LocalPlayer;
+        var target = TargetManager.Target;
+        if (player == null || target == null)
+        {
+            return false;
+        }
+
+        if (!CanUseAction(actionId))
+        {
+            this.lastGapCloserSafety = "action unavailable";
+            return false;
+        }
+
+        var forward = RotationToDirection(player.Rotation);
+        var toTarget = target.Position - player.Position;
+        toTarget.Y = 0;
+        if (toTarget.LengthSquared() <= 0.0001f)
+        {
+            this.lastGapCloserSafety = "could not calculate target direction";
+            return false;
+        }
+
+        var targetDirection = Vector3.Normalize(toTarget);
+        if (Vector3.Dot(forward, targetDirection) < 0.85f)
+        {
+            this.lastGapCloserSafety = "target not in front for fixed dash";
+            return false;
+        }
+
+        var destination = player.Position + forward * FixedForwardGapCloserRange;
+        var destinationDistanceToHitbox = DistanceToHitbox(destination, player.HitboxRadius, target.Position, target.HitboxRadius);
+        if (destinationDistanceToHitbox >= distanceToHitbox || destinationDistanceToHitbox > MeleeActionRange + 1f)
+        {
+            this.lastGapCloserSafety = "fixed dash would not re-engage";
+            return false;
+        }
+
+        if (!this.bossModSafety.TryIsDashSafe(player.Position, destination, out var reason))
+        {
+            this.lastGapCloserSafety = reason;
+            return false;
+        }
+
+        var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, player.GameObjectId);
+        this.lastGapCloserSafety = used ? $"used {actionId}" : $"failed to use {actionId}";
+        return used;
+    }
+
+    private unsafe bool TryUseNinjaShukuchi()
+    {
+        var player = ObjectTable.LocalPlayer;
+        var target = TargetManager.Target;
+        if (player == null || target == null)
+        {
+            return false;
+        }
+
+        if (!CanUseAction(NinjaShukuchiActionId))
+        {
+            this.lastGapCloserSafety = "action unavailable";
+            return false;
+        }
+
+        if (!this.TryFindSafeShukuchiDestination(player.Position, target.Position, target.HitboxRadius, out var destination))
+        {
+            return false;
+        }
+
+        var actionManager = ActionManager.Instance();
+        var location = destination;
+        var used = actionManager->UseActionLocation(ActionType.Action, NinjaShukuchiActionId, player.GameObjectId, &location);
+        this.lastGapCloserSafety = used ? "used Shukuchi" : "failed to use Shukuchi";
+        return used;
+    }
+
+    private bool TryFindSafeShukuchiDestination(Vector3 playerPosition, Vector3 targetPosition, float targetHitboxRadius, out Vector3 destination)
+    {
+        foreach (var candidate in this.EnumerateShukuchiCandidates(playerPosition, targetPosition, targetHitboxRadius))
+        {
+            if (Vector3.Distance(playerPosition, candidate) > GapCloserMaxRange)
+            {
+                continue;
+            }
+
+            if (this.bossModSafety.TryIsDashSafe(playerPosition, candidate, out var reason))
+            {
+                destination = candidate;
+                this.lastGapCloserSafety = "safe Shukuchi destination found";
+                return true;
+            }
+
+            this.lastGapCloserSafety = reason;
+        }
+
+        destination = default;
+        if (string.IsNullOrEmpty(this.lastGapCloserSafety) || this.lastGapCloserSafety == "safe Shukuchi destination found")
+        {
+            this.lastGapCloserSafety = "no safe Shukuchi destination";
+        }
+
+        return false;
+    }
+
+    private IEnumerable<Vector3> EnumerateShukuchiCandidates(Vector3 playerPosition, Vector3 targetPosition, float targetHitboxRadius)
+    {
+        var radius = targetHitboxRadius + GapCloserDestinationMeleeRange;
+        var toTarget = targetPosition - playerPosition;
+        toTarget.Y = 0;
+        if (toTarget.LengthSquared() > 0.0001f)
+        {
+            var direction = Vector3.Normalize(toTarget);
+            yield return new Vector3(targetPosition.X - (direction.X * radius), playerPosition.Y, targetPosition.Z - (direction.Z * radius));
+        }
+
+        for (var i = 0; i < 16; i++)
+        {
+            var angle = i * (MathF.Tau / 16f);
+            yield return new Vector3(
+                targetPosition.X + MathF.Cos(angle) * radius,
+                playerPosition.Y,
+                targetPosition.Z + MathF.Sin(angle) * radius);
+        }
+    }
+
+    private IEnumerable<IBattleChara> EnumerateFriendlyEscapeTargets(IBattleChara player, float maxRange)
+    {
+        return ObjectTable
+            .OfType<IBattleChara>()
+            .Where(ally =>
+                ally.ObjectKind == ObjectKind.Pc &&
+                ally.GameObjectId != player.GameObjectId &&
+                ally.GameObjectId != 0 &&
+                !ally.IsDead &&
+                ally.CurrentHp > 0 &&
+                Vector3.Distance(player.Position, ally.Position) <= maxRange)
+            .OrderByDescending(ally => Vector3.Distance(player.Position, ally.Position));
+    }
+
+    private IEnumerable<Vector3> EnumerateEscapeLocationCandidates(Vector3 playerPosition, float maxRange)
+    {
+        foreach (var radius in EscapeLocationRadii)
+        {
+            if (radius > maxRange)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < 16; i++)
+            {
+                var angle = i * (MathF.Tau / 16f);
+                yield return new Vector3(
+                    playerPosition.X + MathF.Cos(angle) * radius,
+                    playerPosition.Y,
+                    playerPosition.Z + MathF.Sin(angle) * radius);
+            }
+        }
+    }
+
+    private static unsafe bool CanUseAction(uint actionId)
+    {
+        var actionManager = ActionManager.Instance();
+        return actionManager->GetActionStatus(ActionType.Action, actionId) == 0 &&
+               actionManager->GetCurrentCharges(actionId) > 0;
+    }
+
+    private static bool TryCalculateTargetDashDestination(Vector3 playerPosition, Vector3 targetPosition, float distanceToHitbox, out Vector3 destination)
+    {
+        var direction = targetPosition - playerPosition;
+        direction.Y = 0;
+        if (direction.LengthSquared() <= 0.0001f)
+        {
+            destination = default;
+            return false;
+        }
+
+        direction = Vector3.Normalize(direction);
+        destination = playerPosition + direction * Math.Max(0f, distanceToHitbox);
+        return true;
+    }
+
+    private static float DistanceToHitbox(Vector3 from, float fromHitboxRadius, Vector3 to, float toHitboxRadius)
+    {
+        var delta = to - from;
+        delta.Y = 0;
+        return delta.Length() - fromHitboxRadius - toHitboxRadius;
+    }
+
+    private static Vector3 RotationToDirection(float rotation)
+    {
+        var (sin, cos) = MathF.SinCos(rotation);
+        return new Vector3(sin, 0f, cos);
     }
 
     private float CalculateDesiredRange()
@@ -586,6 +1073,11 @@ public sealed class Plugin : IDalamudPlugin
         return ObjectTable.LocalPlayer?.StatusList.Any(status => status.StatusId == TrueNorthStatusId && status.RemainingTime > 0) == true;
     }
 
+    private static bool HasActiveCircleOfPower()
+    {
+        return ObjectTable.LocalPlayer?.StatusList.Any(status => status.StatusId == CircleOfPowerStatusId && status.RemainingTime > 0) == true;
+    }
+
     private static unsafe uint GetTrueNorthCharges()
     {
         try
@@ -621,7 +1113,7 @@ public sealed class Plugin : IDalamudPlugin
                 this.TrySetEnabled(!this.config.Enabled);
                 break;
             case "status":
-                this.Print($"Enabled={this.config.Enabled}, Dependencies={(this.GetDependencyWarning() ?? "OK")}, TrueNorthManagement={(this.GetTrueNorthWarning() ?? this.rsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={this.lastPositional}, TrueNorthCharges={GetTrueNorthCharges()}, TrueNorthActive={HasActiveTrueNorth()}, Range={this.lastRange:0.0}, Movement={this.lastMovement}, MovementRange={this.lastMovementRangeStrategy}, Cushion={this.lastForbiddenZoneCushion}, Role={this.lastPartyRole}, LeylinesBTL={this.lastLeylinesBetweenTheLines}, LeylinesRetrace={this.lastLeylinesRetrace}, LeylinesGoal={this.lastLeylinesGoal}, GapMNK={this.lastMonkThunderclap}, GapDRG={this.lastDragoonWingedGlide}, GapNIN={this.lastNinjaShukuchi}, GapVPR={this.lastViperSlither}, Initialized={this.initializedPreset}");
+                this.Print($"Enabled={this.config.Enabled}, Dependencies={(this.GetDependencyWarning() ?? "OK")}, TrueNorthManagement={(this.GetTrueNorthWarning() ?? this.rsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={this.lastPositional}, TrueNorthCharges={GetTrueNorthCharges()}, TrueNorthActive={HasActiveTrueNorth()}, Range={this.lastRange:0.0}, Movement={this.lastMovement}, MovementRange={this.lastMovementRangeStrategy}, Cushion={this.lastForbiddenZoneCushion}, Role={this.lastPartyRole}, LeylinesBTL={this.lastLeylinesBetweenTheLines}, LeylinesRetrace={this.lastLeylinesRetrace}, LeylinesGoal={this.lastLeylinesGoal}, BmrGapMNK={this.lastMonkThunderclap}, BmrGapDRG={this.lastDragoonWingedGlide}, BmrGapNIN={this.lastNinjaShukuchi}, BmrGapVPR={this.lastViperSlither}, GapPLD={this.config.GapCloserPLD}, GapWAR={this.config.GapCloserWAR}, GapDRK={this.config.GapCloserDRK}, GapGNB={this.config.GapCloserGNB}, GapSAM={this.config.GapCloserSAM}, GapRPR={this.config.GapCloserRPR}, EscapeGapMNK={this.config.EscapeGapCloserMNK}, EscapeGapNIN={this.config.EscapeGapCloserNIN}, EscapeGapRPR={this.config.EscapeGapCloserRPR}, EscapeGapVPR={this.config.EscapeGapCloserVPR}, EscapeGapBLM={this.config.EscapeGapCloserBLM}, EscapeGapSGE={this.config.EscapeGapCloserSGE}, EscapeGapPCT={this.config.EscapeGapCloserPCT}, EscapeGapBLU={this.config.EscapeGapCloserBLU}, ReflectedGapSafety={this.bossModSafety.Status}, LastGapCloser={this.lastGapCloserSafety}, LastEscapeGapCloser={this.lastEscapeGapCloserSafety}, Initialized={this.initializedPreset}");
                 break;
             case "config":
                 this.OpenConfig();
@@ -661,7 +1153,7 @@ public sealed class Plugin : IDalamudPlugin
         var trueNorthWarning = this.GetTrueNorthWarning();
         this.dtrEntry.Tooltip = dependencyWarning == null
             ? "Left click: toggle Xel's Combat AI\nRight click: open config"
-            : $"Cannot enable: {dependencyWarning}\nRight click: open config";
+            : $"Waiting for: {dependencyWarning}\nRight click: open config";
         if (trueNorthWarning != null)
         {
             this.dtrEntry.Tooltip += $"\nWarning: {trueNorthWarning}";
@@ -699,21 +1191,26 @@ public sealed class Plugin : IDalamudPlugin
         this.lastViperSlither = null;
         this.rsrTrueNorthDisabled = null;
         this.trueNorthStrategy = null;
+        this.nextGapCloserAttempt = DateTime.MinValue;
+        this.nextEscapeGapCloserAttempt = DateTime.MinValue;
+        this.lastGapCloserSafety = "not checked";
+        this.lastEscapeGapCloserSafety = "not checked";
+        this.bossModSafety.Reset();
     }
 
     private bool TrySetEnabled(bool enabled, bool warn = true)
     {
         if (enabled && !this.DependenciesAvailable(out var missing))
         {
-            this.config.Enabled = false;
+            this.config.Enabled = true;
             this.ResetRuntimeCache();
             this.SaveConfig();
             if (warn)
             {
-                this.WarnMissingDependencies(missing);
+                Log.Verbose($"XCAI enabled while waiting for dependencies: {missing}.");
             }
 
-            return false;
+            return true;
         }
 
         this.config.Enabled = enabled;
@@ -728,18 +1225,31 @@ public sealed class Plugin : IDalamudPlugin
         return true;
     }
 
-    private void DisableDueToMissingDependencies(string missing)
+    private void WaitForDependencies(string missing)
     {
-        this.DeactivateBossModPreset();
-        this.config.Enabled = false;
-        this.ResetRuntimeCache();
-        this.SaveConfig();
-        this.WarnMissingDependencies(missing);
+        if (this.initializedPreset)
+        {
+            this.DeactivateBossModPreset();
+        }
+
+        this.initializedPreset = false;
+        if (!string.Equals(this.lastMissingDependencies, missing, StringComparison.Ordinal))
+        {
+            this.lastMissingDependencies = missing;
+            Log.Verbose($"XCAI waiting for dependencies: {missing}.");
+            this.UpdateDtr();
+        }
     }
 
-    private void WarnMissingDependencies(string missing)
+    private void ClearDependencyWaitState()
     {
-        ChatGui.PrintError($"[Xel's Combat AI] Cannot enable: {missing}.");
+        if (this.lastMissingDependencies == null)
+        {
+            return;
+        }
+
+        this.lastMissingDependencies = null;
+        this.UpdateDtr();
     }
 
     private string? GetDependencyWarning()

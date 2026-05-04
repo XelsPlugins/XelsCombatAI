@@ -23,7 +23,7 @@ public sealed class Configuration : IPluginConfiguration
     public const float DefaultPreferredForbiddenZoneDistance = 1f;
     public const float EnemyCountRadius = 10f;
 
-    public int Version { get; set; } = 5;
+    public int Version { get; set; } = 8;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -40,11 +40,25 @@ public sealed class Configuration : IPluginConfiguration
     public bool AoERangeInMultiTarget { get; set; } = true;
     public bool AoEHealerMeleeRange { get; set; } = false;
     public bool UseGapCloser { get; set; } = false;
+    public bool GapCloserPLD { get; set; } = true;
+    public bool GapCloserWAR { get; set; } = true;
+    public bool GapCloserDRK { get; set; } = true;
+    public bool GapCloserGNB { get; set; } = true;
     public bool GapCloserMNK { get; set; } = true;
     public bool GapCloserDRG { get; set; } = true;
     public bool GapCloserNIN { get; set; } = true;
-    public bool GapCloserSAM { get; set; } = false;
+    public bool GapCloserSAM { get; set; } = true;
+    public bool GapCloserRPR { get; set; } = true;
     public bool GapCloserVPR { get; set; } = true;
+    public bool UseEscapeGapCloser { get; set; } = false;
+    public bool EscapeGapCloserMNK { get; set; } = true;
+    public bool EscapeGapCloserNIN { get; set; } = true;
+    public bool EscapeGapCloserRPR { get; set; } = true;
+    public bool EscapeGapCloserVPR { get; set; } = true;
+    public bool EscapeGapCloserBLM { get; set; } = true;
+    public bool EscapeGapCloserSGE { get; set; } = true;
+    public bool EscapeGapCloserPCT { get; set; } = true;
+    public bool EscapeGapCloserBLU { get; set; } = true;
     public bool EchoStatusToChat { get; set; } = true;
     public CombatStyle CombatStyle { get; set; } = CombatStyle.Normal;
     public float MeleeRange { get; set; } = DefaultMeleeRange;
@@ -94,6 +108,36 @@ public sealed class Configuration : IPluginConfiguration
         {
             this.GapCloserSAM = false;
             this.Version = 5;
+        }
+
+        if (this.Version < 6)
+        {
+            this.GapCloserPLD = true;
+            this.GapCloserWAR = true;
+            this.GapCloserDRK = true;
+            this.GapCloserGNB = true;
+            this.GapCloserSAM = true;
+            this.GapCloserRPR = true;
+            this.Version = 6;
+        }
+
+        if (this.Version < 7)
+        {
+            this.UseEscapeGapCloser = false;
+            this.EscapeGapCloserMNK = true;
+            this.EscapeGapCloserNIN = true;
+            this.EscapeGapCloserRPR = true;
+            this.EscapeGapCloserVPR = true;
+            this.Version = 7;
+        }
+
+        if (this.Version < 8)
+        {
+            this.EscapeGapCloserBLM = true;
+            this.EscapeGapCloserSGE = true;
+            this.EscapeGapCloserPCT = true;
+            this.EscapeGapCloserBLU = true;
+            this.Version = 8;
         }
     }
 
@@ -146,11 +190,25 @@ public sealed class Configuration : IPluginConfiguration
         this.RoleBasedRange = true;
         this.AoERangeInMultiTarget = true;
         this.UseGapCloser = false;
+        this.GapCloserPLD = true;
+        this.GapCloserWAR = true;
+        this.GapCloserDRK = true;
+        this.GapCloserGNB = true;
         this.GapCloserMNK = true;
         this.GapCloserDRG = true;
         this.GapCloserNIN = true;
-        this.GapCloserSAM = false;
+        this.GapCloserSAM = true;
+        this.GapCloserRPR = true;
         this.GapCloserVPR = true;
+        this.UseEscapeGapCloser = false;
+        this.EscapeGapCloserMNK = true;
+        this.EscapeGapCloserNIN = true;
+        this.EscapeGapCloserRPR = true;
+        this.EscapeGapCloserVPR = true;
+        this.EscapeGapCloserBLM = true;
+        this.EscapeGapCloserSGE = true;
+        this.EscapeGapCloserPCT = true;
+        this.EscapeGapCloserBLU = true;
         this.EchoStatusToChat = true;
         this.CombatStyle = CombatStyle.Normal;
         this.ResetRanges();

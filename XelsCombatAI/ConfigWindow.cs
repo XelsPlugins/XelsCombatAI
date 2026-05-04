@@ -55,7 +55,7 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         if (dependencyWarningText != null)
         {
-            ImGui.TextColored(0xff4040ff, $"Cannot enable: {dependencyWarningText}");
+            ImGui.TextColored(0xff4040ff, $"Waiting for: {dependencyWarningText}");
             ImGui.Separator();
         }
 
@@ -101,7 +101,7 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         this.DrawSectionHeader("Movement");
         changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v);
-        changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Stays close to the tank when your target has no boss module. Automatically disabled on boss encounters.");
+        changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Follow the tank on targets without boss modules.\nDisabled automatically on boss encounters.");
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
@@ -114,11 +114,11 @@ internal sealed class ConfigWindow : Window, IDisposable
                 this.config.ManageTrueNorth,
                 this.defaultConfig.ManageTrueNorth,
                 v => { this.config.ManageTrueNorth = v; if (v) this.manageTrueNorthEnabled(); },
-                "XCAI will use True North and disable RSR's Auto True North via IPC to prevent conflicts. The RSR setting is not restored when this is disabled.");
+                "Uses True North from XCAI.\nDisables RSR Auto True North while enabled.\nRSR is not restored automatically.");
             ImGui.Unindent();
         }
 
-        if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Only manages existing Ley Lines placement — will not put down Ley Lines."))
+        if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Manages existing Ley Lines only.\nWill not place Ley Lines."))
         {
             ImGui.Indent();
             changed |= this.Checkbox("Use Between the Lines", this.config.UseBetweenTheLines, this.defaultConfig.UseBetweenTheLines, v => this.config.UseBetweenTheLines = v);
@@ -127,13 +127,33 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.Unindent();
         }
 
-        if (this.CollapsingCheckbox("Use BMR-managed gap closer to re-engage", this.config.UseGapCloser, this.defaultConfig.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Uses only BossMod utility modules with BossMod dash safety checks.", icon: FontAwesomeIcon.SkullCrossbones))
+        if (this.CollapsingCheckbox("Use gap closer to (re)engage", this.config.UseGapCloser, this.defaultConfig.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Gets back into melee range when BossMod says it is safe.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
         {
             ImGui.Indent();
+            changed |= this.Checkbox("PLD — Intervene", this.config.GapCloserPLD, this.defaultConfig.GapCloserPLD, v => this.config.GapCloserPLD = v);
+            changed |= this.Checkbox("WAR — Onslaught", this.config.GapCloserWAR, this.defaultConfig.GapCloserWAR, v => this.config.GapCloserWAR = v);
+            changed |= this.Checkbox("DRK — Shadowstride", this.config.GapCloserDRK, this.defaultConfig.GapCloserDRK, v => this.config.GapCloserDRK = v);
+            changed |= this.Checkbox("GNB — Trajectory", this.config.GapCloserGNB, this.defaultConfig.GapCloserGNB, v => this.config.GapCloserGNB = v);
             changed |= this.Checkbox("MNK — Thunderclap", this.config.GapCloserMNK, this.defaultConfig.GapCloserMNK, v => this.config.GapCloserMNK = v);
             changed |= this.Checkbox("DRG — Winged Glide", this.config.GapCloserDRG, this.defaultConfig.GapCloserDRG, v => this.config.GapCloserDRG = v);
             changed |= this.Checkbox("NIN — Shukuchi", this.config.GapCloserNIN, this.defaultConfig.GapCloserNIN, v => this.config.GapCloserNIN = v);
+            changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, this.defaultConfig.GapCloserSAM, v => this.config.GapCloserSAM = v);
+            changed |= this.Checkbox("RPR — Hell's Ingress", this.config.GapCloserRPR, this.defaultConfig.GapCloserRPR, v => this.config.GapCloserRPR = v);
             changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, this.defaultConfig.GapCloserVPR, v => this.config.GapCloserVPR = v);
+            ImGui.Unindent();
+        }
+
+        if (this.CollapsingCheckbox("Use gap closer to escape danger", this.config.UseEscapeGapCloser, this.defaultConfig.UseEscapeGapCloser, v => { this.config.UseEscapeGapCloser = v; changed = true; }, tooltip: "Leaves danger when BossMod says the landing point is safe.\nGreed mode: BLM, SGE, PCT, and BLU only.\nBLM will not leave Ley Lines.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
+        {
+            ImGui.Indent();
+            changed |= this.Checkbox("MNK — Thunderclap to ally", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v);
+            changed |= this.Checkbox("NIN — Shukuchi", this.config.EscapeGapCloserNIN, this.defaultConfig.EscapeGapCloserNIN, v => this.config.EscapeGapCloserNIN = v);
+            changed |= this.Checkbox("RPR — Hell's Ingress", this.config.EscapeGapCloserRPR, this.defaultConfig.EscapeGapCloserRPR, v => this.config.EscapeGapCloserRPR = v);
+            changed |= this.Checkbox("VPR — Slither to ally", this.config.EscapeGapCloserVPR, this.defaultConfig.EscapeGapCloserVPR, v => this.config.EscapeGapCloserVPR = v);
+            changed |= this.Checkbox("BLM — Aetherial Manipulation", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v);
+            changed |= this.Checkbox("SGE — Icarus", this.config.EscapeGapCloserSGE, this.defaultConfig.EscapeGapCloserSGE, v => this.config.EscapeGapCloserSGE = v);
+            changed |= this.Checkbox("PCT — Smudge", this.config.EscapeGapCloserPCT, this.defaultConfig.EscapeGapCloserPCT, v => this.config.EscapeGapCloserPCT = v);
+            changed |= this.Checkbox("BLU — Loom", this.config.EscapeGapCloserBLU, this.defaultConfig.EscapeGapCloserBLU, v => this.config.EscapeGapCloserBLU = v);
             ImGui.Unindent();
         }
 
@@ -141,7 +161,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
 
         this.DrawSectionHeader("Combat Behavior");
-        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal keeps BossMod moving directly to its destination. Greed lets BossMod balance uptime against mechanic safety.");
+        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal moves directly to safety.\nGreed balances uptime against mechanic safety.");
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
@@ -301,12 +321,6 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         if (!changed)
         {
-            return;
-        }
-
-        if (current && dependencyWarningText != null)
-        {
-            this.setEnabled(false);
             return;
         }
 
