@@ -212,10 +212,12 @@ internal sealed class ConfigWindow : Window, IDisposable
         changed |= this.Checkbox("AoE target distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v);
         if (!this.config.AoERangeInMultiTarget)
             ImGui.BeginDisabled();
-        changed |= this.Checkbox("WHM/SCH/SGE use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v);
+        changed |= this.Checkbox("Non-AST healers use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v);
         changed |= this.SliderFloat("AoE melee max distance", this.config.AoEMeleeRange, this.defaultConfig.AoEMeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMeleeRange = v);
         changed |= this.SliderFloat("AoE physical ranged max distance", this.config.AoEPhysicalRangedRange, this.defaultConfig.AoEPhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEPhysicalRangedRange = v);
+        if (this.config.HealerPartyCoverage) ImGui.BeginDisabled();
         changed |= this.SliderFloat("AoE healer max distance", this.config.AoEHealerRange, this.defaultConfig.AoEHealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEHealerRange = v);
+        if (this.config.HealerPartyCoverage) ImGui.EndDisabled();
         changed |= this.SliderFloat("AoE magic ranged max distance", this.config.AoEMagicRangedRange, this.defaultConfig.AoEMagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMagicRangedRange = v);
         changed |= this.SliderInt("AoE enemy threshold", this.config.AoEEnemyThreshold, this.defaultConfig.AoEEnemyThreshold, 1, 10, v => this.config.AoEEnemyThreshold = v);
         if (!this.config.AoERangeInMultiTarget)

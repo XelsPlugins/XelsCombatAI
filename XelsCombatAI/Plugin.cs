@@ -271,9 +271,8 @@ public sealed class Plugin : IDalamudPlugin
             {
                 if (this.config.HealerPartyCoverage &&
                     GetCurrentRangeRole() == RangeRole.Healer &&
-                    this.CurrentTargetHasBossModule() &&
-                    !this.IsAoEMultiTargetActive())
-                    this.SetRange(HealerCoverageAttackRange);
+                    this.CurrentTargetHasBossModule())
+                    this.SetRange(this.CalculateHealerCoverageRange());
                 else
                     this.SetRange(this.CalculateDesiredRange());
             }
@@ -1152,7 +1151,7 @@ public sealed class Plugin : IDalamudPlugin
             if (enemyCount > this.config.AoEEnemyThreshold)
             {
                 var classJobId = ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;
-                if (rangeRole == RangeRole.Melee || (this.config.AoEHealerMeleeRange && classJobId is 24 or 28 or 40))
+                if (rangeRole == RangeRole.Melee || (this.config.AoEHealerMeleeRange && IsMeleeAoEHealer(classJobId)))
                     return this.config.AoEMeleeRange;
                 if (!this.config.RoleBasedRange)
                     return this.config.AoERangedRange;
@@ -1185,6 +1184,24 @@ public sealed class Plugin : IDalamudPlugin
         if (!this.config.AoERangeInMultiTarget || TargetManager.Target == null) return false;
         return ObjectFunctions.GetAttackableEnemyCountAroundPoint(
             TargetManager.Target.Position, Configuration.EnemyCountRadius) > this.config.AoEEnemyThreshold;
+    }
+
+    private float CalculateHealerCoverageRange()
+    {
+        var classJobId = ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;
+        if (this.IsAoEMultiTargetActive() &&
+            this.config.AoEHealerMeleeRange &&
+            IsMeleeAoEHealer(classJobId))
+        {
+            return this.config.AoEMeleeRange;
+        }
+
+        return HealerCoverageAttackRange;
+    }
+
+    private static bool IsMeleeAoEHealer(uint classJobId)
+    {
+        return classJobId is 6 or 24 or 28 or 40;
     }
 
     private bool CurrentTargetHasBossModule()

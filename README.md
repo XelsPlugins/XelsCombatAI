@@ -18,7 +18,7 @@ While you are in combat, the plugin automatically:
 - **Stays close to a tank** when your target doesn't have a boss module
 - **Manages your Ley Lines** — returns to them when safe, uses Between the Lines and Retrace if available
 - **Stays clear of forbidden zones** with a configurable buffer distance
-- **Uses reflected BossMod-safe gap closers** to re-engage after being knocked away or escape a dangerous spot (optional, off by default)
+- **Uses BossMod-checked gap closers** to re-engage after being knocked away or escape a dangerous spot (optional, off by default)
 - **Manages True North** usage and disables RSR's Auto True North to prevent conflicts (optional, requires RSR)
 
 Out of combat, the plugin stops managing movement entirely and hands control back to you. Settings are automatically re-applied after death and resurrection.
@@ -52,11 +52,11 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 **Positioning** — Manage positionals, True North, Ley Lines, and gap closers.
 
 - *Manage positionals* — Moves you to the correct rear/flank position for your rotation.
-- *Manage True North* — Uses True North automatically and disables RSR's Auto True North via IPC to prevent conflicts. Requires RSR.
+- *Manage True North* — Uses True North automatically and disables RSR's Auto True North to prevent conflicts. Requires RSR.
 - *Manage Ley Lines* — Helps BLM stay on Ley Lines and use Between the Lines / Retrace when available. Does not place Ley Lines.
-- *Use gap closer to (re)engage* — XCAI casts supported gap closers only after an unsupported reflected BossMod safety check says the destination is safe. If BossMod reflection fails, no gap closer is used. Disabled by default. Supported actions are PLD Intervene, WAR Onslaught, DRK Shadowstride, GNB Trajectory, MNK Thunderclap, DRG Winged Glide, NIN Shukuchi, SAM Hissatsu: Gyoten, DNC En Avant, RPR Hell's Ingress, and VPR Slither.
-- *Use gap closer to escape danger* — When your current position is dangerous, XCAI can use supported movement abilities to jump to a safe ally or location. If BossMod reflection fails, no escape gap closer is used. Disabled by default. Supported actions are MNK Thunderclap to ally, NIN Shukuchi, DNC En Avant, RPR Hell's Ingress, VPR Slither to ally, BLM Aetherial Manipulation, SGE Icarus, PCT Smudge, and BLU Loom. In Greed combat style, only DNC, BLM, SGE, PCT, and BLU escape actions are allowed; BLM will not use escape while standing in Ley Lines.
-- *Healer: stay near party* — On boss fights, enables BossMod's healer party coverage goal while keeping BossMod healer actions disabled.
+- *Use gap closer to (re)engage* — XCAI casts supported gap closers only after BossMod reports the destination is safe. If that safety check is unavailable, no gap closer is used. Disabled by default. Supported actions are PLD Intervene, WAR Onslaught, DRK Shadowstride, GNB Trajectory, MNK Thunderclap, DRG Winged Glide, NIN Shukuchi, SAM Hissatsu: Gyoten, DNC En Avant, RPR Hell's Ingress, and VPR Slither.
+- *Use gap closer to escape danger* — When your current position is dangerous, XCAI can use supported movement abilities to jump to a safe ally or location. If BossMod's safety check is unavailable, no escape gap closer is used. Disabled by default. Supported actions are MNK Thunderclap to ally, NIN Shukuchi, DNC En Avant, RPR Hell's Ingress, VPR Slither to ally, BLM Aetherial Manipulation, SGE Icarus, PCT Smudge, and BLU Loom. In Greed combat style, only DNC, BLM, SGE, PCT, and BLU escape actions are allowed; BLM will not use escape while standing in Ley Lines.
+- *Healer: stay near party* — On boss fights, keeps healers near the party while staying within attack range. During AoE, non-AST healers use melee range only if that AoE option is enabled.
 
 **Combat Behavior** — Choose between *Normal* (BossMod moves directly to its destination) and *Greed* (BossMod balances uptime against mechanic safety).
 
@@ -68,7 +68,7 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 **Single target distance** — Set your preferred max distance per role (melee, physical ranged, healer, magic ranged). Disable to stop managing single-target distance.
 
-**AoE target distance** — When multiple enemies are nearby the target, the plugin switches to these distances instead. The threshold controls how many enemies must be present to trigger AoE mode. You can also enable WHM/SCH/SGE to use melee AoE distance so they stay in range of their ground targets.
+**AoE target distance** — When multiple enemies are nearby the target, the plugin switches to these distances instead. The threshold controls how many enemies must be present to trigger AoE mode. You can also enable non-AST healers to use melee AoE distance so they stay in range of their ground targets.
 
 **Forbidden zone** — Keeps you a set distance back from forbidden zones to avoid clipping into them.
 
