@@ -144,7 +144,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.Unindent();
         }
 
-        if (this.CollapsingCheckbox("Use gap closer to escape danger", this.config.UseEscapeGapCloser, this.defaultConfig.UseEscapeGapCloser, v => { this.config.UseEscapeGapCloser = v; changed = true; }, tooltip: "Leaves danger when BossMod says the landing point is safe.\nGreed mode: DNC, BLM, SGE, PCT, and BLU only.\nBLM will not leave Ley Lines.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
+        if (this.CollapsingCheckbox("Use gap closer to escape danger", this.config.UseEscapeGapCloser, this.defaultConfig.UseEscapeGapCloser, v => { this.config.UseEscapeGapCloser = v; changed = true; }, tooltip: "Leaves danger when BossMod says the landing point is safe.\nGreed mode still requires movement toward BossMod's safe point.\nBLM will not leave Ley Lines.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
         {
             ImGui.Indent();
             changed |= this.Checkbox("MNK — Thunderclap to ally", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v);

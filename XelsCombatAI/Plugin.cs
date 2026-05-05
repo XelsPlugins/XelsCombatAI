@@ -25,8 +25,12 @@ public sealed class Plugin : IDalamudPlugin
     private const float MeleeActionRange = 3f;
     private const float HealerCoverageAttackRange = 25f;
     private const float GapCloserMaxRange = 20f;
+    private const float GapCloserMinimumDistance = 4f;
     private const float GapCloserDestinationMeleeRange = 2.6f;
+    private const float EscapeGapCloserMinimumSafetyDistance = 4f;
+    private const double EscapeGapCloserDangerWindowMilliseconds = 750d;
     private const float FixedForwardGapCloserRange = 15f;
+    private const float PositionalDotThreshold = 0.7071068f;
     private const uint TrueNorthActionId = 7546;
     private const uint TrueNorthStatusId = 1250;
     private const uint CircleOfPowerStatusId = 738;
@@ -102,6 +106,7 @@ public sealed class Plugin : IDalamudPlugin
     private DateTime nextRuntimeUpdate = DateTime.MinValue;
     private DateTime nextGapCloserAttempt = DateTime.MinValue;
     private DateTime nextEscapeGapCloserAttempt = DateTime.MinValue;
+    private DateTime escapeDangerDetectedAt = DateTime.MinValue;
     private string lastGapCloserSafety = "not checked";
     private string lastEscapeGapCloserSafety = "not checked";
     private string? lastMissingDependencies;
@@ -304,7 +309,11 @@ public sealed class Plugin : IDalamudPlugin
                     {
                         if (this.trueNorthStrategy == null)
                             this.trueNorthStrategy = HasActiveTrueNorth() || GetTrueNorthCharges() > 0;
-                        if (this.trueNorthStrategy == true)
+                        if (IsCurrentPositionalCorrect(positional))
+                        {
+                            this.SetPositional(positional);
+                        }
+                        else if (this.trueNorthStrategy == true)
                         {
                             TryUseTrueNorth(positional);
                             var pending = !HasActiveTrueNorth() && !IsOutsideMeleeRange();
@@ -382,6 +391,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (positional == Positional.Any) return false;
         if (GetCurrentRangeRole() != RangeRole.Melee) return false;
+        if (IsCurrentPositionalCorrect(positional)) return false;
         if (HasActiveTrueNorth()) return false;
         if (GetTrueNorthCharges() == 0) return false;
         if (IsOutsideMeleeRange()) return false;
@@ -620,6 +630,12 @@ public sealed class Plugin : IDalamudPlugin
             return false;
         }
 
+        if (distanceToHitbox < GapCloserMinimumDistance)
+        {
+            this.lastGapCloserSafety = "target under 4y";
+            return false;
+        }
+
         var classJobId = player.ClassJob.RowId;
         return classJobId switch
         {
@@ -661,21 +677,9 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         var classJobId = player.ClassJob.RowId;
-        if (this.config.CombatStyle == CombatStyle.Greed && !CanUseEscapeGapCloserInGreed(classJobId))
-        {
-            this.lastEscapeGapCloserSafety = "disabled in Greed mode";
-            return false;
-        }
-
         if (this.config.CombatStyle == CombatStyle.Greed && classJobId == 25 && HasActiveCircleOfPower())
         {
             this.lastEscapeGapCloserSafety = "disabled in Greed mode while in Ley Lines";
-            return false;
-        }
-
-        if (!this.bossModSafety.TryGetSafeMovementIntent(player.Position, out _, out var intentReason))
-        {
-            this.lastEscapeGapCloserSafety = intentReason;
             return false;
         }
 
@@ -687,26 +691,51 @@ public sealed class Plugin : IDalamudPlugin
 
         if (currentSafe)
         {
+            this.escapeDangerDetectedAt = DateTime.MinValue;
             this.lastEscapeGapCloserSafety = "current position safe";
+            return false;
+        }
+
+        var now = DateTime.UtcNow;
+        if (this.escapeDangerDetectedAt == DateTime.MinValue)
+        {
+            this.escapeDangerDetectedAt = now;
+        }
+
+        if ((now - this.escapeDangerDetectedAt).TotalMilliseconds > EscapeGapCloserDangerWindowMilliseconds)
+        {
+            this.lastEscapeGapCloserSafety = "already walking to safety";
+            return false;
+        }
+
+        if (!this.bossModSafety.TryGetSafeMovementIntent(player.Position, out var safeMovementDestination, out var intentReason))
+        {
+            this.lastEscapeGapCloserSafety = intentReason;
+            return false;
+        }
+
+        if (Distance2D(player.Position, safeMovementDestination) < EscapeGapCloserMinimumSafetyDistance)
+        {
+            this.lastEscapeGapCloserSafety = "safe movement under 4y";
             return false;
         }
 
         return classJobId switch
         {
-            2 or 20 when this.config.EscapeGapCloserMNK => this.TryUseFriendlyEscapeGapCloser(MonkThunderclapActionId, GapCloserMaxRange),
-            25 when this.config.EscapeGapCloserBLM => this.TryUseFriendlyEscapeGapCloser(BlackMageAetherialManipulationActionId, 25f),
-            29 or 30 when this.config.EscapeGapCloserNIN => this.TryUseLocationEscapeGapCloser(NinjaShukuchiActionId, GapCloserMaxRange, "Shukuchi"),
-            36 when this.config.EscapeGapCloserBLU => this.TryUseLocationEscapeGapCloser(BlueMageLoomActionId, 15f, "Loom"),
-            39 when this.config.EscapeGapCloserRPR => this.TryUseReaperRegress(ref this.lastEscapeGapCloserSafety) || this.TryUseForwardEscapeGapCloser(ReaperHellsIngressActionId),
-            40 when this.config.EscapeGapCloserSGE => this.TryUseFriendlyEscapeGapCloser(SageIcarusActionId, 25f),
-            41 when this.config.EscapeGapCloserVPR => this.TryUseFriendlyEscapeGapCloser(ViperSlitherActionId, GapCloserMaxRange),
-            38 when this.config.EscapeGapCloserDNC => this.TryUseForwardEscapeGapCloser(DancerEnAvantActionId),
-            42 when this.config.EscapeGapCloserPCT => this.TryUseForwardEscapeGapCloser(PictomancerSmudgeActionId),
+            2 or 20 when this.config.EscapeGapCloserMNK => this.TryUseFriendlyEscapeGapCloser(MonkThunderclapActionId, GapCloserMaxRange, safeMovementDestination),
+            25 when this.config.EscapeGapCloserBLM => this.TryUseFriendlyEscapeGapCloser(BlackMageAetherialManipulationActionId, 25f, safeMovementDestination),
+            29 or 30 when this.config.EscapeGapCloserNIN => this.TryUseLocationEscapeGapCloser(NinjaShukuchiActionId, GapCloserMaxRange, "Shukuchi", safeMovementDestination),
+            36 when this.config.EscapeGapCloserBLU => this.TryUseLocationEscapeGapCloser(BlueMageLoomActionId, 15f, "Loom", safeMovementDestination),
+            39 when this.config.EscapeGapCloserRPR => this.TryUseReaperRegress(ref this.lastEscapeGapCloserSafety, safeMovementDestination: safeMovementDestination) || this.TryUseForwardEscapeGapCloser(ReaperHellsIngressActionId, safeMovementDestination),
+            40 when this.config.EscapeGapCloserSGE => this.TryUseFriendlyEscapeGapCloser(SageIcarusActionId, 25f, safeMovementDestination),
+            41 when this.config.EscapeGapCloserVPR => this.TryUseFriendlyEscapeGapCloser(ViperSlitherActionId, GapCloserMaxRange, safeMovementDestination),
+            38 when this.config.EscapeGapCloserDNC => this.TryUseForwardEscapeGapCloser(DancerEnAvantActionId, safeMovementDestination),
+            42 when this.config.EscapeGapCloserPCT => this.TryUseForwardEscapeGapCloser(PictomancerSmudgeActionId, safeMovementDestination),
             _ => false
         };
     }
 
-    private unsafe bool TryUseFriendlyEscapeGapCloser(uint actionId, float maxRange)
+    private unsafe bool TryUseFriendlyEscapeGapCloser(uint actionId, float maxRange, Vector3 safeMovementDestination)
     {
         var player = ObjectTable.LocalPlayer;
         if (player == null)
@@ -722,7 +751,7 @@ public sealed class Plugin : IDalamudPlugin
 
         foreach (var ally in this.EnumerateFriendlyEscapeTargets(player, maxRange))
         {
-            if (!this.bossModSafety.TryIsDashSafe(player.Position, ally.Position, out var reason))
+            if (!this.TryValidateEscapeDestination(player.Position, ally.Position, safeMovementDestination, out var reason))
             {
                 this.lastEscapeGapCloserSafety = reason;
                 continue;
@@ -746,7 +775,7 @@ public sealed class Plugin : IDalamudPlugin
         return false;
     }
 
-    private unsafe bool TryUseLocationEscapeGapCloser(uint actionId, float maxRange, string actionName)
+    private unsafe bool TryUseLocationEscapeGapCloser(uint actionId, float maxRange, string actionName, Vector3 safeMovementDestination)
     {
         var player = ObjectTable.LocalPlayer;
         if (player == null)
@@ -762,7 +791,7 @@ public sealed class Plugin : IDalamudPlugin
 
         foreach (var candidate in this.EnumerateEscapeLocationCandidates(player.Position, maxRange))
         {
-            if (!this.bossModSafety.TryIsDashSafe(player.Position, candidate, out var reason))
+            if (!this.TryValidateEscapeDestination(player.Position, candidate, safeMovementDestination, out var reason))
             {
                 this.lastEscapeGapCloserSafety = reason;
                 continue;
@@ -782,7 +811,7 @@ public sealed class Plugin : IDalamudPlugin
         return false;
     }
 
-    private unsafe bool TryUseForwardEscapeGapCloser(uint actionId)
+    private unsafe bool TryUseForwardEscapeGapCloser(uint actionId, Vector3 safeMovementDestination)
     {
         var player = ObjectTable.LocalPlayer;
         if (player == null)
@@ -797,7 +826,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         var destination = player.Position + RotationToDirection(player.Rotation) * FixedForwardGapCloserRange;
-        if (!this.bossModSafety.TryIsDashSafe(player.Position, destination, out var reason))
+        if (!this.TryValidateEscapeDestination(player.Position, destination, safeMovementDestination, out var reason))
         {
             this.lastEscapeGapCloserSafety = reason;
             return false;
@@ -808,9 +837,49 @@ public sealed class Plugin : IDalamudPlugin
         return used;
     }
 
-    private static bool CanUseEscapeGapCloserInGreed(uint classJobId)
+    private bool TryValidateEscapeDestination(Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, out string reason)
     {
-        return classJobId is 25 or 36 or 38 or 40 or 42;
+        if (!IsUsefulEscapeDestination(playerPosition, destination, safeMovementDestination, out reason))
+        {
+            return false;
+        }
+
+        if (!this.bossModSafety.TryIsPositionSafe(destination, out var destinationSafe, out var destinationReason))
+        {
+            reason = destinationReason;
+            return false;
+        }
+
+        if (!destinationSafe)
+        {
+            reason = "escape destination dangerous";
+            return false;
+        }
+
+        if (!this.bossModSafety.TryIsDashSafe(playerPosition, destination, out reason))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsUsefulEscapeDestination(Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, out string reason)
+    {
+        if (Distance2D(playerPosition, destination) < EscapeGapCloserMinimumSafetyDistance)
+        {
+            reason = "escape destination under 4y";
+            return false;
+        }
+
+        if (Distance2D(destination, safeMovementDestination) >= Distance2D(playerPosition, safeMovementDestination))
+        {
+            reason = "escape destination not toward safety";
+            return false;
+        }
+
+        reason = "useful escape destination";
+        return true;
     }
 
     private unsafe bool TryUseTargetGapCloser(uint actionId, float distanceToHitbox, IGameObject target)
@@ -857,7 +926,7 @@ public sealed class Plugin : IDalamudPlugin
         return null;
     }
 
-    private unsafe bool TryUseReaperRegress(ref string lastSafety, float distanceToHitboxRequired = 0f)
+    private unsafe bool TryUseReaperRegress(ref string lastSafety, float distanceToHitboxRequired = 0f, Vector3? safeMovementDestination = null)
     {
         var player = ObjectTable.LocalPlayer;
         if (player == null)
@@ -880,6 +949,13 @@ public sealed class Plugin : IDalamudPlugin
 
         var portalPosition = portal.Position;
 
+        if (safeMovementDestination.HasValue &&
+            !this.TryValidateEscapeDestination(player.Position, portalPosition, safeMovementDestination.Value, out var usefulReason))
+        {
+            lastSafety = $"Regress: {usefulReason}";
+            return false;
+        }
+
         if (distanceToHitboxRequired > 0f)
         {
             var target = TargetManager.Target;
@@ -897,7 +973,8 @@ public sealed class Plugin : IDalamudPlugin
             }
         }
 
-        if (!this.bossModSafety.TryIsDashSafe(player.Position, portalPosition, out var reason))
+        if (!safeMovementDestination.HasValue &&
+            !this.bossModSafety.TryIsDashSafe(player.Position, portalPosition, out var reason))
         {
             lastSafety = reason;
             return false;
@@ -1131,9 +1208,14 @@ public sealed class Plugin : IDalamudPlugin
 
     private static float DistanceToHitbox(Vector3 from, float fromHitboxRadius, Vector3 to, float toHitboxRadius)
     {
+        return Distance2D(from, to) - fromHitboxRadius - toHitboxRadius;
+    }
+
+    private static float Distance2D(Vector3 from, Vector3 to)
+    {
         var delta = to - from;
         delta.Y = 0;
-        return delta.Length() - fromHitboxRadius - toHitboxRadius;
+        return delta.Length();
     }
 
     private static Vector3 RotationToDirection(float rotation)
@@ -1268,6 +1350,28 @@ public sealed class Plugin : IDalamudPlugin
         var target = TargetManager.Target;
         if (player == null || target == null) return false;
         return Vector3.Distance(player.Position, target.Position) - player.HitboxRadius - target.HitboxRadius > MeleeActionRange;
+    }
+
+    private static bool IsCurrentPositionalCorrect(Positional positional)
+    {
+        if (positional == Positional.Any) return true;
+
+        var player = ObjectTable.LocalPlayer;
+        var target = TargetManager.Target;
+        if (player == null || target == null) return false;
+
+        var toPlayer = player.Position - target.Position;
+        toPlayer.Y = 0;
+        if (toPlayer.LengthSquared() <= 0.0001f) return false;
+
+        var frontDot = Vector3.Dot(RotationToDirection(target.Rotation), Vector3.Normalize(toPlayer));
+        return positional switch
+        {
+            Positional.Flank => Math.Abs(frontDot) < PositionalDotThreshold,
+            Positional.Rear => frontDot < -PositionalDotThreshold,
+            Positional.Front => frontDot > PositionalDotThreshold,
+            _ => true
+        };
     }
 
     private static bool HasTrueNorthCoverage()
@@ -1405,6 +1509,7 @@ public sealed class Plugin : IDalamudPlugin
         this.trueNorthStrategy = null;
         this.nextGapCloserAttempt = DateTime.MinValue;
         this.nextEscapeGapCloserAttempt = DateTime.MinValue;
+        this.escapeDangerDetectedAt = DateTime.MinValue;
         this.lastGapCloserSafety = "not checked";
         this.lastEscapeGapCloserSafety = "not checked";
         this.bossModSafety.Reset();
