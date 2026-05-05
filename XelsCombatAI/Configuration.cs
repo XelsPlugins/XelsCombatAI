@@ -23,7 +23,7 @@ public sealed class Configuration : IPluginConfiguration
     public const float DefaultPreferredForbiddenZoneDistance = 1f;
     public const float EnemyCountRadius = 10f;
 
-    public int Version { get; set; } = 8;
+    public int Version { get; set; } = 9;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -48,6 +48,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool GapCloserDRG { get; set; } = true;
     public bool GapCloserNIN { get; set; } = true;
     public bool GapCloserSAM { get; set; } = true;
+    public bool GapCloserDNC { get; set; } = true;
     public bool GapCloserRPR { get; set; } = true;
     public bool GapCloserVPR { get; set; } = true;
     public bool UseEscapeGapCloser { get; set; } = false;
@@ -57,6 +58,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool EscapeGapCloserVPR { get; set; } = true;
     public bool EscapeGapCloserBLM { get; set; } = true;
     public bool EscapeGapCloserSGE { get; set; } = true;
+    public bool EscapeGapCloserDNC { get; set; } = true;
     public bool EscapeGapCloserPCT { get; set; } = true;
     public bool EscapeGapCloserBLU { get; set; } = true;
     public bool EchoStatusToChat { get; set; } = true;
@@ -139,6 +141,13 @@ public sealed class Configuration : IPluginConfiguration
             this.EscapeGapCloserBLU = true;
             this.Version = 8;
         }
+
+        if (this.Version < 9)
+        {
+            this.GapCloserDNC = true;
+            this.EscapeGapCloserDNC = true;
+            this.Version = 9;
+        }
     }
 
     internal void Clamp()
@@ -198,6 +207,7 @@ public sealed class Configuration : IPluginConfiguration
         this.GapCloserDRG = true;
         this.GapCloserNIN = true;
         this.GapCloserSAM = true;
+        this.GapCloserDNC = true;
         this.GapCloserRPR = true;
         this.GapCloserVPR = true;
         this.UseEscapeGapCloser = false;
@@ -207,6 +217,7 @@ public sealed class Configuration : IPluginConfiguration
         this.EscapeGapCloserVPR = true;
         this.EscapeGapCloserBLM = true;
         this.EscapeGapCloserSGE = true;
+        this.EscapeGapCloserDNC = true;
         this.EscapeGapCloserPCT = true;
         this.EscapeGapCloserBLU = true;
         this.EchoStatusToChat = true;

@@ -138,16 +138,18 @@ internal sealed class ConfigWindow : Window, IDisposable
             changed |= this.Checkbox("DRG — Winged Glide", this.config.GapCloserDRG, this.defaultConfig.GapCloserDRG, v => this.config.GapCloserDRG = v);
             changed |= this.Checkbox("NIN — Shukuchi", this.config.GapCloserNIN, this.defaultConfig.GapCloserNIN, v => this.config.GapCloserNIN = v);
             changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, this.defaultConfig.GapCloserSAM, v => this.config.GapCloserSAM = v);
+            changed |= this.Checkbox("DNC — En Avant", this.config.GapCloserDNC, this.defaultConfig.GapCloserDNC, v => this.config.GapCloserDNC = v);
             changed |= this.Checkbox("RPR — Hell's Ingress", this.config.GapCloserRPR, this.defaultConfig.GapCloserRPR, v => this.config.GapCloserRPR = v);
             changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, this.defaultConfig.GapCloserVPR, v => this.config.GapCloserVPR = v);
             ImGui.Unindent();
         }
 
-        if (this.CollapsingCheckbox("Use gap closer to escape danger", this.config.UseEscapeGapCloser, this.defaultConfig.UseEscapeGapCloser, v => { this.config.UseEscapeGapCloser = v; changed = true; }, tooltip: "Leaves danger when BossMod says the landing point is safe.\nGreed mode: BLM, SGE, PCT, and BLU only.\nBLM will not leave Ley Lines.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
+        if (this.CollapsingCheckbox("Use gap closer to escape danger", this.config.UseEscapeGapCloser, this.defaultConfig.UseEscapeGapCloser, v => { this.config.UseEscapeGapCloser = v; changed = true; }, tooltip: "Leaves danger when BossMod says the landing point is safe.\nGreed mode: DNC, BLM, SGE, PCT, and BLU only.\nBLM will not leave Ley Lines.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
         {
             ImGui.Indent();
             changed |= this.Checkbox("MNK — Thunderclap to ally", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v);
             changed |= this.Checkbox("NIN — Shukuchi", this.config.EscapeGapCloserNIN, this.defaultConfig.EscapeGapCloserNIN, v => this.config.EscapeGapCloserNIN = v);
+            changed |= this.Checkbox("DNC — En Avant", this.config.EscapeGapCloserDNC, this.defaultConfig.EscapeGapCloserDNC, v => this.config.EscapeGapCloserDNC = v);
             changed |= this.Checkbox("RPR — Hell's Ingress", this.config.EscapeGapCloserRPR, this.defaultConfig.EscapeGapCloserRPR, v => this.config.EscapeGapCloserRPR = v);
             changed |= this.Checkbox("VPR — Slither to ally", this.config.EscapeGapCloserVPR, this.defaultConfig.EscapeGapCloserVPR, v => this.config.EscapeGapCloserVPR = v);
             changed |= this.Checkbox("BLM — Aetherial Manipulation", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v);

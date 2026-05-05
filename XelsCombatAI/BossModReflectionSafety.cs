@@ -19,6 +19,7 @@ internal sealed class BossModReflectionSafety
     private object? bossModPlugin;
     private FieldInfo? hintsField;
     private FieldInfo? imminentSpecialModeField;
+    private FieldInfo? forcedMovementField;
     private ConstructorInfo? wposConstructor;
     private MethodInfo? isDashDangerousMethod;
     private DateTime nextResolveAttempt = DateTime.MinValue;
@@ -36,6 +37,7 @@ internal sealed class BossModReflectionSafety
         this.bossModPlugin = null;
         this.hintsField = null;
         this.imminentSpecialModeField = null;
+        this.forcedMovementField = null;
         this.wposConstructor = null;
         this.isDashDangerousMethod = null;
         this.nextResolveAttempt = DateTime.MinValue;
@@ -124,6 +126,71 @@ internal sealed class BossModReflectionSafety
         }
     }
 
+    public bool TryGetSafeMovementIntent(Vector3 playerPosition, out Vector3 destination, out string reason)
+    {
+        destination = default;
+        reason = string.Empty;
+
+        if (!this.EnsureResolved())
+        {
+            reason = this.status;
+            return false;
+        }
+
+        if (this.forcedMovementField == null)
+        {
+            reason = "BMR ForcedMovement field not found";
+            return false;
+        }
+
+        try
+        {
+            var hints = this.hintsField!.GetValue(this.bossModPlugin);
+            if (hints == null)
+            {
+                reason = "BMR hints unavailable";
+                return false;
+            }
+
+            var rawValue = this.forcedMovementField.GetValue(hints);
+            if (rawValue is not Vector3 movement)
+            {
+                reason = "BMR ForcedMovement not set";
+                return false;
+            }
+
+            var xz = new Vector2(movement.X, movement.Z);
+            if (xz.Length() < 0.5f)
+            {
+                reason = "BMR movement vector too small";
+                return false;
+            }
+
+            var inferredDestination = playerPosition + new Vector3(xz.X, 0, xz.Y);
+            if (!this.TryIsPositionSafe(inferredDestination, out var destSafe, out var destReason))
+            {
+                reason = destReason;
+                return false;
+            }
+
+            if (!destSafe)
+            {
+                reason = "BMR inferred destination not safe";
+                return false;
+            }
+
+            destination = inferredDestination;
+            reason = "BMR movement intent confirmed safe";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Verbose($"Could not query BMR movement intent: {ex.Message}");
+            reason = "BMR movement intent query failed";
+            return false;
+        }
+    }
+
     private bool EnsureResolved()
     {
         if (this.bossModPlugin != null &&
@@ -178,6 +245,7 @@ internal sealed class BossModReflectionSafety
             this.bossModPlugin = plugin;
             this.hintsField = hints;
             this.imminentSpecialModeField = hintsType.GetField("ImminentSpecialMode", BindingFlags.Instance | BindingFlags.Public);
+            this.forcedMovementField = hintsType.GetField("ForcedMovement", BindingFlags.Instance | BindingFlags.Public);
             this.wposConstructor = wposCtor;
             this.isDashDangerousMethod = isDashDangerous;
             this.status = "available";
@@ -259,6 +327,7 @@ internal sealed class BossModReflectionSafety
         this.bossModPlugin = null;
         this.hintsField = null;
         this.imminentSpecialModeField = null;
+        this.forcedMovementField = null;
         this.wposConstructor = null;
         this.isDashDangerousMethod = null;
         this.status = newStatus;

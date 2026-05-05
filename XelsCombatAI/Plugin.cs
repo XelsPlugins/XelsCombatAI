@@ -38,11 +38,14 @@ public sealed class Plugin : IDalamudPlugin
     private const uint NinjaShukuchiActionId = 2262;
     private const uint SamuraiGyotenActionId = 7492;
     private const uint ReaperHellsIngressActionId = 24401;
+    private const uint ReaperRegressActionId = 24403;
+    private const uint ReaperHellsgatePortalDataId = 0x4C3u;
     private const uint ViperSlitherActionId = 34646;
     private const uint BlackMageAetherialManipulationActionId = 155;
     private const uint SageIcarusActionId = 24295;
     private const uint PictomancerSmudgeActionId = 34684;
     private const uint BlueMageLoomActionId = 11401;
+    private const uint DancerEnAvantActionId = 16010;
     private static readonly float[] EscapeLocationRadii = [8f, 12f, 16f, 20f];
 
     private enum RangeRole
@@ -577,7 +580,8 @@ public sealed class Plugin : IDalamudPlugin
             4 or 22 when this.config.GapCloserDRG => this.TryUseTargetGapCloser(DragoonWingedGlideActionId, distanceToHitbox, target),
             29 or 30 when this.config.GapCloserNIN => this.TryUseNinjaShukuchi(target),
             34 when this.config.GapCloserSAM => this.TryUseTargetGapCloser(SamuraiGyotenActionId, distanceToHitbox, target),
-            39 when this.config.GapCloserRPR => this.TryUseForwardGapCloser(ReaperHellsIngressActionId, distanceToHitbox),
+            38 when this.config.GapCloserDNC => this.TryUseForwardGapCloser(DancerEnAvantActionId, distanceToHitbox),
+            39 when this.config.GapCloserRPR => this.TryUseReaperRegress(ref this.lastGapCloserSafety, distanceToHitbox) || this.TryUseForwardGapCloser(ReaperHellsIngressActionId, distanceToHitbox),
             41 when this.config.GapCloserVPR => this.TryUseTargetGapCloser(ViperSlitherActionId, distanceToHitbox, target),
             _ => false
         };
@@ -618,6 +622,12 @@ public sealed class Plugin : IDalamudPlugin
             return false;
         }
 
+        if (!this.bossModSafety.TryGetSafeMovementIntent(player.Position, out _, out var intentReason))
+        {
+            this.lastEscapeGapCloserSafety = intentReason;
+            return false;
+        }
+
         if (!this.bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out var currentReason))
         {
             this.lastEscapeGapCloserSafety = currentReason;
@@ -636,9 +646,10 @@ public sealed class Plugin : IDalamudPlugin
             25 when this.config.EscapeGapCloserBLM => this.TryUseFriendlyEscapeGapCloser(BlackMageAetherialManipulationActionId, 25f),
             29 or 30 when this.config.EscapeGapCloserNIN => this.TryUseLocationEscapeGapCloser(NinjaShukuchiActionId, GapCloserMaxRange, "Shukuchi"),
             36 when this.config.EscapeGapCloserBLU => this.TryUseLocationEscapeGapCloser(BlueMageLoomActionId, 15f, "Loom"),
-            39 when this.config.EscapeGapCloserRPR => this.TryUseForwardEscapeGapCloser(ReaperHellsIngressActionId),
+            39 when this.config.EscapeGapCloserRPR => this.TryUseReaperRegress(ref this.lastEscapeGapCloserSafety) || this.TryUseForwardEscapeGapCloser(ReaperHellsIngressActionId),
             40 when this.config.EscapeGapCloserSGE => this.TryUseFriendlyEscapeGapCloser(SageIcarusActionId, 25f),
             41 when this.config.EscapeGapCloserVPR => this.TryUseFriendlyEscapeGapCloser(ViperSlitherActionId, GapCloserMaxRange),
+            38 when this.config.EscapeGapCloserDNC => this.TryUseForwardEscapeGapCloser(DancerEnAvantActionId),
             42 when this.config.EscapeGapCloserPCT => this.TryUseForwardEscapeGapCloser(PictomancerSmudgeActionId),
             _ => false
         };
@@ -748,7 +759,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private static bool CanUseEscapeGapCloserInGreed(uint classJobId)
     {
-        return classJobId is 25 or 36 or 40 or 42;
+        return classJobId is 25 or 36 or 38 or 40 or 42;
     }
 
     private unsafe bool TryUseTargetGapCloser(uint actionId, float distanceToHitbox, IGameObject target)
@@ -779,6 +790,71 @@ public sealed class Plugin : IDalamudPlugin
 
         var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, target.GameObjectId);
         this.lastGapCloserSafety = used ? $"used {actionId}" : $"failed to use {actionId}";
+        return used;
+    }
+
+    private static IGameObject? TryFindReaperPortal(IGameObject player)
+    {
+        foreach (var obj in ObjectTable)
+        {
+            if (obj.BaseId == ReaperHellsgatePortalDataId && obj.OwnerId == player.GameObjectId)
+            {
+                return obj;
+            }
+        }
+
+        return null;
+    }
+
+    private unsafe bool TryUseReaperRegress(ref string lastSafety, float distanceToHitboxRequired = 0f)
+    {
+        var player = ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return false;
+        }
+
+        if (!CanUseAction(ReaperRegressActionId))
+        {
+            lastSafety = "Regress unavailable";
+            return false;
+        }
+
+        var portal = TryFindReaperPortal(player);
+        if (portal == null)
+        {
+            lastSafety = "Regress: no portal found";
+            return false;
+        }
+
+        var portalPosition = portal.Position;
+
+        if (distanceToHitboxRequired > 0f)
+        {
+            var target = TargetManager.Target;
+            if (target == null)
+            {
+                lastSafety = "Regress: no target";
+                return false;
+            }
+
+            var regressDistanceToHitbox = DistanceToHitbox(portalPosition, player.HitboxRadius, target.Position, target.HitboxRadius);
+            if (regressDistanceToHitbox >= distanceToHitboxRequired || regressDistanceToHitbox > MeleeActionRange + 1f)
+            {
+                lastSafety = "Regress: portal would not re-engage";
+                return false;
+            }
+        }
+
+        if (!this.bossModSafety.TryIsDashSafe(player.Position, portalPosition, out var reason))
+        {
+            lastSafety = reason;
+            return false;
+        }
+
+        var location = portalPosition;
+        var used = ActionManager.Instance()->UseActionLocation(ActionType.Action, ReaperRegressActionId, player.GameObjectId, &location);
+        lastSafety = used ? "used Regress" : "failed to use Regress";
         return used;
     }
 
