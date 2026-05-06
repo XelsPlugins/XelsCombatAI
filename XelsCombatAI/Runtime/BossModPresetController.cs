@@ -21,10 +21,6 @@ internal sealed class BossModPresetController(
     public bool? LastLeylinesBetweenTheLines { get; private set; }
     public bool? LastLeylinesRetrace { get; private set; }
     public bool? LastLeylinesGoal { get; private set; }
-    public bool? LastMonkThunderclap { get; private set; }
-    public bool? LastDragoonWingedGlide { get; private set; }
-    public bool? LastNinjaShukuchi { get; private set; }
-    public bool? LastViperSlither { get; private set; }
     public bool? LastHealerStayNearParty { get; private set; }
     public bool? LastHealerHeal { get; private set; }
     public bool? LastHealerEsuna { get; private set; }
@@ -69,10 +65,6 @@ internal sealed class BossModPresetController(
             bossMod.SetLeylinesBetweenTheLines(presetName, false);
             bossMod.SetLeylinesRetrace(presetName, false);
             bossMod.SetLeylinesGoal(presetName, false);
-            bossMod.SetMonkThunderclap(presetName, false);
-            bossMod.SetDragoonWingedGlide(presetName, false);
-            bossMod.SetNinjaShukuchi(presetName, false);
-            bossMod.SetViperSlither(presetName, false);
             bossMod.SetHealerStayNearParty(presetName, false);
             bossMod.SetHealerHeal(presetName, false);
             bossMod.SetHealerEsuna(presetName, false);
@@ -151,10 +143,6 @@ internal sealed class BossModPresetController(
         this.LastLeylinesBetweenTheLines = null;
         this.LastLeylinesRetrace = null;
         this.LastLeylinesGoal = null;
-        this.LastMonkThunderclap = null;
-        this.LastDragoonWingedGlide = null;
-        this.LastNinjaShukuchi = null;
-        this.LastViperSlither = null;
         this.LastHealerStayNearParty = null;
         this.LastHealerHeal = null;
         this.LastHealerEsuna = null;
@@ -327,13 +315,6 @@ internal sealed class BossModPresetController(
 
     private void SetGapClosers(bool suppressAutomatedMovement)
     {
-        var presetName = BossModIpc.DefaultPresetName;
-
-        this.SetGapCloser(nameof(this.LastMonkThunderclap), this.LastMonkThunderclap, false, value => bossMod.SetMonkThunderclap(presetName, value));
-        this.SetGapCloser(nameof(this.LastDragoonWingedGlide), this.LastDragoonWingedGlide, false, value => bossMod.SetDragoonWingedGlide(presetName, value));
-        this.SetGapCloser(nameof(this.LastNinjaShukuchi), this.LastNinjaShukuchi, false, value => bossMod.SetNinjaShukuchi(presetName, value));
-        this.SetGapCloser(nameof(this.LastViperSlither), this.LastViperSlither, false, value => bossMod.SetViperSlither(presetName, value));
-
         if (suppressAutomatedMovement)
         {
             return;
@@ -347,35 +328,6 @@ internal sealed class BossModPresetController(
         if (config.UseGapCloser)
         {
             gapCloserController.TryUseReengageGapCloser();
-        }
-    }
-
-    private void SetGapCloser(string cacheName, bool? last, bool enabled, Func<bool, bool> setter)
-    {
-        if (last == enabled)
-        {
-            return;
-        }
-
-        if (!setter(enabled))
-        {
-            return;
-        }
-
-        switch (cacheName)
-        {
-            case nameof(this.LastMonkThunderclap):
-                this.LastMonkThunderclap = enabled;
-                break;
-            case nameof(this.LastDragoonWingedGlide):
-                this.LastDragoonWingedGlide = enabled;
-                break;
-            case nameof(this.LastNinjaShukuchi):
-                this.LastNinjaShukuchi = enabled;
-                break;
-            case nameof(this.LastViperSlither):
-                this.LastViperSlither = enabled;
-                break;
         }
     }
 }

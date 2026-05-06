@@ -52,10 +52,6 @@ internal static class StatusReporter
         Append(builder, "LastHealerEsuna", status.LastHealerEsuna);
         Append(builder, "LastHealerOutOfCombat", status.LastHealerOutOfCombat);
         Append(builder, "LastHealerRaise", status.LastHealerRaise);
-        Append(builder, "LastMonkThunderclap", status.LastMonkThunderclap);
-        Append(builder, "LastDragoonWingedGlide", status.LastDragoonWingedGlide);
-        Append(builder, "LastNinjaShukuchi", status.LastNinjaShukuchi);
-        Append(builder, "LastViperSlither", status.LastViperSlither);
         builder.AppendLine();
 
         AppendSection(builder, "Gap Closer State");

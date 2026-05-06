@@ -62,30 +62,6 @@ internal sealed class BossModIpc
             "Track": "ForbiddenZoneCushion",
             "Option": "Medium"
           }
-        ],
-        "BossMod.Autorotation.ClassMNKUtility": [
-          {
-            "Track": "Thunderclap",
-            "Option": "None"
-          }
-        ],
-        "BossMod.Autorotation.ClassDRGUtility": [
-          {
-            "Track": "Winged Glide",
-            "Option": "None"
-          }
-        ],
-        "BossMod.Autorotation.ClassNINUtility": [
-          {
-            "Track": "Shukuchi",
-            "Option": "None"
-          }
-        ],
-        "BossMod.Autorotation.ClassVPRUtility": [
-          {
-            "Track": "Slither",
-            "Option": "None"
-          }
         ]
       }
     }
@@ -98,11 +74,7 @@ internal sealed class BossModIpc
         "BossMod.Autorotation.MiscAI.GoToPositional",
         "BossMod.Autorotation.MiscAI.StayCloseToPartyRole",
         "BossMod.Autorotation.xan.HealerAI",
-        "BossMod.Autorotation.MiscAI.NormalMovement",
-        "BossMod.Autorotation.ClassMNKUtility",
-        "BossMod.Autorotation.ClassDRGUtility",
-        "BossMod.Autorotation.ClassNINUtility",
-        "BossMod.Autorotation.ClassVPRUtility"
+        "BossMod.Autorotation.MiscAI.NormalMovement"
     ];
 
     private readonly ICallGateSubscriber<string, string?> getPreset;
@@ -280,42 +252,6 @@ internal sealed class BossModIpc
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Goal",
             enabled ? "Enabled" : "Disabled");
-    }
-
-    public bool SetMonkThunderclap(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.ClassMNKUtility",
-            "Thunderclap",
-            enabled ? "GapClose" : "None");
-    }
-
-    public bool SetDragoonWingedGlide(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.ClassDRGUtility",
-            "Winged Glide",
-            enabled ? "GapClose" : "None");
-    }
-
-    public bool SetNinjaShukuchi(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.ClassNINUtility",
-            "Shukuchi",
-            enabled ? "GapClose" : "None");
-    }
-
-    public bool SetViperSlither(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.ClassVPRUtility",
-            "Slither",
-            enabled ? "GapClose" : "None");
     }
 
     public bool HasModuleByDataId(uint dataId) => this.hasModuleByDataId.InvokeFunc(dataId);
