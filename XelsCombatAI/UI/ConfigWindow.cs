@@ -40,10 +40,11 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.trueNorthWarning = trueNorthWarning;
         this.manageTrueNorthEnabled = manageTrueNorthEnabled;
         this.keyState = keyState;
+        this.Flags = ImGuiWindowFlags.AlwaysAutoResize;
         this.SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new(480, 360),
-            MaximumSize = new(float.MaxValue, float.MaxValue)
+            MinimumSize = new(480, 0),
+            MaximumSize = new(480, float.MaxValue)
         };
     }
 
@@ -252,17 +253,29 @@ internal sealed class ConfigWindow : Window, IDisposable
         var reengageDisabledTooltip = !this.config.UseGapCloser ? "Disabled by Use gap closer to (re)engage in Gap Closers." : null;
         if (!this.config.UseGapCloser)
             ImGui.BeginDisabled();
-        changed |= this.Checkbox("PLD — Intervene", this.config.GapCloserPLD, this.defaultConfig.GapCloserPLD, v => this.config.GapCloserPLD = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("WAR — Onslaught", this.config.GapCloserWAR, this.defaultConfig.GapCloserWAR, v => this.config.GapCloserWAR = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("DRK — Shadowstride", this.config.GapCloserDRK, this.defaultConfig.GapCloserDRK, v => this.config.GapCloserDRK = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("GNB — Trajectory", this.config.GapCloserGNB, this.defaultConfig.GapCloserGNB, v => this.config.GapCloserGNB = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("MNK — Thunderclap", this.config.GapCloserMNK, this.defaultConfig.GapCloserMNK, v => this.config.GapCloserMNK = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("DRG — Winged Glide", this.config.GapCloserDRG, this.defaultConfig.GapCloserDRG, v => this.config.GapCloserDRG = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("NIN — Shukuchi", this.config.GapCloserNIN, this.defaultConfig.GapCloserNIN, v => this.config.GapCloserNIN = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, this.defaultConfig.GapCloserSAM, v => this.config.GapCloserSAM = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("DNC — En Avant", this.config.GapCloserDNC, this.defaultConfig.GapCloserDNC, v => this.config.GapCloserDNC = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("RPR — Hell's Ingress", this.config.GapCloserRPR, this.defaultConfig.GapCloserRPR, v => this.config.GapCloserRPR = v, disabledTooltip: reengageDisabledTooltip);
-        changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, this.defaultConfig.GapCloserVPR, v => this.config.GapCloserVPR = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.Columns(3, "reengageJobs", false);
+        changed |= this.Checkbox("PLD", this.config.GapCloserPLD, this.defaultConfig.GapCloserPLD, v => this.config.GapCloserPLD = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("WAR", this.config.GapCloserWAR, this.defaultConfig.GapCloserWAR, v => this.config.GapCloserWAR = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("DRK", this.config.GapCloserDRK, this.defaultConfig.GapCloserDRK, v => this.config.GapCloserDRK = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("GNB", this.config.GapCloserGNB, this.defaultConfig.GapCloserGNB, v => this.config.GapCloserGNB = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("MNK", this.config.GapCloserMNK, this.defaultConfig.GapCloserMNK, v => this.config.GapCloserMNK = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("DRG", this.config.GapCloserDRG, this.defaultConfig.GapCloserDRG, v => this.config.GapCloserDRG = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("NIN", this.config.GapCloserNIN, this.defaultConfig.GapCloserNIN, v => this.config.GapCloserNIN = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("SAM", this.config.GapCloserSAM, this.defaultConfig.GapCloserSAM, v => this.config.GapCloserSAM = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("DNC", this.config.GapCloserDNC, this.defaultConfig.GapCloserDNC, v => this.config.GapCloserDNC = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("RPR", this.config.GapCloserRPR, this.defaultConfig.GapCloserRPR, v => this.config.GapCloserRPR = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("VPR", this.config.GapCloserVPR, this.defaultConfig.GapCloserVPR, v => this.config.GapCloserVPR = v, disabledTooltip: reengageDisabledTooltip);
+        ImGui.Columns(1);
         changed |= this.SliderFloat(
             "Minimum (re)engage distance",
             this.config.MinimumReengageGapCloserDistance,
@@ -288,15 +301,25 @@ internal sealed class ConfigWindow : Window, IDisposable
         var escapeDisabledTooltip = !this.config.UseEscapeGapCloser ? "Disabled by Use gap closer to escape danger in Gap Closers." : null;
         if (!this.config.UseEscapeGapCloser)
             ImGui.BeginDisabled();
-        changed |= this.Checkbox("MNK — Thunderclap to ally", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("NIN — Shukuchi", this.config.EscapeGapCloserNIN, this.defaultConfig.EscapeGapCloserNIN, v => this.config.EscapeGapCloserNIN = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("DNC — En Avant", this.config.EscapeGapCloserDNC, this.defaultConfig.EscapeGapCloserDNC, v => this.config.EscapeGapCloserDNC = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("RPR — Hell's Ingress", this.config.EscapeGapCloserRPR, this.defaultConfig.EscapeGapCloserRPR, v => this.config.EscapeGapCloserRPR = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("VPR — Slither to ally", this.config.EscapeGapCloserVPR, this.defaultConfig.EscapeGapCloserVPR, v => this.config.EscapeGapCloserVPR = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("BLM — Aetherial Manipulation", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("SGE — Icarus", this.config.EscapeGapCloserSGE, this.defaultConfig.EscapeGapCloserSGE, v => this.config.EscapeGapCloserSGE = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("PCT — Smudge", this.config.EscapeGapCloserPCT, this.defaultConfig.EscapeGapCloserPCT, v => this.config.EscapeGapCloserPCT = v, disabledTooltip: escapeDisabledTooltip);
-        changed |= this.Checkbox("BLU — Loom", this.config.EscapeGapCloserBLU, this.defaultConfig.EscapeGapCloserBLU, v => this.config.EscapeGapCloserBLU = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.Columns(3, "escapeJobs", false);
+        changed |= this.Checkbox("MNK", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("NIN", this.config.EscapeGapCloserNIN, this.defaultConfig.EscapeGapCloserNIN, v => this.config.EscapeGapCloserNIN = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("DNC", this.config.EscapeGapCloserDNC, this.defaultConfig.EscapeGapCloserDNC, v => this.config.EscapeGapCloserDNC = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("RPR", this.config.EscapeGapCloserRPR, this.defaultConfig.EscapeGapCloserRPR, v => this.config.EscapeGapCloserRPR = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("VPR", this.config.EscapeGapCloserVPR, this.defaultConfig.EscapeGapCloserVPR, v => this.config.EscapeGapCloserVPR = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("BLM", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("SGE", this.config.EscapeGapCloserSGE, this.defaultConfig.EscapeGapCloserSGE, v => this.config.EscapeGapCloserSGE = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("PCT", this.config.EscapeGapCloserPCT, this.defaultConfig.EscapeGapCloserPCT, v => this.config.EscapeGapCloserPCT = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.NextColumn();
+        changed |= this.Checkbox("BLU", this.config.EscapeGapCloserBLU, this.defaultConfig.EscapeGapCloserBLU, v => this.config.EscapeGapCloserBLU = v, disabledTooltip: escapeDisabledTooltip);
+        ImGui.Columns(1);
         changed |= this.SliderFloat(
             "Minimum safety gap-close distance",
             this.config.MinimumEscapeGapCloserDistance,
