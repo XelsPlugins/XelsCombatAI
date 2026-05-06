@@ -83,9 +83,9 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
             return false;
         }
 
-        if (Geometry.Distance2D(player.Position, safeMovementDestination) < CombatConstants.EscapeGapCloserMinimumSafetyDistance)
+        if (Geometry.Distance2D(player.Position, safeMovementDestination) < config.MinimumEscapeGapCloserDistance)
         {
-            this.lastEscapeGapCloserSafety = "safe movement under 4y";
+            this.lastEscapeGapCloserSafety = $"safe movement under {config.MinimumEscapeGapCloserDistance:0}y";
             return false;
         }
 
@@ -104,10 +104,10 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         };
     }
 
-    public static bool TryValidateEscapeDestination(DalamudServices services, BossModReflectionSafety bossModSafety, Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, out string reason)
+    public static bool TryValidateEscapeDestination(DalamudServices services, BossModReflectionSafety bossModSafety, Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, float minimumDistance, out string reason)
     {
         _ = services;
-        if (!IsUsefulEscapeDestination(playerPosition, destination, safeMovementDestination, out reason))
+        if (!IsUsefulEscapeDestination(playerPosition, destination, safeMovementDestination, minimumDistance, out reason))
         {
             return false;
         }
@@ -148,7 +148,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
 
         foreach (var ally in this.EnumerateFriendlyEscapeTargets(player, maxRange))
         {
-            if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, ally.Position, safeMovementDestination, out var reason))
+            if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, ally.Position, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
             {
                 this.lastEscapeGapCloserSafety = reason;
                 continue;
@@ -188,7 +188,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
 
         foreach (var candidate in this.EnumerateEscapeLocationCandidates(player.Position, maxRange))
         {
-            if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, candidate, safeMovementDestination, out var reason))
+            if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, candidate, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
             {
                 this.lastEscapeGapCloserSafety = reason;
                 continue;
@@ -223,7 +223,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         }
 
         var destination = player.Position + Geometry.RotationToDirection(player.Rotation) * CombatConstants.FixedForwardGapCloserRange;
-        if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, destination, safeMovementDestination, out var reason))
+        if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, destination, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
         {
             this.lastEscapeGapCloserSafety = reason;
             return false;
@@ -234,11 +234,11 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         return used;
     }
 
-    private static bool IsUsefulEscapeDestination(Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, out string reason)
+    private static bool IsUsefulEscapeDestination(Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, float minimumDistance, out string reason)
     {
-        if (Geometry.Distance2D(playerPosition, destination) < CombatConstants.EscapeGapCloserMinimumSafetyDistance)
+        if (Geometry.Distance2D(playerPosition, destination) < minimumDistance)
         {
-            reason = "escape destination under 4y";
+            reason = $"escape destination under {minimumDistance:0}y";
             return false;
         }
 

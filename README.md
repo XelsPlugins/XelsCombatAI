@@ -47,7 +47,7 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 ### General tab
 
-**Movement** — Toggle movement management and whether to follow the tank on trash pulls (targets with no boss module).
+**Movement** — Toggle movement management, whether to follow the tank on trash pulls (targets with no boss module), and healer party coverage on boss fights.
 
 **Positioning** — Manage positionals, True North, Ley Lines, and gap closers.
 
@@ -56,7 +56,6 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 - *Manage Ley Lines* — Helps BLM stay on Ley Lines and use Between the Lines / Retrace when available. Does not place Ley Lines.
 - *Use gap closer to (re)engage* — Uses supported gap closers to return to melee range when BossMod reports the dash is safe. Disabled by default.
 - *Use gap closer to escape danger* — Uses supported movement abilities to help BossMod reach safety faster when the landing point is safe and moves toward BossMod's safe point. Disabled by default. BLM will not escape out of Ley Lines in Greed mode.
-- *Healer: stay near party* — On boss fights, keeps healers near the party while staying within attack range. During AoE, non-AST healers use melee range only if that AoE option is enabled.
 
 **Combat Behavior** — Choose between *Normal* (BossMod moves directly to its destination) and *Greed* (BossMod balances uptime against mechanic safety).
 
@@ -71,5 +70,7 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 **AoE target distance** — When multiple enemies are nearby the target, the plugin switches to these distances instead. The threshold controls how many enemies must be present to trigger AoE mode. You can also enable non-AST healers to use melee AoE distance so they stay in range of their ground targets.
 
 **Forbidden zone** — Keeps you a set distance back from forbidden zones to avoid clipping into them.
+
+**Gap closer minimum distance** — Sets the minimum distance required before using optional gap closers for re-engage or safety. Each slider is disabled when its matching gap-closer option is off. Defaults to 8y.
 
 Use **Reset ranges** to restore all distance values to defaults, or **Reset all** to restore the full configuration.

@@ -72,9 +72,9 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
             return false;
         }
 
-        if (distanceToHitbox < CombatConstants.GapCloserMinimumDistance)
+        if (distanceToHitbox < config.MinimumReengageGapCloserDistance)
         {
-            this.lastGapCloserSafety = "target under 4y";
+            this.lastGapCloserSafety = $"target under {config.MinimumReengageGapCloserDistance:0}y";
             return false;
         }
 
@@ -120,7 +120,7 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
         var portalPosition = portal.Position;
 
         if (safeMovementDestination.HasValue &&
-            !EscapeGapCloserController.TryValidateEscapeDestination(services, bossModSafety, player.Position, portalPosition, safeMovementDestination.Value, out var usefulReason))
+            !EscapeGapCloserController.TryValidateEscapeDestination(services, bossModSafety, player.Position, portalPosition, safeMovementDestination.Value, config.MinimumEscapeGapCloserDistance, out var usefulReason))
         {
             lastSafety = $"Regress: {usefulReason}";
             return false;

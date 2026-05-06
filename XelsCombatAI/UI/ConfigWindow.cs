@@ -105,6 +105,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.DrawSectionHeader("Movement");
         changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v);
         changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Follow the tank on targets without boss modules.\nDisabled automatically on boss encounters.");
+        changed |= this.Checkbox("Healer: stay near party", this.config.HealerPartyCoverage, this.defaultConfig.HealerPartyCoverage, v => this.config.HealerPartyCoverage = v, "Positions healer to cover the most party members on boss fights.\nOverrides healer max distance.");
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
@@ -162,10 +163,6 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.Unindent();
         }
 
-        changed |= this.Checkbox("Healer: stay near party", this.config.HealerPartyCoverage, this.defaultConfig.HealerPartyCoverage, v => this.config.HealerPartyCoverage = v, "Positions healer to cover the most party members on boss fights.\nOverrides healer max distance.");
-        ImGui.Unindent(8f);
-        ImGui.Spacing();
-
         this.DrawSectionHeader("Combat Behavior");
         changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal moves directly to safety.\nGreed balances uptime against mechanic safety.");
         ImGui.Unindent(8f);
@@ -197,32 +194,39 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.BeginDisabled();
 
         this.DrawSectionHeader("Single Target Distance");
-        changed |= this.Checkbox("Single target distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => this.config.RoleBasedRange = v);
+        var manageRangeDisabledTooltip = "Disabled by Manage range in the Ranges tab.";
+        var singleTargetDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : !this.config.RoleBasedRange ? "Disabled by Single target distance in the Ranges tab." : null;
+        var aoeDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : !this.config.AoERangeInMultiTarget ? "Disabled by AoE target distance in the Ranges tab." : null;
+        var healerCoverageDisabledTooltip = "Disabled by Healer: stay near party in General > Movement.";
+        var singleTargetHealerDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : this.config.HealerPartyCoverage ? healerCoverageDisabledTooltip : singleTargetDisabledTooltip;
+        var aoeHealerDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : this.config.HealerPartyCoverage ? healerCoverageDisabledTooltip : aoeDisabledTooltip;
+
+        changed |= this.Checkbox("Single target distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => this.config.RoleBasedRange = v, disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
         if (!this.config.RoleBasedRange)
             ImGui.BeginDisabled();
-        changed |= this.SliderFloat("Melee max distance", this.config.MeleeRange, this.defaultConfig.MeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MeleeRange = v);
-        changed |= this.SliderFloat("Physical ranged max distance", this.config.PhysicalRangedRange, this.defaultConfig.PhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.PhysicalRangedRange = v);
+        changed |= this.SliderFloat("Melee max distance", this.config.MeleeRange, this.defaultConfig.MeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MeleeRange = v, disabledTooltip: singleTargetDisabledTooltip);
+        changed |= this.SliderFloat("Physical ranged max distance", this.config.PhysicalRangedRange, this.defaultConfig.PhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.PhysicalRangedRange = v, disabledTooltip: singleTargetDisabledTooltip);
         if (this.config.HealerPartyCoverage) ImGui.BeginDisabled();
-        changed |= this.SliderFloat("Healer max distance", this.config.HealerRange, this.defaultConfig.HealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.HealerRange = v);
+        changed |= this.SliderFloat("Healer max distance", this.config.HealerRange, this.defaultConfig.HealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.HealerRange = v, disabledTooltip: singleTargetHealerDisabledTooltip);
         if (this.config.HealerPartyCoverage) ImGui.EndDisabled();
-        changed |= this.SliderFloat("Magic ranged max distance", this.config.MagicRangedRange, this.defaultConfig.MagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MagicRangedRange = v);
+        changed |= this.SliderFloat("Magic ranged max distance", this.config.MagicRangedRange, this.defaultConfig.MagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MagicRangedRange = v, disabledTooltip: singleTargetDisabledTooltip);
         if (!this.config.RoleBasedRange)
             ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
         this.DrawSectionHeader("AoE Target Distance");
-        changed |= this.Checkbox("AoE target distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v);
+        changed |= this.Checkbox("AoE target distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v, disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
         if (!this.config.AoERangeInMultiTarget)
             ImGui.BeginDisabled();
-        changed |= this.Checkbox("Non-AST healers use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v);
-        changed |= this.SliderFloat("AoE melee max distance", this.config.AoEMeleeRange, this.defaultConfig.AoEMeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMeleeRange = v);
-        changed |= this.SliderFloat("AoE physical ranged max distance", this.config.AoEPhysicalRangedRange, this.defaultConfig.AoEPhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEPhysicalRangedRange = v);
+        changed |= this.Checkbox("Non-AST healers use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v, disabledTooltip: aoeDisabledTooltip);
+        changed |= this.SliderFloat("AoE melee max distance", this.config.AoEMeleeRange, this.defaultConfig.AoEMeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMeleeRange = v, disabledTooltip: aoeDisabledTooltip);
+        changed |= this.SliderFloat("AoE physical ranged max distance", this.config.AoEPhysicalRangedRange, this.defaultConfig.AoEPhysicalRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEPhysicalRangedRange = v, disabledTooltip: aoeDisabledTooltip);
         if (this.config.HealerPartyCoverage) ImGui.BeginDisabled();
-        changed |= this.SliderFloat("AoE healer max distance", this.config.AoEHealerRange, this.defaultConfig.AoEHealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEHealerRange = v);
+        changed |= this.SliderFloat("AoE healer max distance", this.config.AoEHealerRange, this.defaultConfig.AoEHealerRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEHealerRange = v, disabledTooltip: aoeHealerDisabledTooltip);
         if (this.config.HealerPartyCoverage) ImGui.EndDisabled();
-        changed |= this.SliderFloat("AoE magic ranged max distance", this.config.AoEMagicRangedRange, this.defaultConfig.AoEMagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMagicRangedRange = v);
-        changed |= this.SliderInt("AoE enemy threshold", this.config.AoEEnemyThreshold, this.defaultConfig.AoEEnemyThreshold, 1, 10, v => this.config.AoEEnemyThreshold = v);
+        changed |= this.SliderFloat("AoE magic ranged max distance", this.config.AoEMagicRangedRange, this.defaultConfig.AoEMagicRangedRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.AoEMagicRangedRange = v, disabledTooltip: aoeDisabledTooltip);
+        changed |= this.SliderInt("AoE enemy threshold", this.config.AoEEnemyThreshold, this.defaultConfig.AoEEnemyThreshold, 1, 10, v => this.config.AoEEnemyThreshold = v, disabledTooltip: aoeDisabledTooltip);
         if (!this.config.AoERangeInMultiTarget)
             ImGui.EndDisabled();
         ImGui.Unindent(8f);
@@ -235,8 +239,39 @@ internal sealed class ConfigWindow : Window, IDisposable
         changed |= this.Checkbox("Manage forbidden-zone distance", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => this.config.ManageForbiddenZoneDistance = v);
         if (!this.config.ManageForbiddenZoneDistance)
             ImGui.BeginDisabled();
-        changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, this.defaultConfig.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v);
+        changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, this.defaultConfig.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v, disabledTooltip: "Disabled by Manage forbidden-zone distance in the Ranges tab.");
         if (!this.config.ManageForbiddenZoneDistance)
+            ImGui.EndDisabled();
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        this.DrawSectionHeader("Gap Closer Minimum Distance");
+        if (!this.config.UseGapCloser)
+            ImGui.BeginDisabled();
+        changed |= this.SliderFloat(
+            "Minimum (re)engage distance",
+            this.config.MinimumReengageGapCloserDistance,
+            this.defaultConfig.MinimumReengageGapCloserDistance,
+            Configuration.MinimumGapCloserDistanceMin,
+            Configuration.MinimumGapCloserDistanceMax,
+            v => this.config.MinimumReengageGapCloserDistance = v,
+            "%.0f",
+            "Disabled by Use gap closer to (re)engage in General > Positioning.");
+        if (!this.config.UseGapCloser)
+            ImGui.EndDisabled();
+
+        if (!this.config.UseEscapeGapCloser)
+            ImGui.BeginDisabled();
+        changed |= this.SliderFloat(
+            "Minimum safety gap-close distance",
+            this.config.MinimumEscapeGapCloserDistance,
+            this.defaultConfig.MinimumEscapeGapCloserDistance,
+            Configuration.MinimumGapCloserDistanceMin,
+            Configuration.MinimumGapCloserDistanceMax,
+            v => this.config.MinimumEscapeGapCloserDistance = v,
+            "%.0f",
+            "Disabled by Use gap closer to escape danger in General > Positioning.");
+        if (!this.config.UseEscapeGapCloser)
             ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
@@ -337,13 +372,12 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.setEnabled(current);
     }
 
-    private bool Checkbox(string label, bool value, bool defaultValue, Action<bool> setter, string? tooltip = null)
+    private bool Checkbox(string label, bool value, bool defaultValue, Action<bool> setter, string? tooltip = null, string? disabledTooltip = null)
     {
         var current = value;
         var changed = ImGui.Checkbox(label, ref current);
-        var hovered = ImGui.IsItemHovered();
-        if (tooltip != null && hovered)
-            ImGui.SetTooltip(tooltip);
+        var hovered = this.IsItemHoveredAllowDisabled();
+        this.DrawTooltip(hovered, tooltip, disabledTooltip);
 
         if (IsResetRequested(hovered))
         {
@@ -405,26 +439,31 @@ internal sealed class ConfigWindow : Window, IDisposable
         return changed;
     }
 
-    private bool SliderFloat(string label, float value, float defaultValue, float min, float max, Action<float> setter)
+    private bool SliderFloat(string label, float value, float defaultValue, float min, float max, Action<float> setter, string format = "%.1f", string? disabledTooltip = null)
     {
         var id = $"##{label}";
         ImGui.TextUnformatted(label);
-        var labelHovered = ImGui.IsItemHovered();
+        var labelHovered = this.IsItemHoveredAllowDisabled();
+        this.DrawTooltip(labelHovered, disabledTooltip: disabledTooltip);
         ImGui.SetNextItemWidth(-1f);
 
         if (this.editingSliders.Contains(label))
         {
             var input = value;
             ImGui.SetKeyboardFocusHere(0);
-            if (ImGui.InputFloat(id, ref input, 0f, 0f, "%.1f", ImGuiInputTextFlags.EnterReturnsTrue))
+            if (ImGui.InputFloat(id, ref input, 0f, 0f, format, ImGuiInputTextFlags.EnterReturnsTrue))
             {
                 this.editingSliders.Remove(label);
                 input = Math.Clamp(input, min, max);
+                if (format == "%.0f")
+                    input = MathF.Round(input);
                 setter(input);
                 return true;
             }
 
-            if (IsResetRequested(labelHovered || ImGui.IsItemHovered()))
+            var inputHovered = this.IsItemHoveredAllowDisabled();
+            this.DrawTooltip(inputHovered, disabledTooltip: disabledTooltip);
+            if (IsResetRequested(labelHovered || inputHovered))
             {
                 this.editingSliders.Remove(label);
                 setter(defaultValue);
@@ -438,8 +477,9 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         var current = value;
-        var changed = ImGui.SliderFloat(id, ref current, min, max, "%.1f");
-        var sliderHovered = ImGui.IsItemHovered();
+        var changed = ImGui.SliderFloat(id, ref current, min, max, format);
+        var sliderHovered = this.IsItemHoveredAllowDisabled();
+        this.DrawTooltip(sliderHovered, disabledTooltip: disabledTooltip);
         if (IsResetRequested(labelHovered || sliderHovered))
         {
             this.editingSliders.Remove(label);
@@ -457,15 +497,18 @@ internal sealed class ConfigWindow : Window, IDisposable
             return false;
         }
 
+        if (format == "%.0f")
+            current = MathF.Round(current);
         setter(current);
         return true;
     }
 
-    private bool SliderInt(string label, int value, int defaultValue, int min, int max, Action<int> setter)
+    private bool SliderInt(string label, int value, int defaultValue, int min, int max, Action<int> setter, string? disabledTooltip = null)
     {
         var id = $"##{label}";
         ImGui.TextUnformatted(label);
-        var labelHovered = ImGui.IsItemHovered();
+        var labelHovered = this.IsItemHoveredAllowDisabled();
+        this.DrawTooltip(labelHovered, disabledTooltip: disabledTooltip);
         ImGui.SetNextItemWidth(-1f);
 
         if (this.editingSliders.Contains(label))
@@ -480,7 +523,9 @@ internal sealed class ConfigWindow : Window, IDisposable
                 return true;
             }
 
-            if (IsResetRequested(labelHovered || ImGui.IsItemHovered()))
+            var inputHovered = this.IsItemHoveredAllowDisabled();
+            this.DrawTooltip(inputHovered, disabledTooltip: disabledTooltip);
+            if (IsResetRequested(labelHovered || inputHovered))
             {
                 this.editingSliders.Remove(label);
                 setter(defaultValue);
@@ -495,7 +540,8 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         var current = value;
         var changed = ImGui.SliderInt(id, ref current, min, max);
-        var sliderHovered = ImGui.IsItemHovered();
+        var sliderHovered = this.IsItemHoveredAllowDisabled();
+        this.DrawTooltip(sliderHovered, disabledTooltip: disabledTooltip);
         if (IsResetRequested(labelHovered || sliderHovered))
         {
             this.editingSliders.Remove(label);
@@ -520,5 +566,29 @@ internal sealed class ConfigWindow : Window, IDisposable
     private bool IsResetRequested(bool hovered)
     {
         return hovered && !ImGui.IsAnyItemActive() && this.backspacePressedThisFrame;
+    }
+
+    private bool IsItemHoveredAllowDisabled()
+    {
+        return ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled);
+    }
+
+    private void DrawTooltip(bool hovered, string? tooltip = null, string? disabledTooltip = null)
+    {
+        if (!hovered)
+        {
+            return;
+        }
+
+        if (disabledTooltip != null)
+        {
+            ImGui.SetTooltip(disabledTooltip);
+            return;
+        }
+
+        if (tooltip != null)
+        {
+            ImGui.SetTooltip(tooltip);
+        }
     }
 }

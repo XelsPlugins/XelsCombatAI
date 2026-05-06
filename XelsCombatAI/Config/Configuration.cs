@@ -21,9 +21,13 @@ public sealed class Configuration : IPluginConfiguration
     public const float DefaultAoEMagicRangedRange = 20f;
     public const int DefaultAoEEnemyThreshold = 2;
     public const float DefaultPreferredForbiddenZoneDistance = 1f;
+    public const float DefaultMinimumReengageGapCloserDistance = 8f;
+    public const float DefaultMinimumEscapeGapCloserDistance = 8f;
+    public const float MinimumGapCloserDistanceMin = 0f;
+    public const float MinimumGapCloserDistanceMax = 20f;
     public const float EnemyCountRadius = 10f;
 
-    public int Version { get; set; } = 10;
+    public int Version { get; set; } = 11;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -75,6 +79,8 @@ public sealed class Configuration : IPluginConfiguration
     public float AoEMagicRangedRange { get; set; } = DefaultAoEMagicRangedRange;
     public int AoEEnemyThreshold { get; set; } = DefaultAoEEnemyThreshold;
     public float PreferredForbiddenZoneDistance { get; set; } = DefaultPreferredForbiddenZoneDistance;
+    public float MinimumReengageGapCloserDistance { get; set; } = DefaultMinimumReengageGapCloserDistance;
+    public float MinimumEscapeGapCloserDistance { get; set; } = DefaultMinimumEscapeGapCloserDistance;
     public bool HealerPartyCoverage { get; set; } = true;
 
     [JsonProperty("ManageTrueNorthInRsr")]
@@ -155,6 +161,13 @@ public sealed class Configuration : IPluginConfiguration
             this.HealerPartyCoverage = true;
             this.Version = 10;
         }
+
+        if (this.Version < 11)
+        {
+            this.MinimumReengageGapCloserDistance = DefaultMinimumReengageGapCloserDistance;
+            this.MinimumEscapeGapCloserDistance = DefaultMinimumEscapeGapCloserDistance;
+            this.Version = 11;
+        }
     }
 
     internal void Clamp()
@@ -171,6 +184,8 @@ public sealed class Configuration : IPluginConfiguration
         this.AoEMagicRangedRange = Math.Clamp(this.AoEMagicRangedRange, BossModMinRange, BossModMaxRange);
         this.AoEEnemyThreshold = Math.Clamp(this.AoEEnemyThreshold, 1, 10);
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);
+        this.MinimumReengageGapCloserDistance = MathF.Round(Math.Clamp(this.MinimumReengageGapCloserDistance, MinimumGapCloserDistanceMin, MinimumGapCloserDistanceMax));
+        this.MinimumEscapeGapCloserDistance = MathF.Round(Math.Clamp(this.MinimumEscapeGapCloserDistance, MinimumGapCloserDistanceMin, MinimumGapCloserDistanceMax));
         this.CombatStyle = Enum.IsDefined(this.CombatStyle) ? this.CombatStyle : CombatStyle.Normal;
     }
 
@@ -188,6 +203,8 @@ public sealed class Configuration : IPluginConfiguration
         this.AoEMagicRangedRange = DefaultAoEMagicRangedRange;
         this.AoEEnemyThreshold = DefaultAoEEnemyThreshold;
         this.PreferredForbiddenZoneDistance = DefaultPreferredForbiddenZoneDistance;
+        this.MinimumReengageGapCloserDistance = DefaultMinimumReengageGapCloserDistance;
+        this.MinimumEscapeGapCloserDistance = DefaultMinimumEscapeGapCloserDistance;
     }
 
     internal void ResetAll()
