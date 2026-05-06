@@ -1,0 +1,88 @@
+name: Bump Version and Pre-release
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  bump-and-prerelease:
+    # Skip if this is a version bump commit (contains [skip ci])
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Get merged PR labels
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.sha }}"
+          LABELS=$(gh pr list --state merged --search "$SHA" --json labels --jq '.[0].labels[].name' 2>/dev/null || echo "")
+          echo "labels<<EOF" >> $GITHUB_OUTPUT
+          echo "$LABELS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Skip if no-release label
+        id: check_skip
+        run: |
+          if echo "${{ steps.pr.outputs.labels }}" | grep -q "no-release"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Compute new version
+        if: steps.check_skip.outputs.skip == 'false'
+        id: version
+        run: |
+          CURRENT=$(grep -oP '(?<=<Version>)[^<]+' XelsCombatAI/XelsCombatAI.csproj)
+          IFS='.' read -r A B C D <<< "$CURRENT"
+          LABELS="${{ steps.pr.outputs.labels }}"
+          if echo "$LABELS" | grep -q "release:major"; then
+            B=$((B+1)); C=0; D=0
+          elif echo "$LABELS" | grep -q "release:minor"; then
+            C=$((C+1)); D=0
+          else
+            D=$((D+1))
+          fi
+          NEW="$A.$B.$C.$D"
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+          echo "tag=v$NEW-pre" >> $GITHUB_OUTPUT
+
+      - name: Update version files
+        if: steps.check_skip.outputs.skip == 'false'
+        run: |
+          NEW="${{ steps.version.outputs.new }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          TESTING_URL="https://github.com/${REPO}/releases/download/${TAG}/XelsCombatAI.zip"
+
+          sed -i "s|<Version>[^<]*</Version>|<Version>$NEW</Version>|" XelsCombatAI/XelsCombatAI.csproj
+
+          # Update or insert TestingAssemblyVersion in pluginmaster.json
+          if grep -q '"TestingAssemblyVersion"' pluginmaster.json; then
+            sed -i "s|\"TestingAssemblyVersion\": \"[^\"]*\"|\"TestingAssemblyVersion\": \"$NEW\"|" pluginmaster.json
+          else
+            sed -i "s|\"AssemblyVersion\": \"[^\"]*\"|&,\n    \"TestingAssemblyVersion\": \"$NEW\"|" pluginmaster.json
+          fi
+
+          # Update DownloadLinkTesting
+          sed -i "s|\"DownloadLinkTesting\": \"[^\"]*\"|\"DownloadLinkTesting\": \"$TESTING_URL\"|" pluginmaster.json
+
+      - name: Commit and tag
+        if: steps.check_skip.outputs.skip == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add XelsCombatAI/XelsCombatAI.csproj pluginmaster.json
+          git commit -m "chore: bump version to ${{ steps.version.outputs.tag }} [skip ci]"
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin master
+          git push origin ${{ steps.version.outputs.tag }}

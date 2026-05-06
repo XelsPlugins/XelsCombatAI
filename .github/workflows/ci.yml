@@ -1,15 +1,14 @@
-name: Release
+name: CI
 
 on:
+  pull_request:
+    branches: [master]
   push:
-    tags:
-      - "v[0-9]*.[0-9]*.[0-9]*.[0-9]*"
+    branches: [master]
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     env:
       DALAMUD_HOME: /tmp/dalamud
     steps:
@@ -30,10 +29,5 @@ jobs:
           wget https://goatcorp.github.io/dalamud-distrib/stg/latest.zip -O /tmp/dalamud.zip
           unzip /tmp/dalamud.zip -d ${{ env.DALAMUD_HOME }}
 
-      - name: Build package
-        run: scripts/package-release.sh
-
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/XelsCombatAI.zip
+      - name: Build
+        run: dotnet build XelsCombatAI/XelsCombatAI.csproj -c Release

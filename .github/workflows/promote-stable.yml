@@ -1,0 +1,47 @@
+name: Promote to Stable
+
+on:
+  workflow_dispatch:
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Read testing version
+        id: version
+        run: |
+          TESTING=$(grep -oP '(?<="TestingAssemblyVersion": ")[^"]+' pluginmaster.json)
+          if [ -z "$TESTING" ]; then
+            echo "No TestingAssemblyVersion found in pluginmaster.json — nothing to promote"
+            exit 1
+          fi
+          echo "version=$TESTING" >> $GITHUB_OUTPUT
+          echo "tag=v$TESTING" >> $GITHUB_OUTPUT
+          REPO="${{ github.repository }}"
+          echo "stable_url=https://github.com/${REPO}/releases/download/v$TESTING/XelsCombatAI.zip" >> $GITHUB_OUTPUT
+
+      - name: Update pluginmaster.json for stable
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          STABLE_URL="${{ steps.version.outputs.stable_url }}"
+
+          sed -i "s|\"AssemblyVersion\": \"[^\"]*\"|\"AssemblyVersion\": \"$VERSION\"|" pluginmaster.json
+          sed -i "s|\"DownloadLinkInstall\": \"[^\"]*\"|\"DownloadLinkInstall\": \"$STABLE_URL\"|" pluginmaster.json
+          sed -i "s|\"DownloadLinkUpdate\": \"[^\"]*\"|\"DownloadLinkUpdate\": \"$STABLE_URL\"|" pluginmaster.json
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pluginmaster.json
+          git commit -m "chore: promote ${{ steps.version.outputs.tag }} to stable [skip ci]"
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin master
+          git push origin ${{ steps.version.outputs.tag }}
