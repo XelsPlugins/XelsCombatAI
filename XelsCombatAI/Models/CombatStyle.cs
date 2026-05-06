@@ -3,5 +3,7 @@ namespace XelsCombatAI.Models;
 public enum CombatStyle
 {
     Normal,
-    Greed
+    Greed,
+    GreedGCD,
+    GreedLastMoment
 }

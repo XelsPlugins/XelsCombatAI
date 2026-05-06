@@ -46,7 +46,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         }
 
         var classJobId = player.ClassJob.RowId;
-        if (config.CombatStyle == CombatStyle.Greed && classJobId == 25 && this.HasActiveCircleOfPower())
+        if (config.CombatStyle != CombatStyle.Normal && classJobId == 25 && this.HasActiveCircleOfPower())
         {
             this.lastEscapeGapCloserSafety = "disabled in Greed mode while in Ley Lines";
             return false;

@@ -129,11 +129,16 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
 
         this.DrawSectionHeader("Movement");
-        changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v, "Turns automated movement on or off.\nOther strategy settings can still update.");
-        changed |= this.Checkbox("Pause movement while moving manually", this.config.RespectManualMovement, this.defaultConfig.RespectManualMovement, v => this.config.RespectManualMovement = v, "Temporarily pauses automated movement when manual movement input is detected.\nUses BossMod movement input when available.");
-        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal moves directly to safety.\nGreed balances uptime against mechanic safety.");
-        changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Follow the tank on targets without boss modules.\nDisabled automatically on boss encounters.");
-        changed |= this.Checkbox("Healer: stay near party", this.config.HealerPartyCoverage, this.defaultConfig.HealerPartyCoverage, v => this.config.HealerPartyCoverage = v, "Positions healer to cover the most party members on boss fights.\nOverrides healer max distance.");
+        changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v, "Enables or disables automated movement.\nAll other settings remain active and will apply when re-enabled.");
+        changed |= this.Checkbox("Pause movement while moving manually", this.config.RespectManualMovement, this.defaultConfig.RespectManualMovement, v => this.config.RespectManualMovement = v, "Temporarily pauses automated movement when manual movement input is detected.\nResumes automatically shortly after input stops.");
+        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal — prioritizes getting to safety immediately.\n\nGreed — tries to maintain uptime while still respecting mechanics.\n\nGreed GCD — holds position until the last GCD window before a mechanic requires movement.\n\nGreed Last Moment — holds position until the absolute last moment before a mechanic requires movement.", v => v switch
+        {
+            CombatStyle.GreedGCD        => "Greed GCD",
+            CombatStyle.GreedLastMoment => "Greed Last Moment",
+            _                           => v.ToString()
+        });
+        changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Follows the tank's position on trash pulls.\nAutomatically disabled on boss encounters.");
+        changed |= this.Checkbox("Healer: stay near party", this.config.HealerPartyCoverage, this.defaultConfig.HealerPartyCoverage, v => this.config.HealerPartyCoverage = v, "Positions the healer to stay within range of as many party members as possible.\nOverrides the healer max distance sliders.");
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
@@ -144,7 +149,7 @@ internal sealed class ConfigWindow : Window, IDisposable
     {
         var changed = false;
 
-        changed |= this.DrawToggleSectionHeader("Positionals", this.config.ManagePositionals, this.defaultConfig.ManagePositionals, v => this.config.ManagePositionals = v, "Uses Avarice positional data to request rear or flank positioning.\nOnly applies when the current job and target support it.");
+        changed |= this.DrawToggleSectionHeader("Positionals", this.config.ManagePositionals, this.defaultConfig.ManagePositionals, v => this.config.ManagePositionals = v, "Requests rear or flank positioning based on Avarice positional data.\nOnly active when the current job and target support positionals.");
         var positionalsDisabledTooltip = !this.config.ManagePositionals ? "Disabled by Positionals in the Positioning tab." : null;
         if (!this.config.ManagePositionals)
             ImGui.BeginDisabled();
@@ -153,14 +158,14 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.ManageTrueNorth,
             this.defaultConfig.ManageTrueNorth,
             v => { this.config.ManageTrueNorth = v; if (v) this.manageTrueNorthEnabled(); },
-            "Uses True North here instead of RotationSolver Reborn.\nDisables RSR Auto True North while enabled.\nRSR is not restored automatically.",
+            "Manages True North here instead of RotationSolver Reborn.\nDisables RSR's Auto True North while active.\nRSR will not restore it automatically when disabled.",
             positionalsDisabledTooltip);
         if (!this.config.ManagePositionals)
             ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        changed |= this.DrawToggleSectionHeader("Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => this.config.ManageLeylines = v, "Manages existing Ley Lines only.\nWill not place Ley Lines.");
+        changed |= this.DrawToggleSectionHeader("Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => this.config.ManageLeylines = v, "Manages positioning relative to existing Ley Lines.\nDoes not place new Ley Lines.");
         var leylinesDisabledTooltip = !this.config.ManageLeylines ? "Disabled by Ley Lines in the Positioning tab." : null;
         if (!this.config.ManageLeylines)
             ImGui.BeginDisabled();
@@ -179,12 +184,12 @@ internal sealed class ConfigWindow : Window, IDisposable
     {
         var changed = false;
 
-        changed |= this.DrawToggleSectionHeader("Range Management", this.config.ManageRange, this.defaultConfig.ManageRange, v => this.config.ManageRange = v, "Chooses distance targets based on your role, target count, and the distance settings below.");
+        changed |= this.DrawToggleSectionHeader("Range Management", this.config.ManageRange, this.defaultConfig.ManageRange, v => this.config.ManageRange = v, "Automatically adjusts positioning distance based on your role, target count, and the settings below.");
         var manageRangeDisabledTooltip = "Disabled by Range Management in the Distance tab.";
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        changed |= this.DrawToggleSectionHeader("Single Target Distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => this.config.RoleBasedRange = v, "Uses these distances for one enemy.\nAlso used when the AoE enemy threshold has not been reached.", disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
+        changed |= this.DrawToggleSectionHeader("Single Target Distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => this.config.RoleBasedRange = v, "Applies these distances when fighting a single enemy.\nAlso used in multi-target situations until the AoE threshold is reached.", disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
         if (!this.config.ManageRange)
             ImGui.BeginDisabled();
         var singleTargetDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : !this.config.RoleBasedRange ? "Disabled by Single target distance in the Distance tab." : null;
@@ -206,7 +211,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        changed |= this.DrawToggleSectionHeader("AoE Target Distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v, "Switches to the AoE distance sliders when enough enemies are nearby.\nThe enemy threshold controls when this happens.", disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
+        changed |= this.DrawToggleSectionHeader("AoE Target Distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v, "Switches to the AoE distances when enough enemies are nearby.\nThe enemy threshold below controls when this kicks in.", disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
         if (!this.config.AoERangeInMultiTarget)
             ImGui.BeginDisabled();
         changed |= this.Checkbox("Non-AST healers use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v, disabledTooltip: aoeDisabledTooltip);
@@ -225,7 +230,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         if (!this.config.ManageRange)
             ImGui.EndDisabled();
 
-        changed |= this.DrawToggleSectionHeader("Forbidden Zone", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => this.config.ManageForbiddenZoneDistance = v, "Keeps extra space from unsafe or forbidden areas when possible.\nRequired mechanic movement still takes priority.");
+        changed |= this.DrawToggleSectionHeader("Forbidden Zone", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => this.config.ManageForbiddenZoneDistance = v, "Maintains extra distance from forbidden zones when possible.\nMechanic-required movement always takes priority.");
         var forbiddenZoneDisabledTooltip = !this.config.ManageForbiddenZoneDistance ? "Disabled by Manage forbidden-zone distance in the Distance tab." : null;
         if (!this.config.ManageForbiddenZoneDistance)
             ImGui.BeginDisabled();
@@ -247,7 +252,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.UseGapCloser,
             this.defaultConfig.UseGapCloser,
             v => this.config.UseGapCloser = v,
-            "Uses selected gap closers to return to melee range.\nOnly fires when the destination is reported safe.",
+            "Uses selected gap closers to close distance and return to range.\nOnly fires when the destination is reported safe.",
             FontAwesomeIcon.SkullCrossbones,
             "This can put you in danger during combat.\nSome arena hazards and timing checks may need manual judgment.");
         var reengageDisabledTooltip = !this.config.UseGapCloser ? "Disabled by Use gap closer to (re)engage in Gap Closers." : null;
@@ -295,7 +300,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.UseEscapeGapCloser,
             this.defaultConfig.UseEscapeGapCloser,
             v => this.config.UseEscapeGapCloser = v,
-            "Uses selected movement skills to leave danger.\nOnly fires when the landing point is reported safe.\nGreed mode still follows the safe point.\nBLM will not leave active Ley Lines.",
+            "Uses selected movement skills to escape danger.\nOnly fires when the landing point is reported safe.\nIn Greed mode, still moves toward the safe destination.\nBLM will not escape out of active Ley Lines.",
             FontAwesomeIcon.SkullCrossbones,
             "This can put you in danger during combat.\nSome arena hazards and timing checks may need manual judgment.");
         var escapeDisabledTooltip = !this.config.UseEscapeGapCloser ? "Disabled by Use gap closer to escape danger in Gap Closers." : null;
@@ -442,7 +447,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         var hovered = checkboxHovered || titleHovered || iconHovered;
         this.DrawTooltip(hovered, disabledTooltip: disabledTooltip);
 
-        if (IsResetRequested(hovered))
+        if (enabled && IsResetRequested(hovered))
         {
             if (value == defaultValue)
             {
@@ -483,9 +488,10 @@ internal sealed class ConfigWindow : Window, IDisposable
     {
         var current = value;
         var changed = ImGui.Checkbox(label, ref current);
-        var hovered = this.IsItemHoveredAllowDisabled();
+        var hoveredForTooltip = this.IsItemHoveredAllowDisabled();
+        var hovered = ImGui.IsItemHovered();
         this.DrawInfoIcon(tooltip);
-        this.DrawTooltip(hovered, disabledTooltip: disabledTooltip);
+        this.DrawTooltip(hoveredForTooltip, disabledTooltip: disabledTooltip);
 
         if (IsResetRequested(hovered))
         {
@@ -503,7 +509,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         return true;
     }
 
-    private bool Combo<T>(string label, T value, T defaultValue, Action<T> setter, string? tooltip = null)
+    private bool Combo<T>(string label, T value, T defaultValue, Action<T> setter, string? tooltip = null, Func<T, string>? displayName = null)
         where T : struct, Enum
     {
         var changed = false;
@@ -511,13 +517,15 @@ internal sealed class ConfigWindow : Window, IDisposable
         var labelHovered = ImGui.IsItemHovered();
         this.DrawInfoIcon(tooltip);
 
+        var getName = displayName ?? (v => v.ToString());
+
         ImGui.SetNextItemWidth(-1f);
-        if (ImGui.BeginCombo($"##{label}", value.ToString()))
+        if (ImGui.BeginCombo($"##{label}", getName(value)))
         {
             foreach (var option in Enum.GetValues<T>())
             {
                 var selected = EqualityComparer<T>.Default.Equals(value, option);
-                if (ImGui.Selectable(option.ToString(), selected))
+                if (ImGui.Selectable(getName(option), selected))
                 {
                     setter(option);
                     changed = true;
@@ -569,8 +577,9 @@ internal sealed class ConfigWindow : Window, IDisposable
     {
         var id = $"##{label}";
         ImGui.TextUnformatted(label);
-        var labelHovered = this.IsItemHoveredAllowDisabled();
-        this.DrawTooltip(labelHovered, disabledTooltip: disabledTooltip);
+        var labelHoveredForTooltip = this.IsItemHoveredAllowDisabled();
+        var labelHovered = ImGui.IsItemHovered();
+        this.DrawTooltip(labelHoveredForTooltip, disabledTooltip: disabledTooltip);
         ImGui.SetNextItemWidth(-1f);
 
         if (this.editingSliders.Contains(label))
@@ -587,8 +596,9 @@ internal sealed class ConfigWindow : Window, IDisposable
                 return true;
             }
 
-            var inputHovered = this.IsItemHoveredAllowDisabled();
-            this.DrawTooltip(inputHovered, disabledTooltip: disabledTooltip);
+            var inputHoveredForTooltip = this.IsItemHoveredAllowDisabled();
+            var inputHovered = ImGui.IsItemHovered();
+            this.DrawTooltip(inputHoveredForTooltip, disabledTooltip: disabledTooltip);
             if (IsResetRequested(labelHovered || inputHovered))
             {
                 this.editingSliders.Remove(label);
@@ -604,8 +614,9 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         var current = value;
         var changed = ImGui.SliderFloat(id, ref current, min, max, format);
-        var sliderHovered = this.IsItemHoveredAllowDisabled();
-        this.DrawTooltip(sliderHovered, disabledTooltip: disabledTooltip);
+        var sliderHoveredForTooltip = this.IsItemHoveredAllowDisabled();
+        var sliderHovered = ImGui.IsItemHovered();
+        this.DrawTooltip(sliderHoveredForTooltip, disabledTooltip: disabledTooltip);
         if (IsResetRequested(labelHovered || sliderHovered))
         {
             this.editingSliders.Remove(label);
@@ -633,8 +644,9 @@ internal sealed class ConfigWindow : Window, IDisposable
     {
         var id = $"##{label}";
         ImGui.TextUnformatted(label);
-        var labelHovered = this.IsItemHoveredAllowDisabled();
-        this.DrawTooltip(labelHovered, disabledTooltip: disabledTooltip);
+        var labelHoveredForTooltip = this.IsItemHoveredAllowDisabled();
+        var labelHovered = ImGui.IsItemHovered();
+        this.DrawTooltip(labelHoveredForTooltip, disabledTooltip: disabledTooltip);
         ImGui.SetNextItemWidth(-1f);
 
         if (this.editingSliders.Contains(label))
@@ -649,8 +661,9 @@ internal sealed class ConfigWindow : Window, IDisposable
                 return true;
             }
 
-            var inputHovered = this.IsItemHoveredAllowDisabled();
-            this.DrawTooltip(inputHovered, disabledTooltip: disabledTooltip);
+            var inputHoveredForTooltip = this.IsItemHoveredAllowDisabled();
+            var inputHovered = ImGui.IsItemHovered();
+            this.DrawTooltip(inputHoveredForTooltip, disabledTooltip: disabledTooltip);
             if (IsResetRequested(labelHovered || inputHovered))
             {
                 this.editingSliders.Remove(label);
@@ -666,8 +679,9 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         var current = value;
         var changed = ImGui.SliderInt(id, ref current, min, max);
-        var sliderHovered = this.IsItemHoveredAllowDisabled();
-        this.DrawTooltip(sliderHovered, disabledTooltip: disabledTooltip);
+        var sliderHoveredForTooltip = this.IsItemHoveredAllowDisabled();
+        var sliderHovered = ImGui.IsItemHovered();
+        this.DrawTooltip(sliderHoveredForTooltip, disabledTooltip: disabledTooltip);
         if (IsResetRequested(labelHovered || sliderHovered))
         {
             this.editingSliders.Remove(label);

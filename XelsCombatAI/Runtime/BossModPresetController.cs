@@ -228,8 +228,10 @@ internal sealed class BossModPresetController(
     {
         return style switch
         {
-            CombatStyle.Greed => "GreedAutomatic",
-            _ => "Any"
+            CombatStyle.Greed           => "GreedAutomatic",
+            CombatStyle.GreedGCD        => "GreedGCDExplicit",
+            CombatStyle.GreedLastMoment => "GreedLastMomentExplicit",
+            _                           => "Any"
         };
     }
 
