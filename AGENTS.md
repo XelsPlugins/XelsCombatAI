@@ -19,7 +19,11 @@ Xel's Combat AI is a C# Dalamud plugin for Final Fantasy XIV. It manages a dedic
 - `XelsCombatAI/Models/` - small shared enums and simple types.
 - `XelsCombatAI/GlobalUsings.cs` - global imports for internal XCAI namespaces.
 - `scripts/package-release.sh` - release build and zip packaging script.
-- `.github/workflows/release.yml` - GitHub release workflow.
+- `.github/workflows/ci.yml` - build check on every PR (required status check for branch protection).
+- `.github/workflows/bump-and-prerelease.yml` - bumps version on merge, pushes `v*-pre` tag.
+- `.github/workflows/prerelease.yml` - builds and uploads a GitHub pre-release on `v*-pre` tags.
+- `.github/workflows/promote-stable.yml` - manual `workflow_dispatch` to promote testing → stable.
+- `.github/workflows/release.yml` - builds and uploads a stable GitHub release on `v*` tags (no `-pre`).
 - `pluginmaster.json` - custom plugin repository metadata.
 - `external/` - read-only external reference workspace. See `external/AGENTS.md`; its instructions override this file inside that directory.
 
@@ -86,10 +90,31 @@ Notes:
 
 ## Release And Metadata
 
-When changing the plugin version, keep these files in sync:
+### Automated release pipeline
 
-- `XelsCombatAI/XelsCombatAI.csproj` `Version`
-- `pluginmaster.json` `AssemblyVersion`
+All changes flow through pull requests to `master`. Never commit directly to `master` after branch protection is enabled.
+
+**PR labels** control which version component is bumped on merge:
+
+| Label | Effect |
+|-------|--------|
+| `release:patch` | Bumps 4th component — default if no label |
+| `release:minor` | Bumps 3rd component, zeros 4th |
+| `release:major` | Bumps 2nd component, zeros 3rd+4th |
+| `no-release` | Skips version bump (docs, chores) |
+
+On merge, `bump-and-prerelease.yml` automatically updates the version files, commits them (`[skip ci]`), and pushes a `v{version}-pre` tag. `prerelease.yml` picks up the tag and publishes a GitHub pre-release — visible only to Dalamud users with **Receive plugin testing versions** enabled.
+
+To cut a stable release, run the **Promote to Stable** workflow manually from the GitHub Actions UI. It reads the current `TestingAssemblyVersion`, updates `AssemblyVersion` and the stable download URLs in `pluginmaster.json`, then pushes a `v{version}` tag (no `-pre`) which triggers `release.yml`.
+
+### Version file sync
+
+The automation keeps these in sync, but if you touch them manually they must match:
+
+- `XelsCombatAI/XelsCombatAI.csproj` → `<Version>` (build version)
+- `pluginmaster.json` → `AssemblyVersion` (stable), `TestingAssemblyVersion` (testing)
+
+Download URLs in `pluginmaster.json` must point to specific tag releases (not `/latest/`) so stable and testing can coexist independently.
 
 When changing plugin description, tags, icon URL, name, or Dalamud API metadata, check both:
 
