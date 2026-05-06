@@ -11,15 +11,21 @@ internal sealed class CombatRuntime(
     BossModPresetController presetController,
     PositionalsController positionalsController,
     BossModReflectionSafety bossModSafety,
+    BossModManualMovementReflection manualMovement,
     GapCloserController gapCloserController,
     EscapeGapCloserController escapeGapCloserController,
     Action saveConfig,
     Action updateDtr,
     Action<string> print)
 {
+    private static readonly TimeSpan ManualMovementResumeDelay = TimeSpan.FromMilliseconds(750);
+
     private bool wasDead;
     private DateTime nextRuntimeUpdate = DateTime.MinValue;
+    private DateTime manualMovementSuppressUntil = DateTime.MinValue;
     private string? lastMissingDependencies;
+
+    public bool AutomatedMovementSuppressed => DateTime.UtcNow < this.manualMovementSuppressUntil;
 
     public void OnFrameworkUpdate(IFramework framework)
     {
@@ -48,18 +54,19 @@ internal sealed class CombatRuntime(
             this.ResetRuntimeCache();
         this.wasDead = isDead;
 
-        if (DateTime.UtcNow < this.nextRuntimeUpdate)
+        var now = DateTime.UtcNow;
+        if (now < this.nextRuntimeUpdate)
         {
             return;
         }
-        this.nextRuntimeUpdate = DateTime.UtcNow.AddMilliseconds(250);
+        this.nextRuntimeUpdate = now.AddMilliseconds(250);
 
         if (!presetController.InitializedPreset && !presetController.Initialize())
         {
             return;
         }
 
-        presetController.ApplyStrategies();
+        presetController.ApplyStrategies(this.ShouldSuppressAutomatedMovement(now));
     }
 
     public bool SetEnabled(bool enabled, bool warn = true)
@@ -91,7 +98,8 @@ internal sealed class CombatRuntime(
 
     public void ResetRuntimeCache()
     {
-        presetController.MarkUninitialized();
+        this.manualMovementSuppressUntil = DateTime.MinValue;
+        presetController.ResetCache();
     }
 
     public void EnsureRsrTrueNorthDisabled()
@@ -112,8 +120,17 @@ internal sealed class CombatRuntime(
 
     public RuntimeStatus GetStatus()
     {
+        var player = services.ObjectTable.LocalPlayer;
+        var target = services.TargetManager.Target;
+
         return new RuntimeStatus(
             config.Enabled,
+            services.Condition[ConditionFlag.InCombat],
+            services.Condition[ConditionFlag.Unconscious],
+            player?.ClassJob.RowId ?? 0,
+            target != null,
+            target?.BaseId ?? 0,
+            services.PartyList.Count,
             this.GetDependencyWarning(),
             this.GetTrueNorthWarning(),
             positionalsController.RsrTrueNorthDisabled,
@@ -132,14 +149,25 @@ internal sealed class CombatRuntime(
             presetController.LastDragoonWingedGlide,
             presetController.LastNinjaShukuchi,
             presetController.LastViperSlither,
+            presetController.LastHealerStayNearParty,
+            presetController.LastHealerHeal,
+            presetController.LastHealerEsuna,
+            presetController.LastHealerOutOfCombat,
+            presetController.LastHealerRaise,
             config.GapCloserPLD,
             config.GapCloserWAR,
             config.GapCloserDRK,
             config.GapCloserGNB,
+            config.GapCloserMNK,
+            config.GapCloserDRG,
+            config.GapCloserNIN,
             config.GapCloserSAM,
+            config.GapCloserDNC,
             config.GapCloserRPR,
+            config.GapCloserVPR,
             config.EscapeGapCloserMNK,
             config.EscapeGapCloserNIN,
+            config.EscapeGapCloserDNC,
             config.EscapeGapCloserRPR,
             config.EscapeGapCloserVPR,
             config.EscapeGapCloserBLM,
@@ -147,6 +175,8 @@ internal sealed class CombatRuntime(
             config.EscapeGapCloserPCT,
             config.EscapeGapCloserBLU,
             bossModSafety.Status,
+            manualMovement.Status,
+            this.AutomatedMovementSuppressed,
             gapCloserController.LastGapCloserSafety,
             escapeGapCloserController.LastEscapeGapCloserSafety,
             presetController.InitializedPreset);
@@ -167,6 +197,8 @@ internal sealed class CombatRuntime(
             presetController.Deactivate();
             this.ResetRuntimeCache();
         }
+
+        this.manualMovementSuppressUntil = DateTime.MinValue;
     }
 
     private void WaitForDependencies(string missing)
@@ -177,6 +209,7 @@ internal sealed class CombatRuntime(
         }
 
         presetController.ResetCache();
+        this.manualMovementSuppressUntil = DateTime.MinValue;
         if (!string.Equals(this.lastMissingDependencies, missing, StringComparison.Ordinal))
         {
             this.lastMissingDependencies = missing;
@@ -194,5 +227,21 @@ internal sealed class CombatRuntime(
 
         this.lastMissingDependencies = null;
         updateDtr();
+    }
+
+    private bool ShouldSuppressAutomatedMovement(DateTime now)
+    {
+        if (!config.RespectManualMovement)
+        {
+            this.manualMovementSuppressUntil = DateTime.MinValue;
+            return false;
+        }
+
+        if (manualMovement.IsManualMovementRequested())
+        {
+            this.manualMovementSuppressUntil = now.Add(ManualMovementResumeDelay);
+        }
+
+        return now < this.manualMovementSuppressUntil;
     }
 }

@@ -19,6 +19,7 @@ While you are in combat, the plugin automatically:
 - **Manages your Ley Lines** — returns to them when safe, uses Between the Lines and Retrace if available
 - **Stays clear of forbidden zones** with a configurable buffer distance
 - **Uses BossMod-checked gap closers** to re-engage after being knocked away or escape a dangerous spot (optional, off by default)
+- **Pauses automated movement** briefly when you move manually, including remapped movement or gamepad input reported by BossMod
 - **Manages True North** usage and disables RSR's Auto True North to prevent conflicts (optional, requires RSR)
 
 Out of combat, the plugin stops managing movement entirely and hands control back to you. Settings are automatically re-applied after death and resurrection.
@@ -39,29 +40,24 @@ https://raw.githubusercontent.com/Xeltor/XelsCombatAI/master/pluginmaster.json
 | `/xcai on` | Enable |
 | `/xcai off` | Disable |
 | `/xcai config` | Open settings |
-| `/xcai status` | Print current state to chat |
 
 ## Configuration
 
-Open the settings window with `/xcai config` or through the Dalamud plugin list. The window is split into two tabs.
+Open the settings window with `/xcai config` or through the Dalamud plugin list. The window is split by intent so related options stay together.
 
-### General tab
+### Main tab
 
-**Movement** — Toggle movement management, whether to follow the tank on trash pulls (targets with no boss module), and healer party coverage on boss fights.
+**Main** — Toggle the plugin, movement management, manual movement pause, combat style, whether to follow the tank on trash pulls (targets with no boss module), and healer party coverage on boss fights.
 
-**Positioning** — Manage positionals, True North, Ley Lines, and gap closers.
+### Positioning tab
+
+**Positioning** — Manage positionals, True North, and Ley Lines.
 
 - *Manage positionals* — Moves you to the correct rear/flank position for your rotation.
 - *Manage True North* — Uses True North automatically and disables RSR's Auto True North to prevent conflicts. Requires RSR.
 - *Manage Ley Lines* — Helps BLM stay on Ley Lines and use Between the Lines / Retrace when available. Does not place Ley Lines.
-- *Use gap closer to (re)engage* — Uses supported gap closers to return to melee range when BossMod reports the dash is safe. Disabled by default.
-- *Use gap closer to escape danger* — Uses supported movement abilities to help BossMod reach safety faster when the landing point is safe and moves toward BossMod's safe point. Disabled by default. BLM will not escape out of Ley Lines in Greed mode.
 
-**Combat Behavior** — Choose between *Normal* (BossMod moves directly to its destination) and *Greed* (BossMod balances uptime against mechanic safety).
-
-**Feedback** — Toggle whether enable/disable commands are echoed to chat.
-
-### Ranges tab
+### Distance tab
 
 **Manage range** — Master toggle for all distance management.
 
@@ -71,6 +67,18 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 **Forbidden zone** — Keeps you a set distance back from forbidden zones to avoid clipping into them.
 
-**Gap closer minimum distance** — Sets the minimum distance required before using optional gap closers for re-engage or safety. Each slider is disabled when its matching gap-closer option is off. Defaults to 8y.
+### Gap Closers tab
+
+**Re-engage gap closers** — Uses supported gap closers to return to melee range when BossMod reports the dash is safe. Disabled by default.
+
+**Escape gap closers** — Uses supported movement abilities to help BossMod reach safety faster when the landing point is safe and moves toward BossMod's safe point. Disabled by default. BLM will not escape out of Ley Lines in Greed mode.
+
+**Minimum distances** — Sets the minimum distance required before using optional gap closers for re-engage or safety. Each slider is disabled when its matching gap-closer option is off. Defaults to 8y.
+
+### Chat & Reset tab
+
+**Feedback** — Toggle whether enable/disable commands are echoed to chat.
+
+Use **Copy debug state** to copy a full runtime, integration, and configuration snapshot for troubleshooting.
 
 Use **Reset ranges** to restore all distance values to defaults, or **Reset all** to restore the full configuration.

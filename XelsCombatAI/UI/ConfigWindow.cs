@@ -11,27 +11,31 @@ namespace XelsCombatAI.UI;
 
 internal sealed class ConfigWindow : Window, IDisposable
 {
+    private const float TooltipWrapWidth = 360f;
+
     private readonly Configuration config;
     private readonly Configuration defaultConfig = new();
     private readonly Action save;
     private readonly Action resetRuntimeState;
     private readonly Action<bool> setEnabled;
+    private readonly Func<string> debugState;
     private readonly Func<string?> dependencyWarning;
     private readonly Func<string?> trueNorthWarning;
     private readonly Action manageTrueNorthEnabled;
     private readonly IKeyState keyState;
     private readonly HashSet<string> editingSliders = [];
-    private readonly HashSet<string> openSections = [];
+    private DateTime copiedDebugStateUntil = DateTime.MinValue;
     private bool backspacePressedThisFrame;
     private bool wasBackspaceDown;
 
-    public ConfigWindow(Configuration config, Action save, Action resetRuntimeState, Action<bool> setEnabled, Func<string?> dependencyWarning, Func<string?> trueNorthWarning, Action manageTrueNorthEnabled, IKeyState keyState)
+    public ConfigWindow(Configuration config, Action save, Action resetRuntimeState, Action<bool> setEnabled, Func<string> debugState, Func<string?> dependencyWarning, Func<string?> trueNorthWarning, Action manageTrueNorthEnabled, IKeyState keyState)
         : base("Xel's Combat AI Configuration###XelsCombatAIConfig")
     {
         this.config = config;
         this.save = save;
         this.resetRuntimeState = resetRuntimeState;
         this.setEnabled = setEnabled;
+        this.debugState = debugState;
         this.dependencyWarning = dependencyWarning;
         this.trueNorthWarning = trueNorthWarning;
         this.manageTrueNorthEnabled = manageTrueNorthEnabled;
@@ -68,22 +72,40 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.Separator();
         }
 
-        this.DrawEnabledCheckbox(dependencyWarningText);
-        ImGui.Spacing();
-
         if (ImGui.BeginTabBar("##xcai_tabs"))
         {
-            if (ImGui.BeginTabItem("General"))
+            if (ImGui.BeginTabItem("Main"))
             {
                 ImGui.Spacing();
-                changed |= this.DrawGeneralTab();
+                changed |= this.DrawMainTab();
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Ranges"))
+            if (ImGui.BeginTabItem("Positioning"))
             {
                 ImGui.Spacing();
-                changed |= this.DrawRangesTab();
+                changed |= this.DrawPositioningTab();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Distance"))
+            {
+                ImGui.Spacing();
+                changed |= this.DrawDistanceTab();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Gap Closers"))
+            {
+                ImGui.Spacing();
+                changed |= this.DrawGapClosersTab();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Chat & Reset"))
+            {
+                ImGui.Spacing();
+                changed |= this.DrawChatAndResetTab();
                 ImGui.EndTabItem();
             }
 
@@ -98,110 +120,78 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
     }
 
-    private bool DrawGeneralTab()
+    private bool DrawMainTab()
     {
         var changed = false;
 
+        this.DrawEnabledCheckbox();
+        ImGui.Spacing();
+
         this.DrawSectionHeader("Movement");
-        changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v);
+        changed |= this.Checkbox("Manage movement in combat", this.config.ManageMovement, this.defaultConfig.ManageMovement, v => this.config.ManageMovement = v, "Turns automated movement on or off.\nOther strategy settings can still update.");
+        changed |= this.Checkbox("Pause movement while moving manually", this.config.RespectManualMovement, this.defaultConfig.RespectManualMovement, v => this.config.RespectManualMovement = v, "Temporarily pauses automated movement when manual movement input is detected.\nUses BossMod movement input when available.");
+        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal moves directly to safety.\nGreed balances uptime against mechanic safety.");
         changed |= this.Checkbox("Follow tank on trash", this.config.ManagePartyRoleFollow, this.defaultConfig.ManagePartyRoleFollow, v => this.config.ManagePartyRoleFollow = v, "Follow the tank on targets without boss modules.\nDisabled automatically on boss encounters.");
         changed |= this.Checkbox("Healer: stay near party", this.config.HealerPartyCoverage, this.defaultConfig.HealerPartyCoverage, v => this.config.HealerPartyCoverage = v, "Positions healer to cover the most party members on boss fights.\nOverrides healer max distance.");
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        this.DrawSectionHeader("Positioning");
-        if (this.CollapsingCheckbox("Manage positionals", this.config.ManagePositionals, this.defaultConfig.ManagePositionals, v => { this.config.ManagePositionals = v; changed = true; }))
-        {
-            ImGui.Indent();
-            changed |= this.Checkbox(
-                "Manage True North",
-                this.config.ManageTrueNorth,
-                this.defaultConfig.ManageTrueNorth,
-                v => { this.config.ManageTrueNorth = v; if (v) this.manageTrueNorthEnabled(); },
-                "Uses True North from XCAI.\nDisables RSR Auto True North while enabled.\nRSR is not restored automatically.");
-            ImGui.Unindent();
-        }
+        return changed;
+    }
 
-        if (this.CollapsingCheckbox("Manage Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => { this.config.ManageLeylines = v; changed = true; }, tooltip: "Manages existing Ley Lines only.\nWill not place Ley Lines."))
-        {
-            ImGui.Indent();
-            changed |= this.Checkbox("Use Between the Lines", this.config.UseBetweenTheLines, this.defaultConfig.UseBetweenTheLines, v => this.config.UseBetweenTheLines = v);
-            changed |= this.Checkbox("Use Retrace", this.config.UseRetrace, this.defaultConfig.UseRetrace, v => this.config.UseRetrace = v);
-            changed |= this.Checkbox("Walk back to Ley Lines", this.config.ReturnToLeylines, this.defaultConfig.ReturnToLeylines, v => this.config.ReturnToLeylines = v);
-            ImGui.Unindent();
-        }
+    private bool DrawPositioningTab()
+    {
+        var changed = false;
 
-        if (this.CollapsingCheckbox("Use gap closer to (re)engage", this.config.UseGapCloser, this.defaultConfig.UseGapCloser, v => { this.config.UseGapCloser = v; changed = true; }, tooltip: "Gets back into melee range when BossMod says it is safe.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
-        {
-            ImGui.Indent();
-            changed |= this.Checkbox("PLD — Intervene", this.config.GapCloserPLD, this.defaultConfig.GapCloserPLD, v => this.config.GapCloserPLD = v);
-            changed |= this.Checkbox("WAR — Onslaught", this.config.GapCloserWAR, this.defaultConfig.GapCloserWAR, v => this.config.GapCloserWAR = v);
-            changed |= this.Checkbox("DRK — Shadowstride", this.config.GapCloserDRK, this.defaultConfig.GapCloserDRK, v => this.config.GapCloserDRK = v);
-            changed |= this.Checkbox("GNB — Trajectory", this.config.GapCloserGNB, this.defaultConfig.GapCloserGNB, v => this.config.GapCloserGNB = v);
-            changed |= this.Checkbox("MNK — Thunderclap", this.config.GapCloserMNK, this.defaultConfig.GapCloserMNK, v => this.config.GapCloserMNK = v);
-            changed |= this.Checkbox("DRG — Winged Glide", this.config.GapCloserDRG, this.defaultConfig.GapCloserDRG, v => this.config.GapCloserDRG = v);
-            changed |= this.Checkbox("NIN — Shukuchi", this.config.GapCloserNIN, this.defaultConfig.GapCloserNIN, v => this.config.GapCloserNIN = v);
-            changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, this.defaultConfig.GapCloserSAM, v => this.config.GapCloserSAM = v);
-            changed |= this.Checkbox("DNC — En Avant", this.config.GapCloserDNC, this.defaultConfig.GapCloserDNC, v => this.config.GapCloserDNC = v);
-            changed |= this.Checkbox("RPR — Hell's Ingress", this.config.GapCloserRPR, this.defaultConfig.GapCloserRPR, v => this.config.GapCloserRPR = v);
-            changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, this.defaultConfig.GapCloserVPR, v => this.config.GapCloserVPR = v);
-            ImGui.Unindent();
-        }
-
-        if (this.CollapsingCheckbox("Use gap closer to escape danger", this.config.UseEscapeGapCloser, this.defaultConfig.UseEscapeGapCloser, v => { this.config.UseEscapeGapCloser = v; changed = true; }, tooltip: "Leaves danger when BossMod says the landing point is safe.\nGreed mode still requires movement toward BossMod's safe point.\nBLM will not leave Ley Lines.\nHoles in the floor will still absolutely kill you.", icon: FontAwesomeIcon.SkullCrossbones))
-        {
-            ImGui.Indent();
-            changed |= this.Checkbox("MNK — Thunderclap to ally", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v);
-            changed |= this.Checkbox("NIN — Shukuchi", this.config.EscapeGapCloserNIN, this.defaultConfig.EscapeGapCloserNIN, v => this.config.EscapeGapCloserNIN = v);
-            changed |= this.Checkbox("DNC — En Avant", this.config.EscapeGapCloserDNC, this.defaultConfig.EscapeGapCloserDNC, v => this.config.EscapeGapCloserDNC = v);
-            changed |= this.Checkbox("RPR — Hell's Ingress", this.config.EscapeGapCloserRPR, this.defaultConfig.EscapeGapCloserRPR, v => this.config.EscapeGapCloserRPR = v);
-            changed |= this.Checkbox("VPR — Slither to ally", this.config.EscapeGapCloserVPR, this.defaultConfig.EscapeGapCloserVPR, v => this.config.EscapeGapCloserVPR = v);
-            changed |= this.Checkbox("BLM — Aetherial Manipulation", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v);
-            changed |= this.Checkbox("SGE — Icarus", this.config.EscapeGapCloserSGE, this.defaultConfig.EscapeGapCloserSGE, v => this.config.EscapeGapCloserSGE = v);
-            changed |= this.Checkbox("PCT — Smudge", this.config.EscapeGapCloserPCT, this.defaultConfig.EscapeGapCloserPCT, v => this.config.EscapeGapCloserPCT = v);
-            changed |= this.Checkbox("BLU — Loom", this.config.EscapeGapCloserBLU, this.defaultConfig.EscapeGapCloserBLU, v => this.config.EscapeGapCloserBLU = v);
-            ImGui.Unindent();
-        }
-
-        this.DrawSectionHeader("Combat Behavior");
-        changed |= this.Combo("Combat style", this.config.CombatStyle, this.defaultConfig.CombatStyle, v => this.config.CombatStyle = v, "Normal moves directly to safety.\nGreed balances uptime against mechanic safety.");
+        changed |= this.DrawToggleSectionHeader("Positionals", this.config.ManagePositionals, this.defaultConfig.ManagePositionals, v => this.config.ManagePositionals = v, "Uses Avarice positional data to request rear or flank positioning.\nOnly applies when the current job and target support it.");
+        var positionalsDisabledTooltip = !this.config.ManagePositionals ? "Disabled by Positionals in the Positioning tab." : null;
+        if (!this.config.ManagePositionals)
+            ImGui.BeginDisabled();
+        changed |= this.Checkbox(
+            "Manage True North",
+            this.config.ManageTrueNorth,
+            this.defaultConfig.ManageTrueNorth,
+            v => { this.config.ManageTrueNorth = v; if (v) this.manageTrueNorthEnabled(); },
+            "Uses True North here instead of RotationSolver Reborn.\nDisables RSR Auto True North while enabled.\nRSR is not restored automatically.",
+            positionalsDisabledTooltip);
+        if (!this.config.ManagePositionals)
+            ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        this.DrawSectionHeader("Feedback");
-        changed |= this.Checkbox("Echo command status to chat", this.config.EchoStatusToChat, this.defaultConfig.EchoStatusToChat, v => this.config.EchoStatusToChat = v);
+        changed |= this.DrawToggleSectionHeader("Ley Lines", this.config.ManageLeylines, this.defaultConfig.ManageLeylines, v => this.config.ManageLeylines = v, "Manages existing Ley Lines only.\nWill not place Ley Lines.");
+        var leylinesDisabledTooltip = !this.config.ManageLeylines ? "Disabled by Ley Lines in the Positioning tab." : null;
+        if (!this.config.ManageLeylines)
+            ImGui.BeginDisabled();
+        changed |= this.Checkbox("Use Between the Lines", this.config.UseBetweenTheLines, this.defaultConfig.UseBetweenTheLines, v => this.config.UseBetweenTheLines = v, disabledTooltip: leylinesDisabledTooltip);
+        changed |= this.Checkbox("Use Retrace", this.config.UseRetrace, this.defaultConfig.UseRetrace, v => this.config.UseRetrace = v, disabledTooltip: leylinesDisabledTooltip);
+        changed |= this.Checkbox("Walk back to Ley Lines", this.config.ReturnToLeylines, this.defaultConfig.ReturnToLeylines, v => this.config.ReturnToLeylines = v, disabledTooltip: leylinesDisabledTooltip);
+        if (!this.config.ManageLeylines)
+            ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
-
-        ImGui.Separator();
-        if (ImGui.Button("Reset all"))
-        {
-            this.config.ResetAll();
-            changed = true;
-        }
 
         return changed;
     }
 
-    private bool DrawRangesTab()
+    private bool DrawDistanceTab()
     {
         var changed = false;
 
-        changed |= this.Checkbox("Manage range", this.config.ManageRange, this.defaultConfig.ManageRange, v => this.config.ManageRange = v);
+        changed |= this.DrawToggleSectionHeader("Range Management", this.config.ManageRange, this.defaultConfig.ManageRange, v => this.config.ManageRange = v, "Chooses distance targets based on your role, target count, and the distance settings below.");
+        var manageRangeDisabledTooltip = "Disabled by Range Management in the Distance tab.";
+        ImGui.Unindent(8f);
         ImGui.Spacing();
 
+        changed |= this.DrawToggleSectionHeader("Single Target Distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => this.config.RoleBasedRange = v, "Uses these distances for one enemy.\nAlso used when the AoE enemy threshold has not been reached.", disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
         if (!this.config.ManageRange)
             ImGui.BeginDisabled();
-
-        this.DrawSectionHeader("Single Target Distance");
-        var manageRangeDisabledTooltip = "Disabled by Manage range in the Ranges tab.";
-        var singleTargetDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : !this.config.RoleBasedRange ? "Disabled by Single target distance in the Ranges tab." : null;
-        var aoeDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : !this.config.AoERangeInMultiTarget ? "Disabled by AoE target distance in the Ranges tab." : null;
-        var healerCoverageDisabledTooltip = "Disabled by Healer: stay near party in General > Movement.";
+        var singleTargetDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : !this.config.RoleBasedRange ? "Disabled by Single target distance in the Distance tab." : null;
+        var aoeDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : !this.config.AoERangeInMultiTarget ? "Disabled by AoE target distance in the Distance tab." : null;
+        var healerCoverageDisabledTooltip = "Disabled by Healer: stay near party in Main.";
         var singleTargetHealerDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : this.config.HealerPartyCoverage ? healerCoverageDisabledTooltip : singleTargetDisabledTooltip;
         var aoeHealerDisabledTooltip = !this.config.ManageRange ? manageRangeDisabledTooltip : this.config.HealerPartyCoverage ? healerCoverageDisabledTooltip : aoeDisabledTooltip;
 
-        changed |= this.Checkbox("Single target distance", this.config.RoleBasedRange, this.defaultConfig.RoleBasedRange, v => this.config.RoleBasedRange = v, disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
         if (!this.config.RoleBasedRange)
             ImGui.BeginDisabled();
         changed |= this.SliderFloat("Melee max distance", this.config.MeleeRange, this.defaultConfig.MeleeRange, Configuration.BossModMinRange, Configuration.BossModMaxRange, v => this.config.MeleeRange = v, disabledTooltip: singleTargetDisabledTooltip);
@@ -215,8 +205,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        this.DrawSectionHeader("AoE Target Distance");
-        changed |= this.Checkbox("AoE target distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v, disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
+        changed |= this.DrawToggleSectionHeader("AoE Target Distance", this.config.AoERangeInMultiTarget, this.defaultConfig.AoERangeInMultiTarget, v => this.config.AoERangeInMultiTarget = v, "Switches to the AoE distance sliders when enough enemies are nearby.\nThe enemy threshold controls when this happens.", disabledTooltip: !this.config.ManageRange ? manageRangeDisabledTooltip : null);
         if (!this.config.AoERangeInMultiTarget)
             ImGui.BeginDisabled();
         changed |= this.Checkbox("Non-AST healers use melee AoE range", this.config.AoEHealerMeleeRange, this.defaultConfig.AoEHealerMeleeRange, v => this.config.AoEHealerMeleeRange = v, disabledTooltip: aoeDisabledTooltip);
@@ -235,19 +224,45 @@ internal sealed class ConfigWindow : Window, IDisposable
         if (!this.config.ManageRange)
             ImGui.EndDisabled();
 
-        this.DrawSectionHeader("Forbidden Zone");
-        changed |= this.Checkbox("Manage forbidden-zone distance", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => this.config.ManageForbiddenZoneDistance = v);
+        changed |= this.DrawToggleSectionHeader("Forbidden Zone", this.config.ManageForbiddenZoneDistance, this.defaultConfig.ManageForbiddenZoneDistance, v => this.config.ManageForbiddenZoneDistance = v, "Keeps extra space from unsafe or forbidden areas when possible.\nRequired mechanic movement still takes priority.");
+        var forbiddenZoneDisabledTooltip = !this.config.ManageForbiddenZoneDistance ? "Disabled by Manage forbidden-zone distance in the Distance tab." : null;
         if (!this.config.ManageForbiddenZoneDistance)
             ImGui.BeginDisabled();
-        changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, this.defaultConfig.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v, disabledTooltip: "Disabled by Manage forbidden-zone distance in the Ranges tab.");
+        changed |= this.SliderFloat("Preferred distance to forbidden zones", this.config.PreferredForbiddenZoneDistance, this.defaultConfig.PreferredForbiddenZoneDistance, 0f, 3f, v => this.config.PreferredForbiddenZoneDistance = v, disabledTooltip: forbiddenZoneDisabledTooltip);
         if (!this.config.ManageForbiddenZoneDistance)
             ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        this.DrawSectionHeader("Gap Closer Minimum Distance");
+        return changed;
+    }
+
+    private bool DrawGapClosersTab()
+    {
+        var changed = false;
+
+        changed |= this.DrawToggleSectionHeader(
+            "Re-engage",
+            this.config.UseGapCloser,
+            this.defaultConfig.UseGapCloser,
+            v => this.config.UseGapCloser = v,
+            "Uses selected gap closers to return to melee range.\nOnly fires when the destination is reported safe.",
+            FontAwesomeIcon.SkullCrossbones,
+            "This can put you in danger during combat.\nSome arena hazards and timing checks may need manual judgment.");
+        var reengageDisabledTooltip = !this.config.UseGapCloser ? "Disabled by Use gap closer to (re)engage in Gap Closers." : null;
         if (!this.config.UseGapCloser)
             ImGui.BeginDisabled();
+        changed |= this.Checkbox("PLD — Intervene", this.config.GapCloserPLD, this.defaultConfig.GapCloserPLD, v => this.config.GapCloserPLD = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("WAR — Onslaught", this.config.GapCloserWAR, this.defaultConfig.GapCloserWAR, v => this.config.GapCloserWAR = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("DRK — Shadowstride", this.config.GapCloserDRK, this.defaultConfig.GapCloserDRK, v => this.config.GapCloserDRK = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("GNB — Trajectory", this.config.GapCloserGNB, this.defaultConfig.GapCloserGNB, v => this.config.GapCloserGNB = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("MNK — Thunderclap", this.config.GapCloserMNK, this.defaultConfig.GapCloserMNK, v => this.config.GapCloserMNK = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("DRG — Winged Glide", this.config.GapCloserDRG, this.defaultConfig.GapCloserDRG, v => this.config.GapCloserDRG = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("NIN — Shukuchi", this.config.GapCloserNIN, this.defaultConfig.GapCloserNIN, v => this.config.GapCloserNIN = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("SAM — Hissatsu: Gyoten", this.config.GapCloserSAM, this.defaultConfig.GapCloserSAM, v => this.config.GapCloserSAM = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("DNC — En Avant", this.config.GapCloserDNC, this.defaultConfig.GapCloserDNC, v => this.config.GapCloserDNC = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("RPR — Hell's Ingress", this.config.GapCloserRPR, this.defaultConfig.GapCloserRPR, v => this.config.GapCloserRPR = v, disabledTooltip: reengageDisabledTooltip);
+        changed |= this.Checkbox("VPR — Slither", this.config.GapCloserVPR, this.defaultConfig.GapCloserVPR, v => this.config.GapCloserVPR = v, disabledTooltip: reengageDisabledTooltip);
         changed |= this.SliderFloat(
             "Minimum (re)engage distance",
             this.config.MinimumReengageGapCloserDistance,
@@ -256,12 +271,32 @@ internal sealed class ConfigWindow : Window, IDisposable
             Configuration.MinimumGapCloserDistanceMax,
             v => this.config.MinimumReengageGapCloserDistance = v,
             "%.0f",
-            "Disabled by Use gap closer to (re)engage in General > Positioning.");
+            reengageDisabledTooltip);
         if (!this.config.UseGapCloser)
             ImGui.EndDisabled();
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
 
+        changed |= this.DrawToggleSectionHeader(
+            "Escape",
+            this.config.UseEscapeGapCloser,
+            this.defaultConfig.UseEscapeGapCloser,
+            v => this.config.UseEscapeGapCloser = v,
+            "Uses selected movement skills to leave danger.\nOnly fires when the landing point is reported safe.\nGreed mode still follows the safe point.\nBLM will not leave active Ley Lines.",
+            FontAwesomeIcon.SkullCrossbones,
+            "This can put you in danger during combat.\nSome arena hazards and timing checks may need manual judgment.");
+        var escapeDisabledTooltip = !this.config.UseEscapeGapCloser ? "Disabled by Use gap closer to escape danger in Gap Closers." : null;
         if (!this.config.UseEscapeGapCloser)
             ImGui.BeginDisabled();
+        changed |= this.Checkbox("MNK — Thunderclap to ally", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("NIN — Shukuchi", this.config.EscapeGapCloserNIN, this.defaultConfig.EscapeGapCloserNIN, v => this.config.EscapeGapCloserNIN = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("DNC — En Avant", this.config.EscapeGapCloserDNC, this.defaultConfig.EscapeGapCloserDNC, v => this.config.EscapeGapCloserDNC = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("RPR — Hell's Ingress", this.config.EscapeGapCloserRPR, this.defaultConfig.EscapeGapCloserRPR, v => this.config.EscapeGapCloserRPR = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("VPR — Slither to ally", this.config.EscapeGapCloserVPR, this.defaultConfig.EscapeGapCloserVPR, v => this.config.EscapeGapCloserVPR = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("BLM — Aetherial Manipulation", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("SGE — Icarus", this.config.EscapeGapCloserSGE, this.defaultConfig.EscapeGapCloserSGE, v => this.config.EscapeGapCloserSGE = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("PCT — Smudge", this.config.EscapeGapCloserPCT, this.defaultConfig.EscapeGapCloserPCT, v => this.config.EscapeGapCloserPCT = v, disabledTooltip: escapeDisabledTooltip);
+        changed |= this.Checkbox("BLU — Loom", this.config.EscapeGapCloserBLU, this.defaultConfig.EscapeGapCloserBLU, v => this.config.EscapeGapCloserBLU = v, disabledTooltip: escapeDisabledTooltip);
         changed |= this.SliderFloat(
             "Minimum safety gap-close distance",
             this.config.MinimumEscapeGapCloserDistance,
@@ -270,13 +305,42 @@ internal sealed class ConfigWindow : Window, IDisposable
             Configuration.MinimumGapCloserDistanceMax,
             v => this.config.MinimumEscapeGapCloserDistance = v,
             "%.0f",
-            "Disabled by Use gap closer to escape danger in General > Positioning.");
+            escapeDisabledTooltip);
         if (!this.config.UseEscapeGapCloser)
             ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        ImGui.Separator();
+        return changed;
+    }
+
+    private bool DrawChatAndResetTab()
+    {
+        var changed = false;
+
+        this.DrawSectionHeader("Chat");
+        changed |= this.Checkbox("Echo command status to chat", this.config.EchoStatusToChat, this.defaultConfig.EchoStatusToChat, v => this.config.EchoStatusToChat = v);
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        this.DrawSectionHeader("Debug");
+        if (ImGui.Button("Copy debug state"))
+        {
+            ImGui.SetClipboardText(this.debugState());
+            this.copiedDebugStateUntil = DateTime.UtcNow.AddSeconds(2);
+        }
+
+        this.DrawInfoIcon("Copies current runtime state, BossMod strategy cache, integration state, and configuration values.");
+        if (DateTime.UtcNow < this.copiedDebugStateUntil)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.5f, 1.0f, 0.5f, 1.0f), "Copied.");
+        }
+
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        this.DrawSectionHeader("Reset");
         if (ImGui.Button("Reset ranges"))
         {
             this.config.ResetRanges();
@@ -290,6 +354,9 @@ internal sealed class ConfigWindow : Window, IDisposable
             changed = true;
         }
 
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
         return changed;
     }
 
@@ -302,40 +369,28 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Indent(8f);
     }
 
-    // Renders a toggle triangle button + checkbox on the same line. Triangle is disabled (and
-    // section forced closed) when the parent feature is off. Returns true when expanded.
-    private bool CollapsingCheckbox(string label, bool value, bool defaultValue, Action<bool> setter, bool enabled = true, string? tooltip = null, FontAwesomeIcon? icon = null)
+    // Emits a tinted section title that also toggles the section's master setting.
+    // Callers must call ImGui.Unindent(8f) after their section contents.
+    private bool DrawToggleSectionHeader(string title, bool value, bool defaultValue, Action<bool> setter, string? tooltip = null, FontAwesomeIcon? icon = null, string? iconTooltip = null, string? disabledTooltip = null)
     {
-        if (!enabled)
-            this.openSections.Remove(label);
-
-        var isOpen = this.openSections.Contains(label);
-        var arrow = isOpen ? "v" : ">";
-
+        var changed = false;
+        var current = value;
+        var id = $"##{title}";
+        var enabled = disabledTooltip == null;
         if (!enabled)
             ImGui.BeginDisabled();
 
-        ImGui.PushID($"##{label}arrow");
-        if (ImGui.SmallButton(arrow))
+        if (ImGui.Checkbox(id, ref current))
         {
-            if (isOpen)
-                this.openSections.Remove(label);
-            else
-                this.openSections.Add(label);
-        }
-        ImGui.PopID();
-
-        if (!enabled)
-            ImGui.EndDisabled();
-
-        ImGui.SameLine();
-        var current = value;
-        if (ImGui.Checkbox(label, ref current))
             setter(current);
+            changed = true;
+        }
 
-        var optionHovered = ImGui.IsItemHovered();
-        if (tooltip != null && optionHovered)
-            ImGui.SetTooltip(tooltip);
+        var checkboxHovered = this.IsItemHoveredAllowDisabled();
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.75f, 0.75f, 1.0f, 1.0f), title);
+        var titleHovered = this.IsItemHoveredAllowDisabled();
+        var iconHovered = false;
 
         if (icon != null)
         {
@@ -343,17 +398,46 @@ internal sealed class ConfigWindow : Window, IDisposable
             ImGui.PushFont(UiBuilder.IconFont);
             ImGui.TextUnformatted(icon.Value.ToIconString());
             ImGui.PopFont();
-            if (tooltip != null && ImGui.IsItemHovered())
-                ImGui.SetTooltip(tooltip);
+            iconHovered = this.IsItemHoveredAllowDisabled();
+            if (iconHovered && iconTooltip != null)
+            {
+                DrawWrappedTooltip(iconTooltip);
+            }
         }
 
-        if (IsResetRequested(optionHovered))
-            setter(defaultValue);
+        this.DrawInfoIcon(tooltip);
 
-        return isOpen && enabled && value;
+        if (!enabled)
+            ImGui.EndDisabled();
+
+        if (enabled && (titleHovered || iconHovered) && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+        {
+            setter(!value);
+            changed = true;
+        }
+
+        var hovered = checkboxHovered || titleHovered || iconHovered;
+        this.DrawTooltip(hovered, disabledTooltip: disabledTooltip);
+
+        if (IsResetRequested(hovered))
+        {
+            if (value == defaultValue)
+            {
+                ImGui.Separator();
+                ImGui.Indent(8f);
+                return changed;
+            }
+
+            setter(defaultValue);
+            changed = true;
+        }
+
+        ImGui.Separator();
+        ImGui.Indent(8f);
+        return changed;
     }
 
-    private void DrawEnabledCheckbox(string? dependencyWarningText)
+    private void DrawEnabledCheckbox()
     {
         var current = this.config.Enabled;
         var changed = ImGui.Checkbox("Enabled", ref current);
@@ -377,7 +461,8 @@ internal sealed class ConfigWindow : Window, IDisposable
         var current = value;
         var changed = ImGui.Checkbox(label, ref current);
         var hovered = this.IsItemHoveredAllowDisabled();
-        this.DrawTooltip(hovered, tooltip, disabledTooltip);
+        this.DrawInfoIcon(tooltip);
+        this.DrawTooltip(hovered, disabledTooltip: disabledTooltip);
 
         if (IsResetRequested(hovered))
         {
@@ -401,8 +486,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         var changed = false;
         ImGui.TextUnformatted(label);
         var labelHovered = ImGui.IsItemHovered();
-        if (tooltip != null && labelHovered)
-            ImGui.SetTooltip(tooltip);
+        this.DrawInfoIcon(tooltip);
 
         ImGui.SetNextItemWidth(-1f);
         if (ImGui.BeginCombo($"##{label}", value.ToString()))
@@ -424,8 +508,6 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         var hovered = labelHovered || ImGui.IsItemHovered();
-        if (tooltip != null && ImGui.IsItemHovered())
-            ImGui.SetTooltip(tooltip);
 
         if (IsResetRequested(hovered))
         {
@@ -437,6 +519,27 @@ internal sealed class ConfigWindow : Window, IDisposable
         }
 
         return changed;
+    }
+
+    private bool DrawInfoIcon(string? tooltip)
+    {
+        if (tooltip == null)
+        {
+            return false;
+        }
+
+        ImGui.SameLine();
+        ImGui.PushFont(UiBuilder.IconFont);
+        ImGui.TextColored(new Vector4(0.55f, 0.65f, 1.0f, 1.0f), FontAwesomeIcon.InfoCircle.ToIconString());
+        ImGui.PopFont();
+
+        var hovered = this.IsItemHoveredAllowDisabled();
+        if (hovered)
+        {
+            DrawWrappedTooltip(tooltip);
+        }
+
+        return hovered;
     }
 
     private bool SliderFloat(string label, float value, float defaultValue, float min, float max, Action<float> setter, string format = "%.1f", string? disabledTooltip = null)
@@ -582,13 +685,22 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         if (disabledTooltip != null)
         {
-            ImGui.SetTooltip(disabledTooltip);
+            DrawWrappedTooltip(disabledTooltip);
             return;
         }
 
         if (tooltip != null)
         {
-            ImGui.SetTooltip(tooltip);
+            DrawWrappedTooltip(tooltip);
         }
+    }
+
+    private static void DrawWrappedTooltip(string tooltip)
+    {
+        ImGui.BeginTooltip();
+        ImGui.PushTextWrapPos(TooltipWrapWidth);
+        ImGui.TextUnformatted(tooltip);
+        ImGui.PopTextWrapPos();
+        ImGui.EndTooltip();
     }
 }

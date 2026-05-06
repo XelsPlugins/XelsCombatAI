@@ -90,7 +90,7 @@ internal sealed class BossModPresetController(
         }
     }
 
-    public void ApplyStrategies()
+    public void ApplyStrategies(bool suppressAutomatedMovement)
     {
         try
         {
@@ -111,25 +111,26 @@ internal sealed class BossModPresetController(
 
             this.SetMovementRangeStrategy(MapCombatStyle(config.CombatStyle));
 
-            if (config.ManagePartyRoleFollow)
+            if (suppressAutomatedMovement)
+            {
+                this.SetPartyRole("None");
+            }
+            else if (config.ManagePartyRoleFollow)
             {
                 this.SetPartyRole(rangePlanner.CurrentTargetHasBossModule() ? "None" : "Tank");
             }
 
             positionalsController.Apply();
 
-            if (config.ManageMovement)
-            {
-                this.SetMovement(true);
-            }
+            this.SetMovement(config.ManageMovement && !suppressAutomatedMovement);
 
             this.SetLeylines(
-                config.ManageLeylines && config.UseBetweenTheLines,
-                config.ManageLeylines && config.UseRetrace,
-                config.ManageLeylines && config.ReturnToLeylines);
+                config.ManageLeylines && !suppressAutomatedMovement && config.UseBetweenTheLines,
+                config.ManageLeylines && !suppressAutomatedMovement && config.UseRetrace,
+                config.ManageLeylines && !suppressAutomatedMovement && config.ReturnToLeylines);
 
-            this.SetHealerAi();
-            this.SetGapClosers();
+            this.SetHealerAi(suppressAutomatedMovement);
+            this.SetGapClosers(suppressAutomatedMovement);
         }
         catch (Exception ex)
         {
@@ -289,10 +290,11 @@ internal sealed class BossModPresetController(
         }
     }
 
-    private void SetHealerAi()
+    private void SetHealerAi(bool suppressAutomatedMovement)
     {
         var presetName = BossModIpc.DefaultPresetName;
-        var stayNearParty = config.HealerPartyCoverage &&
+        var stayNearParty = !suppressAutomatedMovement &&
+                            config.HealerPartyCoverage &&
                             rangePlanner.GetCurrentRangeRole() == RangeRole.Healer &&
                             rangePlanner.CurrentTargetHasBossModule();
 
@@ -323,7 +325,7 @@ internal sealed class BossModPresetController(
         }
     }
 
-    private void SetGapClosers()
+    private void SetGapClosers(bool suppressAutomatedMovement)
     {
         var presetName = BossModIpc.DefaultPresetName;
 
@@ -331,6 +333,11 @@ internal sealed class BossModPresetController(
         this.SetGapCloser(nameof(this.LastDragoonWingedGlide), this.LastDragoonWingedGlide, false, value => bossMod.SetDragoonWingedGlide(presetName, value));
         this.SetGapCloser(nameof(this.LastNinjaShukuchi), this.LastNinjaShukuchi, false, value => bossMod.SetNinjaShukuchi(presetName, value));
         this.SetGapCloser(nameof(this.LastViperSlither), this.LastViperSlither, false, value => bossMod.SetViperSlither(presetName, value));
+
+        if (suppressAutomatedMovement)
+        {
+            return;
+        }
 
         if (config.UseEscapeGapCloser && escapeGapCloserController.TryUseEscapeGapCloser())
         {

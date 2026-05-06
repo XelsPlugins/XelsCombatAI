@@ -56,6 +56,7 @@ public sealed class Plugin : IDalamudPlugin
 
         var bossMod = new BossModIpc(PluginInterface);
         var bossModSafety = new BossModReflectionSafety(PluginInterface, Log);
+        var manualMovement = new BossModManualMovementReflection(PluginInterface, Log);
         var rotationSolver = new RotationSolverIpc();
         var dependencyChecker = new DependencyChecker(this.config, this.services, bossMod, rotationSolver);
         var rangePlanner = new RangePlanner(this.config, this.services, bossMod);
@@ -80,6 +81,7 @@ public sealed class Plugin : IDalamudPlugin
             presetController,
             positionalsController,
             bossModSafety,
+            manualMovement,
             gapCloserController,
             escapeGapCloserController,
             this.SaveConfig,
@@ -91,6 +93,7 @@ public sealed class Plugin : IDalamudPlugin
             this.SaveConfig,
             this.runtime.ResetRuntimeCache,
             enabled => this.runtime.SetEnabled(enabled),
+            () => StatusReporter.BuildDebug(this.config, this.runtime.GetStatus()),
             this.runtime.GetDependencyWarning,
             this.runtime.GetTrueNorthWarning,
             this.runtime.EnsureRsrTrueNorthDisabled,
@@ -107,7 +110,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Toggle Xel's Combat AI. Usage: /xcai [on|off|toggle|status|config]"
+            HelpMessage = "Toggle Xel's Combat AI. Usage: /xcai [on|off|toggle|config]"
         });
         Framework.Update += this.runtime.OnFrameworkUpdate;
         PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
@@ -150,14 +153,11 @@ public sealed class Plugin : IDalamudPlugin
             case "toggle":
                 this.runtime.SetEnabled(!this.config.Enabled);
                 break;
-            case "status":
-                this.Print(StatusReporter.Build(this.runtime.GetStatus()));
-                break;
             case "config":
                 this.OpenConfig();
                 break;
             default:
-                this.Print("Usage: /xcai [on|off|toggle|status|config]");
+                this.Print("Usage: /xcai [on|off|toggle|config]");
                 break;
         }
     }

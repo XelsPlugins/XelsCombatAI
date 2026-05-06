@@ -27,10 +27,11 @@ public sealed class Configuration : IPluginConfiguration
     public const float MinimumGapCloserDistanceMax = 20f;
     public const float EnemyCountRadius = 10f;
 
-    public int Version { get; set; } = 11;
+    public int Version { get; set; } = 12;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
+    public bool RespectManualMovement { get; set; } = true;
     public bool ManageRange { get; set; } = true;
     public bool ManageForbiddenZoneDistance { get; set; } = true;
     public bool ManagePartyRoleFollow { get; set; } = true;
@@ -168,6 +169,12 @@ public sealed class Configuration : IPluginConfiguration
             this.MinimumEscapeGapCloserDistance = DefaultMinimumEscapeGapCloserDistance;
             this.Version = 11;
         }
+
+        if (this.Version < 12)
+        {
+            this.RespectManualMovement = true;
+            this.Version = 12;
+        }
     }
 
     internal void Clamp()
@@ -211,6 +218,7 @@ public sealed class Configuration : IPluginConfiguration
     {
         this.Enabled = false;
         this.ManageMovement = true;
+        this.RespectManualMovement = true;
         this.ManageRange = true;
         this.ManageForbiddenZoneDistance = true;
         this.ManagePartyRoleFollow = true;
