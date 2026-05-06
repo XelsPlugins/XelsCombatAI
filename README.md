@@ -6,7 +6,7 @@ A Dalamud plugin that automatically manages your BossMod Reborn movement and pos
 
 - [BossMod Reborn](https://github.com/FFXIV-CombatReborn/BossmodReborn)
 - [Avarice](https://puni.sh/api/repository/veyn) (for positional management)
-- [RotationSolver Reborn](https://github.com/FFXIV-CombatReborn/RotationSolverReborn) (optional, required for Manage True North)
+- [RotationSolver Reborn](https://github.com/FFXIV-CombatReborn/RotationSolverReborn) (optional, required for Manage True North and AoE pack positioning)
 
 ## What it does
 
@@ -19,6 +19,8 @@ While you are in combat, the plugin automatically:
 - **Manages your Ley Lines** — returns to them when safe, uses Between the Lines and Retrace if available
 - **Stays clear of forbidden zones** with a configurable buffer distance
 - **Uses BossMod-checked gap closers** to re-engage after being knocked away or escape a dangerous spot (optional, off by default)
+- **Optimizes AoE pack positioning** by using RSR's next GCD preview to let BossMod prefer locations that hit more enemies (experimental, optional, off by default)
+- **Shows a decision overlay** with projected in-world markers for current movement decisions and candidates (optional, off by default)
 - **Pauses automated movement** briefly when you move manually, including remapped movement or gamepad input reported by BossMod
 - **Manages True North** usage and disables RSR's Auto True North to prevent conflicts (optional, requires RSR)
 
@@ -51,11 +53,13 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 ### Positioning tab
 
-**Positioning** — Manage positionals, True North, and Ley Lines.
+**Positioning** — Manage positionals, True North, Ley Lines, the decision overlay, and experimental AoE pack positioning.
 
 - *Manage positionals* — Moves you to the correct rear/flank position for your rotation.
 - *Manage True North* — Uses True North automatically and disables RSR's Auto True North to prevent conflicts. Requires RSR.
 - *Manage Ley Lines* — Helps BLM stay on Ley Lines and use Between the Lines / Retrace when available. Does not place Ley Lines.
+- *Decision overlay* — Draws current decisions and candidates in the world overlay. Green is active, blue is a candidate, yellow is preview-only, red is rejected, gray is suppressed, and white is BossMod's current movement intent.
+- *AoE Pack Positioning* — Uses RSR's upcoming GCD preview and a reflected BossMod hook to add an AoE hit-count goal to BossMod pathfinding. Supports common circle, cone, and line AoE shapes. Unsupported actions and reflection failures are ignored.
 
 ### Distance tab
 

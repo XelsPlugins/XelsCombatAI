@@ -27,14 +27,13 @@ public sealed class Configuration : IPluginConfiguration
     public const float MinimumGapCloserDistanceMax = 20f;
     public const float EnemyCountRadius = 10f;
 
-    public int Version { get; set; } = 12;
+    public int Version { get; set; } = 14;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
     public bool RespectManualMovement { get; set; } = true;
     public bool ManageRange { get; set; } = true;
     public bool ManageForbiddenZoneDistance { get; set; } = true;
-    public bool ManagePartyRoleFollow { get; set; } = true;
     public bool ManagePositionals { get; set; } = true;
     public bool ManageTrueNorth { get; set; } = false;
     public bool ManageLeylines { get; set; } = true;
@@ -83,6 +82,11 @@ public sealed class Configuration : IPluginConfiguration
     public float MinimumReengageGapCloserDistance { get; set; } = DefaultMinimumReengageGapCloserDistance;
     public float MinimumEscapeGapCloserDistance { get; set; } = DefaultMinimumEscapeGapCloserDistance;
     public bool HealerPartyCoverage { get; set; } = true;
+    public bool ManageAoePackPositioning { get; set; } = false;
+    public int AoePackPositioningMinimumExtraTargets { get; set; } = 1;
+    public bool AoePackPositioningControlRsrTarget { get; set; } = false;
+    public bool AoePackPositioningAoeCombatControl { get; set; } = false;
+    public bool ShowDecisionOverlay { get; set; } = false;
 
     [JsonProperty("ManageTrueNorthInRsr")]
     private bool ManageTrueNorthInRsrCompatibility
@@ -175,6 +179,19 @@ public sealed class Configuration : IPluginConfiguration
             this.RespectManualMovement = true;
             this.Version = 12;
         }
+
+        if (this.Version < 13)
+        {
+            this.ManageAoePackPositioning = false;
+            this.AoePackPositioningMinimumExtraTargets = 1;
+            this.Version = 13;
+        }
+
+        if (this.Version < 14)
+        {
+            this.ShowDecisionOverlay = false;
+            this.Version = 14;
+        }
     }
 
     internal void Clamp()
@@ -193,6 +210,7 @@ public sealed class Configuration : IPluginConfiguration
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);
         this.MinimumReengageGapCloserDistance = MathF.Round(Math.Clamp(this.MinimumReengageGapCloserDistance, MinimumGapCloserDistanceMin, MinimumGapCloserDistanceMax));
         this.MinimumEscapeGapCloserDistance = MathF.Round(Math.Clamp(this.MinimumEscapeGapCloserDistance, MinimumGapCloserDistanceMin, MinimumGapCloserDistanceMax));
+        this.AoePackPositioningMinimumExtraTargets = Math.Clamp(this.AoePackPositioningMinimumExtraTargets, 1, 5);
         this.CombatStyle = Enum.IsDefined(this.CombatStyle) ? this.CombatStyle : CombatStyle.Normal;
     }
 
@@ -221,7 +239,6 @@ public sealed class Configuration : IPluginConfiguration
         this.RespectManualMovement = true;
         this.ManageRange = true;
         this.ManageForbiddenZoneDistance = true;
-        this.ManagePartyRoleFollow = true;
         this.ManagePositionals = true;
         this.ManageTrueNorth = false;
         this.ManageLeylines = true;
@@ -255,6 +272,11 @@ public sealed class Configuration : IPluginConfiguration
         this.EchoStatusToChat = true;
         this.CombatStyle = CombatStyle.Normal;
         this.HealerPartyCoverage = true;
+        this.ManageAoePackPositioning = false;
+        this.AoePackPositioningMinimumExtraTargets = 1;
+        this.AoePackPositioningControlRsrTarget = false;
+        this.AoePackPositioningAoeCombatControl = false;
+        this.ShowDecisionOverlay = false;
         this.ResetRanges();
     }
 

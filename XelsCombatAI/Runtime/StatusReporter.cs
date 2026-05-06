@@ -9,7 +9,7 @@ internal static class StatusReporter
 {
     public static string Build(RuntimeStatus status)
     {
-        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={status.LastPositional}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, Range={status.LastRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, Cushion={status.LastForbiddenZoneCushion}, Role={status.LastPartyRole}, MovementSuppressed={status.AutomatedMovementSuppressed}, Initialized={status.InitializedPreset}";
+        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={status.LastPositional}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, Range={status.LastRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, Cushion={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, AoEPack={status.AoePackPositioning.LastReason}, Initialized={status.InitializedPreset}";
     }
 
     public static string BuildDebug(Configuration config, RuntimeStatus status)
@@ -43,7 +43,6 @@ internal static class StatusReporter
         Append(builder, "LastMovement", status.LastMovement);
         Append(builder, "LastMovementRangeStrategy", status.LastMovementRangeStrategy);
         Append(builder, "LastForbiddenZoneCushion", status.LastForbiddenZoneCushion);
-        Append(builder, "LastPartyRole", status.LastPartyRole);
         Append(builder, "LastLeylinesBetweenTheLines", status.LastLeylinesBetweenTheLines);
         Append(builder, "LastLeylinesRetrace", status.LastLeylinesRetrace);
         Append(builder, "LastLeylinesGoal", status.LastLeylinesGoal);
@@ -79,6 +78,21 @@ internal static class StatusReporter
         Append(builder, "LastEscapeGapCloserSafety", status.LastEscapeGapCloserSafety);
         Append(builder, "ReflectedGapSafety", status.ReflectedGapSafety);
         Append(builder, "ManualMovementInput", status.ManualMovementInput);
+        builder.AppendLine();
+
+        AppendSection(builder, "AoE Pack Positioning");
+        Append(builder, "AoeGoalHook", status.AoeGoalHook);
+        Append(builder, "HookState", status.AoePackPositioning.HookState);
+        Append(builder, "LastReason", status.AoePackPositioning.LastReason);
+        Append(builder, "RsrStatus", status.AoePackPositioning.RsrStatus);
+        Append(builder, "ActionId", status.AoePackPositioning.ActionId);
+        Append(builder, "ActionName", status.AoePackPositioning.ActionName);
+        Append(builder, "Shape", status.AoePackPositioning.Shape);
+        Append(builder, "CurrentHits", status.AoePackPositioning.CurrentHits);
+        Append(builder, "BestHits", status.AoePackPositioning.BestHits);
+        Append(builder, "Injected", status.AoePackPositioning.Injected);
+        Append(builder, "RsrHenchedActive", status.AoePackPositioning.RsrHenchedActive);
+        Append(builder, "PriorityTargetCount", status.AoePackPositioning.PriorityTargetCount);
         builder.AppendLine();
 
         AppendSection(builder, "Configuration");

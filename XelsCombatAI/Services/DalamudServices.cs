@@ -18,6 +18,7 @@ internal sealed class DalamudServices(
     IDtrBar dtrBar,
     ICondition condition,
     IClientState clientState,
+    IGameGui gameGui,
     IObjectTable objectTable,
     ITargetManager targetManager,
     IPartyList partyList)
@@ -31,6 +32,7 @@ internal sealed class DalamudServices(
     public IDtrBar DtrBar { get; } = dtrBar;
     public ICondition Condition { get; } = condition;
     public IClientState ClientState { get; } = clientState;
+    public IGameGui GameGui { get; } = gameGui;
     public IObjectTable ObjectTable { get; } = objectTable;
     public ITargetManager TargetManager { get; } = targetManager;
     public IPartyList PartyList { get; } = partyList;

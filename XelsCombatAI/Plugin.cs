@@ -1,3 +1,4 @@
+using System;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.Dtr;
 using Dalamud.Interface.Windowing;
@@ -21,6 +22,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static IDtrBar DtrBar { get; set; } = null!;
     [PluginService] private static ICondition Condition { get; set; } = null!;
     [PluginService] private static IClientState ClientState { get; set; } = null!;
+    [PluginService] private static IGameGui GameGui { get; set; } = null!;
     [PluginService] private static IObjectTable ObjectTable { get; set; } = null!;
     [PluginService] private static ITargetManager TargetManager { get; set; } = null!;
     [PluginService] private static IPartyList PartyList { get; set; } = null!;
@@ -31,6 +33,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IDtrBarEntry? dtrEntry;
     private readonly DalamudServices services;
     private readonly CombatRuntime runtime;
+    private readonly DecisionOverlayController decisionOverlay;
 
     public Plugin()
     {
@@ -46,6 +49,7 @@ public sealed class Plugin : IDalamudPlugin
             DtrBar,
             Condition,
             ClientState,
+            GameGui,
             ObjectTable,
             TargetManager,
             PartyList);
@@ -58,12 +62,16 @@ public sealed class Plugin : IDalamudPlugin
         var bossModSafety = new BossModReflectionSafety(PluginInterface, Log);
         var manualMovement = new ManualMovementInputDetector();
         var rotationSolver = new RotationSolverIpc();
+        var rotationSolverActions = new RotationSolverActionReflection(PluginInterface, Log);
         var dependencyChecker = new DependencyChecker(this.config, this.services, bossMod, rotationSolver);
         var rangePlanner = new RangePlanner(this.config, this.services, bossMod);
         BossModPresetController? presetController = null;
+        CombatRuntime? runtime = null;
         var positionalsController = new PositionalsController(this.config, this.services, rotationSolver, positional => presetController!.SetPositional(positional), this.UpdateDtr);
         var gapCloserController = new GapCloserController(this.config, this.services, bossMod, bossModSafety);
         var escapeGapCloserController = new EscapeGapCloserController(this.config, this.services, bossModSafety, gapCloserController);
+        var aoePackPositioningController = new AoePackPositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => rangePlanner.CurrentTargetHasBossModule());
+        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, aoePackPositioningController);
         presetController = new BossModPresetController(
             this.config,
             this.services,
@@ -74,19 +82,31 @@ public sealed class Plugin : IDalamudPlugin
             gapCloserController,
             escapeGapCloserController);
 
-        this.runtime = new CombatRuntime(
+        runtime = new CombatRuntime(
             this.config,
             this.services,
             dependencyChecker,
             presetController,
             positionalsController,
             bossModSafety,
+            aoeGoalHook,
+            aoePackPositioningController,
             manualMovement,
             gapCloserController,
             escapeGapCloserController,
             this.SaveConfig,
             this.UpdateDtr,
             this.Print);
+        this.runtime = runtime;
+        this.decisionOverlay = new DecisionOverlayController(
+            this.config,
+            this.services,
+            presetController,
+            aoePackPositioningController,
+            bossModSafety,
+            gapCloserController,
+            escapeGapCloserController,
+            rotationSolverActions);
 
         this.configWindow = new ConfigWindow(
             this.config,
@@ -94,6 +114,7 @@ public sealed class Plugin : IDalamudPlugin
             this.runtime.ResetRuntimeCache,
             enabled => this.runtime.SetEnabled(enabled),
             () => StatusReporter.BuildDebug(this.config, this.runtime.GetStatus()),
+            this.runtime.GetCombatHistory,
             this.runtime.GetDependencyWarning,
             this.runtime.GetTrueNorthWarning,
             this.runtime.EnsureRsrTrueNorthDisabled,
@@ -113,6 +134,7 @@ public sealed class Plugin : IDalamudPlugin
             HelpMessage = "Toggle Xel's Combat AI. Usage: /xcai [on|off|toggle|config]"
         });
         Framework.Update += this.runtime.OnFrameworkUpdate;
+        PluginInterface.UiBuilder.Draw += this.decisionOverlay.Draw;
         PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += this.OpenConfig;
         PluginInterface.UiBuilder.OpenMainUi += this.OpenConfig;
@@ -122,6 +144,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         this.runtime.DisposeRuntime();
         Framework.Update -= this.runtime.OnFrameworkUpdate;
+        PluginInterface.UiBuilder.Draw -= this.decisionOverlay.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= this.OpenConfig;
         PluginInterface.UiBuilder.OpenConfigUi -= this.OpenConfig;
         PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;

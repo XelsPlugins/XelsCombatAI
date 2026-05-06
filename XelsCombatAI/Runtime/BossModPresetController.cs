@@ -17,7 +17,6 @@ internal sealed class BossModPresetController(
     public bool? LastMovement { get; private set; }
     public string? LastMovementRangeStrategy { get; private set; }
     public string? LastForbiddenZoneCushion { get; private set; }
-    public string? LastPartyRole { get; private set; }
     public bool? LastLeylinesBetweenTheLines { get; private set; }
     public bool? LastLeylinesRetrace { get; private set; }
     public bool? LastLeylinesGoal { get; private set; }
@@ -61,7 +60,6 @@ internal sealed class BossModPresetController(
             bossMod.SetMovement(presetName, false);
             bossMod.SetMovementRangeStrategy(presetName, "Any");
             bossMod.SetPositional(presetName, Positional.Any);
-            bossMod.SetPartyRole(presetName, "None");
             bossMod.SetLeylinesBetweenTheLines(presetName, false);
             bossMod.SetLeylinesRetrace(presetName, false);
             bossMod.SetLeylinesGoal(presetName, false);
@@ -88,12 +86,18 @@ internal sealed class BossModPresetController(
         {
             if (config.ManageRange)
             {
-                if (config.HealerPartyCoverage &&
-                    rangePlanner.GetCurrentRangeRole() == RangeRole.Healer &&
-                    rangePlanner.CurrentTargetHasBossModule())
-                    this.SetRange(rangePlanner.CalculateHealerCoverageRange());
-                else
-                    this.SetRange(rangePlanner.CalculateDesiredRange());
+                var suppressAoeRange = config.AoePackPositioningAoeCombatControl &&
+                                       !rangePlanner.CurrentTargetHasBossModule() &&
+                                       rangePlanner.IsAoEMultiTargetActive();
+                if (!suppressAoeRange)
+                {
+                    if (config.HealerPartyCoverage &&
+                        rangePlanner.GetCurrentRangeRole() == RangeRole.Healer &&
+                        rangePlanner.CurrentTargetHasBossModule())
+                        this.SetRange(rangePlanner.CalculateHealerCoverageRange());
+                    else
+                        this.SetRange(rangePlanner.CalculateDesiredRange());
+                }
             }
 
             if (config.ManageForbiddenZoneDistance)
@@ -103,14 +107,6 @@ internal sealed class BossModPresetController(
 
             this.SetMovementRangeStrategy(MapCombatStyle(config.CombatStyle));
 
-            if (suppressAutomatedMovement)
-            {
-                this.SetPartyRole("None");
-            }
-            else if (config.ManagePartyRoleFollow)
-            {
-                this.SetPartyRole(rangePlanner.CurrentTargetHasBossModule() ? "None" : "Tank");
-            }
 
             positionalsController.Apply();
 
@@ -139,7 +135,6 @@ internal sealed class BossModPresetController(
         this.LastMovement = null;
         this.LastMovementRangeStrategy = null;
         this.LastForbiddenZoneCushion = null;
-        this.LastPartyRole = null;
         this.LastLeylinesBetweenTheLines = null;
         this.LastLeylinesRetrace = null;
         this.LastLeylinesGoal = null;
@@ -246,18 +241,6 @@ internal sealed class BossModPresetController(
         };
     }
 
-    private void SetPartyRole(string role)
-    {
-        if (this.LastPartyRole == role)
-        {
-            return;
-        }
-
-        if (bossMod.SetPartyRole(BossModIpc.DefaultPresetName, role))
-        {
-            this.LastPartyRole = role;
-        }
-    }
 
     private void SetLeylines(bool useBetweenTheLines, bool useRetrace, bool returnToLeylines)
     {
