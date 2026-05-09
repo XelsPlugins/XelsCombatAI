@@ -351,10 +351,10 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.TargetUptime,
                 insideEnemiesState,
-                insideEnemiesEnabled ? "Avoid boss hitbox" : "Hitbox avoidance disabled",
+                insideEnemiesEnabled ? "Avoid boss center" : "Boss center avoidance disabled",
                 insideEnemiesReason,
                 17,
-                [new(DecisionOverlayShapeKind.Circle, insideEnemiesState, target.Position, target.HitboxRadius + 0.75f, 0f, 0f, 0f, "avoid inside")],
+                [new(DecisionOverlayShapeKind.Circle, insideEnemiesState, target.Position, AoePackPositioningController.BossHitboxAvoidanceRadius(target.HitboxRadius), 0f, 0f, 0f, "avoid center")],
                 [],
                 [new(insideEnemiesState, target.Position, 0.35f, "Boss")]);
 

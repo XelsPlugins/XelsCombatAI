@@ -103,7 +103,7 @@ internal sealed class AoePackPositioningController(
     private const float CandidateMovementThreshold = 2f;
     private const float CentroidMovementThreshold = 3f;
     private const float AvoidancePenaltyFreeRadius = 4f;
-    private const float BossHitboxAvoidancePadding = 0.25f;
+    private const float BossHitboxAvoidanceScale = 0.8f;
 
     public AoePackPositioningStatus Status => new(
         this.hookState,
@@ -575,8 +575,7 @@ internal sealed class AoePackPositioningController(
         }
 
         var playerPosition = new Vector2(player.Position.X, player.Position.Z);
-        var playerRadius = Math.Max(0.5f, player.HitboxRadius);
-        var targets = this.GetBossHitboxAvoidanceTargets(priorityTargets, playerRadius).ToArray();
+        var targets = this.GetBossHitboxAvoidanceTargets(priorityTargets).ToArray();
         if (targets.Length == 0 || !this.IsInsideEnemyCenterAvoidance(playerPosition, targets))
         {
             return false;
@@ -626,21 +625,21 @@ internal sealed class AoePackPositioningController(
         return true;
     }
 
-    private IEnumerable<TargetSnapshot> GetBossHitboxAvoidanceTargets(IReadOnlyList<TargetSnapshot> priorityTargets, float playerRadius)
+    private IEnumerable<TargetSnapshot> GetBossHitboxAvoidanceTargets(IReadOnlyList<TargetSnapshot> priorityTargets)
     {
         if (services.TargetManager.Target is IBattleChara target && !target.IsDead)
         {
             yield return new TargetSnapshot(
                 target.GameObjectId,
                 new Vector2(target.Position.X, target.Position.Z),
-                BossHitboxAvoidanceRadius(target.HitboxRadius, playerRadius));
+                BossHitboxAvoidanceRadius(target.HitboxRadius));
         }
 
         foreach (var priorityTarget in priorityTargets)
         {
             if (priorityTarget.Radius >= AvoidancePenaltyFreeRadius)
             {
-                yield return priorityTarget with { Radius = BossHitboxAvoidanceRadius(priorityTarget.Radius, playerRadius) };
+                yield return priorityTarget with { Radius = BossHitboxAvoidanceRadius(priorityTarget.Radius) };
             }
         }
     }
@@ -655,9 +654,9 @@ internal sealed class AoePackPositioningController(
         return Vector2.DistanceSquared(position, target.Position) < target.Radius * target.Radius;
     }
 
-    private static float BossHitboxAvoidanceRadius(float hitboxRadius, float playerRadius)
+    internal static float BossHitboxAvoidanceRadius(float hitboxRadius)
     {
-        return Math.Max(1.25f, hitboxRadius + playerRadius + BossHitboxAvoidancePadding);
+        return Math.Max(1.25f, hitboxRadius * BossHitboxAvoidanceScale);
     }
 
     private bool BossModMechanicSafetyActive(object hints)

@@ -562,9 +562,12 @@ internal sealed class BossModGoalZoneHook : IDisposable
             }
 
             var highestPriority = contributions.Max(c => c.Priority);
+            var activeContributions = contributions
+                .Where(c => c.Priority == highestPriority)
+                .ToArray();
             this.lastGoalPriority = highestPriority.ToString();
-            this.lastGoalSources = string.Join(", ", contributions.Select(c => c.Label).Distinct(StringComparer.Ordinal));
-            goalZones.Add(CreateAdvisoryGoalDelegate(contributions));
+            this.lastGoalSources = string.Join(", ", activeContributions.Select(c => c.Label).Distinct(StringComparer.Ordinal));
+            goalZones.Add(CreateAdvisoryGoalDelegate(activeContributions));
         }
 
         private void CaptureMovementDiagnostics(object? activeModule)
