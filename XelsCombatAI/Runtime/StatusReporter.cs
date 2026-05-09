@@ -75,6 +75,7 @@ internal static class StatusReporter
         Append(builder, "EscapeGapCloserPCT", status.EscapeGapCloserPCT);
         Append(builder, "LastGapCloserSafety", status.LastGapCloserSafety);
         Append(builder, "LastEscapeGapCloserSafety", status.LastEscapeGapCloserSafety);
+        Append(builder, "LastEscapeLanding", status.LastEscapeLanding);
         Append(builder, "ReflectedGapSafety", status.ReflectedGapSafety);
         Append(builder, "ManualMovementInput", status.ManualMovementInput);
         builder.AppendLine();

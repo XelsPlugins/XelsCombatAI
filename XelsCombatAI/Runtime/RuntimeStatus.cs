@@ -68,5 +68,6 @@ internal sealed record RuntimeStatus(
     bool AutomatedMovementSuppressed,
     string LastGapCloserSafety,
     string LastEscapeGapCloserSafety,
+    Vector3? LastEscapeLanding,
     bool InitializedPreset,
     string ArenaEdgeReason);

@@ -249,6 +249,7 @@ internal sealed class CombatRuntime(
             this.AutomatedMovementSuppressed,
             gapCloserController.LastGapCloserSafety,
             escapeGapCloserController.LastEscapeGapCloserSafety,
+            escapeGapCloserController.LastSafeEscapeDestination,
             presetController.InitializedPreset,
             arenaEdgePositioningController.LastReason);
     }

@@ -28,6 +28,7 @@ internal sealed record CombatHistoryFrame(
     // Gap closers
     string GapSafety,
     string EscapeSafety,
+    Vector3? EscapeLanding,
     // Healer coverage zone
     string HealerCoverageReason,
     bool HealerCoverageInjected,

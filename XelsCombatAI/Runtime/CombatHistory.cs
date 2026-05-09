@@ -82,6 +82,7 @@ internal sealed class CombatHistory
             TrueNorthCharges: status.TrueNorthCharges,
             GapSafety: status.LastGapCloserSafety,
             EscapeSafety: status.LastEscapeGapCloserSafety,
+            EscapeLanding: status.LastEscapeLanding,
             HealerCoverageReason: status.HealerCoveragePositioning.LastReason,
             HealerCoverageInjected: status.HealerCoveragePositioning.Injected,
             HealerCoverageMembers: status.HealerCoveragePositioning.PartyMembers,
@@ -194,6 +195,7 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "TNCharges", frame.TrueNorthCharges, prev?.TrueNorthCharges);
             AppendIfChanged(sb, "Gap", frame.GapSafety, prev?.GapSafety);
             AppendIfChanged(sb, "Escape", frame.EscapeSafety, prev?.EscapeSafety);
+            AppendIfChanged(sb, "EscapeLanding", FormatVector(frame.EscapeLanding), prev == null ? null : FormatVector(prev.EscapeLanding));
             AppendIfChanged(sb, "HealerCoverage", frame.HealerCoverageReason, prev?.HealerCoverageReason);
             AppendIfChanged(sb, "HCInjected", frame.HealerCoverageInjected, prev?.HealerCoverageInjected);
             AppendIfChanged(sb, "HCMembers", frame.HealerCoverageMembers, prev?.HealerCoverageMembers);

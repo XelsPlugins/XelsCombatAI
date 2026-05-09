@@ -109,10 +109,14 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         return classJobId switch
         {
             2 or 20 when config.EscapeGapCloserMNK => this.TryUseFriendlyEscapeGapCloser(ActionUse.MonkThunderclapActionId, CombatConstants.GapCloserMaxRange, safeMovementDestination),
+            4 or 22 when config.EscapeGapCloserDRG => this.TryUseBackstepEscapeGapCloser(ActionUse.DragoonElusiveJumpActionId, CombatConstants.FixedForwardGapCloserRange, "Elusive Jump", safeMovementDestination),
+            5 or 23 when config.EscapeGapCloserBRD => this.TryUseTargetBackstepEscapeGapCloser(ActionUse.BardRepellingShotActionId, "Repelling Shot", 15f, 10f, safeMovementDestination),
             25 when config.EscapeGapCloserBLM => this.TryUseFriendlyEscapeGapCloser(ActionUse.BlackMageAetherialManipulationActionId, 25f, safeMovementDestination),
             29 or 30 when config.EscapeGapCloserNIN => this.TryUseLocationEscapeGapCloser(ActionUse.NinjaShukuchiActionId, CombatConstants.GapCloserMaxRange, "Shukuchi", safeMovementDestination),
-            39 when config.EscapeGapCloserRPR => gapCloserController.TryUseReaperRegress(ref this.lastEscapeGapCloserSafety, safeMovementDestination: safeMovementDestination) || this.TryUseForwardEscapeGapCloser(ActionUse.ReaperHellsIngressActionId, safeMovementDestination),
+            34 when config.EscapeGapCloserSAM => this.TryUseTargetBackstepEscapeGapCloser(ActionUse.SamuraiYatenActionId, "Yaten", 5f, 10f, safeMovementDestination),
+            39 when config.EscapeGapCloserRPR => gapCloserController.TryUseReaperRegress(ref this.lastEscapeGapCloserSafety, safeMovementDestination: safeMovementDestination) || this.TryUseBackstepEscapeGapCloser(ActionUse.ReaperHellsEgressActionId, CombatConstants.FixedForwardGapCloserRange, "Hell's Egress", safeMovementDestination) || this.TryUseForwardEscapeGapCloser(ActionUse.ReaperHellsIngressActionId, safeMovementDestination),
             24 when config.EscapeGapCloserWHM => this.TryUseForwardEscapeGapCloser(ActionUse.WhiteMageAetherialShiftActionId, safeMovementDestination),
+            35 when config.EscapeGapCloserRDM => this.TryUseTargetBackstepEscapeGapCloser(ActionUse.RedMageDisplacementActionId, "Displacement", 5f, CombatConstants.FixedForwardGapCloserRange, safeMovementDestination),
             40 when config.EscapeGapCloserSGE => this.TryUseFriendlyEscapeGapCloser(ActionUse.SageIcarusActionId, 25f, safeMovementDestination),
             41 when config.EscapeGapCloserVPR => this.TryUseFriendlyEscapeGapCloser(ActionUse.ViperSlitherActionId, CombatConstants.GapCloserMaxRange, safeMovementDestination),
             38 when config.EscapeGapCloserDNC => this.TryUseForwardEscapeGapCloser(ActionUse.DancerEnAvantActionId, safeMovementDestination),
@@ -261,6 +265,75 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         return used;
     }
 
+    private unsafe bool TryUseBackstepEscapeGapCloser(uint actionId, float backstepDistance, string actionName, Vector3 safeMovementDestination)
+    {
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return false;
+        }
+
+        if (!ActionUse.CanUseAction(actionId))
+        {
+            this.lastEscapeGapCloserSafety = $"{actionName} unavailable";
+            return false;
+        }
+
+        var destination = player.Position - Geometry.RotationToDirection(player.Rotation) * backstepDistance;
+        if (!TryValidateEscapeDestination(config, services, bossModSafety, vnavmesh, player.Position, destination, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
+        {
+            this.lastEscapeGapCloserSafety = reason;
+            return false;
+        }
+
+        this.lastSafeEscapeDestination = destination;
+        var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, player.GameObjectId);
+        this.lastEscapeGapCloserSafety = used ? $"used {actionName}" : $"failed to use {actionName}";
+        return used;
+    }
+
+    private unsafe bool TryUseTargetBackstepEscapeGapCloser(uint actionId, string actionName, float maxTargetRange, float backstepDistance, Vector3 safeMovementDestination)
+    {
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return false;
+        }
+
+        if (!ActionUse.CanUseAction(actionId))
+        {
+            this.lastEscapeGapCloserSafety = $"{actionName} unavailable";
+            return false;
+        }
+
+        foreach (var enemy in this.EnumerateBackstepTargets(player, maxTargetRange))
+        {
+            if (!TryCalculateTargetBackstepDestination(player, enemy, backstepDistance, out var destination))
+            {
+                this.lastEscapeGapCloserSafety = $"could not calculate {actionName} landing";
+                continue;
+            }
+
+            if (!TryValidateEscapeDestination(config, services, bossModSafety, vnavmesh, player.Position, destination, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
+            {
+                this.lastEscapeGapCloserSafety = reason;
+                continue;
+            }
+
+            this.lastSafeEscapeDestination = destination;
+            var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, enemy.GameObjectId);
+            this.lastEscapeGapCloserSafety = used ? $"used {actionName}" : $"failed to use {actionName}";
+            return used;
+        }
+
+        if (string.IsNullOrEmpty(this.lastEscapeGapCloserSafety) || this.lastEscapeGapCloserSafety == "current position safe")
+        {
+            this.lastEscapeGapCloserSafety = $"no safe {actionName} target";
+        }
+
+        return false;
+    }
+
     private static bool IsUsefulEscapeDestination(Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, float minimumDistance, out string reason)
     {
         if (Geometry.Distance2D(playerPosition, destination) < minimumDistance)
@@ -293,6 +366,20 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
             .OrderByDescending(ally => Vector3.Distance(player.Position, ally.Position));
     }
 
+    private IEnumerable<IBattleNpc> EnumerateBackstepTargets(IBattleChara player, float maxTargetRange)
+    {
+        return services.ObjectTable
+            .OfType<IBattleNpc>()
+            .Where(enemy =>
+                enemy.BattleNpcKind == BattleNpcSubKind.Combatant &&
+                enemy.GameObjectId != 0 &&
+                !enemy.IsDead &&
+                enemy.CurrentHp > 0 &&
+                Geometry.DistanceToHitbox(player.Position, player.HitboxRadius, enemy.Position, enemy.HitboxRadius) <= maxTargetRange)
+            .OrderByDescending(enemy => enemy.GameObjectId == services.TargetManager.Target?.GameObjectId)
+            .ThenBy(enemy => Geometry.Distance2D(player.Position, enemy.Position));
+    }
+
     private IEnumerable<Vector3> EnumerateEscapeLocationCandidates(Vector3 playerPosition, float maxRange)
     {
         foreach (var radius in CombatConstants.EscapeLocationRadii)
@@ -316,5 +403,20 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
     private bool HasActiveCircleOfPower()
     {
         return services.ObjectTable.LocalPlayer?.StatusList.Any(status => status.StatusId == ActionUse.CircleOfPowerStatusId && status.RemainingTime > 0) == true;
+    }
+
+    private static bool TryCalculateTargetBackstepDestination(IBattleChara player, IBattleNpc enemy, float backstepDistance, out Vector3 destination)
+    {
+        var awayFromTarget = player.Position - enemy.Position;
+        awayFromTarget.Y = 0;
+        if (awayFromTarget.LengthSquared() <= 0.0001f)
+        {
+            destination = default;
+            return false;
+        }
+
+        awayFromTarget = Vector3.Normalize(awayFromTarget);
+        destination = player.Position + awayFromTarget * backstepDistance;
+        return true;
     }
 }

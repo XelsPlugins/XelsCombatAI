@@ -424,12 +424,16 @@ internal sealed class ConfigWindow : Window, IDisposable
         if (ImGui.BeginTable("escapeJobs", 3, ImGuiTableFlags.SizingStretchSame))
         {
             changed |= this.JobCheckbox("MNK", this.config.EscapeGapCloserMNK, this.defaultConfig.EscapeGapCloserMNK, v => this.config.EscapeGapCloserMNK = v, escapeDisabledTooltip);
+            changed |= this.JobCheckbox("DRG", this.config.EscapeGapCloserDRG, this.defaultConfig.EscapeGapCloserDRG, v => this.config.EscapeGapCloserDRG = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("NIN", this.config.EscapeGapCloserNIN, this.defaultConfig.EscapeGapCloserNIN, v => this.config.EscapeGapCloserNIN = v, escapeDisabledTooltip);
+            changed |= this.JobCheckbox("SAM", this.config.EscapeGapCloserSAM, this.defaultConfig.EscapeGapCloserSAM, v => this.config.EscapeGapCloserSAM = v, escapeDisabledTooltip);
+            changed |= this.JobCheckbox("BRD", this.config.EscapeGapCloserBRD, this.defaultConfig.EscapeGapCloserBRD, v => this.config.EscapeGapCloserBRD = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("DNC", this.config.EscapeGapCloserDNC, this.defaultConfig.EscapeGapCloserDNC, v => this.config.EscapeGapCloserDNC = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("RPR", this.config.EscapeGapCloserRPR, this.defaultConfig.EscapeGapCloserRPR, v => this.config.EscapeGapCloserRPR = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("VPR", this.config.EscapeGapCloserVPR, this.defaultConfig.EscapeGapCloserVPR, v => this.config.EscapeGapCloserVPR = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("WHM", this.config.EscapeGapCloserWHM, this.defaultConfig.EscapeGapCloserWHM, v => this.config.EscapeGapCloserWHM = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("BLM", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v, escapeDisabledTooltip);
+            changed |= this.JobCheckbox("RDM", this.config.EscapeGapCloserRDM, this.defaultConfig.EscapeGapCloserRDM, v => this.config.EscapeGapCloserRDM = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("SGE", this.config.EscapeGapCloserSGE, this.defaultConfig.EscapeGapCloserSGE, v => this.config.EscapeGapCloserSGE = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("PCT", this.config.EscapeGapCloserPCT, this.defaultConfig.EscapeGapCloserPCT, v => this.config.EscapeGapCloserPCT = v, escapeDisabledTooltip);
             ImGui.EndTable();

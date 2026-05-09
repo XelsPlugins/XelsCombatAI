@@ -18,18 +18,23 @@ internal static class ActionUse
     public const uint DarkKnightShadowstrideActionId = 36926;
     public const uint GunbreakerTrajectoryActionId = 36934;
     public const uint MonkThunderclapActionId = 25762;
+    public const uint DragoonElusiveJumpActionId = 94;
     public const uint DragoonWingedGlideActionId = 36951;
     public const uint NinjaShukuchiActionId = 2262;
     public const uint SamuraiGyotenActionId = 7492;
+    public const uint SamuraiYatenActionId = 7493;
     public const uint ReaperHellsIngressActionId = 24401;
+    public const uint ReaperHellsEgressActionId = 24402;
     public const uint ReaperRegressActionId = 24403;
     public const uint ReaperHellsgatePortalDataId = 0x4C3u;
     public const uint ViperSlitherActionId = 34646;
     public const uint WhiteMageAetherialShiftActionId = 37008;
     public const uint BlackMageAetherialManipulationActionId = 155;
+    public const uint RedMageDisplacementActionId = 7515;
     public const uint SageIcarusActionId = 24295;
     public const uint PictomancerSmudgeActionId = 34684;
     public const uint DancerEnAvantActionId = 16010;
+    public const uint BardRepellingShotActionId = 112;
 
     public static unsafe bool CanUseAction(uint actionId)
     {
