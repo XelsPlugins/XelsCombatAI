@@ -13,7 +13,6 @@ internal sealed class DecisionOverlayController(
     DalamudServices services,
     AoePackPositioningController aoePackPositioningController,
     PassageOfArmsPositioningController passageOfArmsPositioningController,
-    PartyGravityPositioningController partyGravityPositioningController,
     HealerAoePositioningController healerAoePositioningController,
     SurvivabilityZonePositioningController survivabilityZonePositioningController,
     BossModReflectionSafety bossModSafety,
@@ -113,20 +112,31 @@ internal sealed class DecisionOverlayController(
                 []);
         }
 
-        var healerAoe = healerAoePositioningController.Overlay;
-        if (healerAoe != null)
+        var healerCoverage = healerAoePositioningController.Overlay;
+        if (healerCoverage != null)
         {
+            var coverageState = !config.Enabled || !config.ManageMovement || !config.ManageHealerCoverageZone
+                ? DecisionOverlayState.Suppressed
+                : healerCoverage.Injected
+                ? DecisionOverlayState.Candidate
+                : DecisionOverlayState.Active;
+            var coverageLabel = $"Healer coverage: {healerCoverage.CoveredMembers}/{healerCoverage.TotalMembers}";
+            var coverageReason = coverageState == DecisionOverlayState.Suppressed
+                ? this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageHealerCoverageZone, "Healer coverage zone"))
+                : null;
             yield return new(
                 DecisionOverlaySource.HealerCoverage,
-                DecisionOverlayState.Candidate,
-                $"Move for heal coverage: {healerAoe.CurrentHits} -> {healerAoe.BestHits}",
-                healerAoe.ActionName,
-                35,
-                [new(DecisionOverlayShapeKind.Circle, DecisionOverlayState.Candidate, healerAoe.Candidate, healerAoe.Radius, 0f, 0f, 0f, "heal coverage")],
-                [new(DecisionOverlayState.Candidate, player.Position, healerAoe.Candidate, "move for heal")],
-                healerAoe.Targets.Select(t => new DecisionOverlayMarker(
-                    t.Hit ? DecisionOverlayState.Active : DecisionOverlayState.Suppressed,
-                    t.Position, t.Radius, t.Hit ? null : null)).ToArray());
+                coverageState,
+                coverageLabel,
+                coverageReason ?? (healerCoverage.Injected ? $"{healerCoverage.DistanceToCenter:0.0}y to better coverage" : "current coverage held"),
+                20,
+                [new(DecisionOverlayShapeKind.Circle, coverageState, healerCoverage.Center, healerCoverage.Radius, 0f, 0f, 0f, "coverage zone")],
+                healerCoverage.Injected
+                    ? [new(DecisionOverlayState.Candidate, player.Position, healerCoverage.Center, "move into zone")]
+                    : [],
+                healerCoverage.Members
+                    .Select(member => new DecisionOverlayMarker(coverageState, member, 0.35f, null))
+                    .ToArray());
         }
 
         var aoe = aoePackPositioningController.Overlay;
@@ -224,36 +234,6 @@ internal sealed class DecisionOverlayController(
                     new DecisionOverlayMarker(DecisionOverlayState.Active, passage.PaladinPosition, 0.35f, "PLD"),
                     new DecisionOverlayMarker(state, passage.PreferredPosition, 0.35f, "Wings")
                 ]);
-        }
-
-        partyGravityPositioningController.RefreshOverlay();
-        var partyGravity = partyGravityPositioningController.Overlay;
-        if (partyGravity != null)
-        {
-            var state = !config.Enabled || !config.ManageMovement || !config.ManagePartyGravityPositioning
-                ? DecisionOverlayState.Suppressed
-                : partyGravity.Injected
-                ? partyGravity.DistanceToCluster <= partyGravity.PullRadius ? DecisionOverlayState.Active : DecisionOverlayState.Candidate
-                : DecisionOverlayState.Future;
-            var reason = state == DecisionOverlayState.Suppressed
-                ? this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManagePartyGravityPositioning, "Stay near party"))
-                : null;
-            yield return new(
-                DecisionOverlaySource.PartyGravity,
-                state,
-                partyGravity.DistanceToCluster <= partyGravity.PullRadius ? "Stay near party" : "Move near party",
-                reason ?? $"{partyGravity.Members.Count} members",
-                46,
-                [
-                    new(DecisionOverlayShapeKind.Circle, state, partyGravity.Center, partyGravity.PullRadius, 0f, 0f, 0f, "party cluster")
-                ],
-                partyGravity.DistanceToCluster > partyGravity.PullRadius
-                    ? [new DecisionOverlayLine(state, player.Position, partyGravity.Center, "move to party")]
-                    : [],
-                partyGravity.Members
-                    .Select(member => new DecisionOverlayMarker(state, member, 0.35f, null))
-                    .Append(new DecisionOverlayMarker(state, partyGravity.Center, 0.25f, "Party"))
-                    .ToArray());
         }
 
         survivabilityZonePositioningController.RefreshOverlay();
@@ -415,35 +395,6 @@ internal sealed class DecisionOverlayController(
             }
         }
 
-        var allies = this.GetVisiblePartyMembers(player).ToArray();
-        if (allies.Length > 0)
-        {
-            var center = new Vector3(
-                allies.Average(member => member.Position.X),
-                player.Position.Y,
-                allies.Average(member => member.Position.Z));
-            var partyEnabled = config.Enabled && config.ManageMovement && config.ManagePartyGravityPositioning;
-            var partyState = partyEnabled ? DecisionOverlayState.Candidate : DecisionOverlayState.Suppressed;
-            var partyReason = this.DisabledReason(
-                (config.Enabled, "Enabled"),
-                (config.ManageMovement, "Automate movement"),
-                (config.ManagePartyGravityPositioning, "Stay near party"));
-            if (partyGravityPositioningController.Overlay == null)
-            {
-                yield return new(
-                    DecisionOverlaySource.PartyGravity,
-                    partyState,
-                    partyEnabled ? "Party gravity" : "Party gravity disabled",
-                    partyReason,
-                    18,
-                    [new(DecisionOverlayShapeKind.Circle, partyState, center, 5f, 0f, 0f, 0f, "party cluster")],
-                    [new(partyState, player.Position, center, "move to party")],
-                    allies.Select(member => new DecisionOverlayMarker(partyState, member.Position, 0.35f, null))
-                        .Append(new DecisionOverlayMarker(partyState, center, 0.25f, "Party"))
-                        .ToArray());
-            }
-        }
-
         if (bossModSafety.TryGetSafeMovementIntent(player.Position, out var safeDestination, out var safeReason))
         {
             var movementEnabled = config.Enabled && config.ManageMovement;
@@ -573,7 +524,6 @@ internal sealed class DecisionOverlayController(
             this.DrawConfigRow("Close in to attack range", config.ManageTargetUptime, config.Enabled && config.ManageMovement && config.ManageTargetUptime, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageTargetUptime, "Close in to attack range")));
             this.DrawConfigRow("Avoid danger zones", config.ManageForbiddenZoneDistance, config.Enabled && config.ManageMovement && config.ManageForbiddenZoneDistance, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageForbiddenZoneDistance, "Avoid danger zones")));
             this.DrawConfigRow("Extra danger-zone space", config.PreferredForbiddenZoneDistance, config.Enabled && config.ManageMovement && config.ManageForbiddenZoneDistance, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageForbiddenZoneDistance, "Avoid danger zones")));
-            this.DrawConfigRow("Stay near party", config.ManagePartyGravityPositioning, config.Enabled && config.ManageMovement && config.ManagePartyGravityPositioning, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManagePartyGravityPositioning, "Stay near party")));
             this.DrawConfigRow("Stand in defensive ground effects", config.ManageDefensiveGroundZonePositioning, config.Enabled && config.ManageMovement && config.ManageDefensiveGroundZonePositioning, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageDefensiveGroundZonePositioning, "Stand in defensive ground effects")));
             this.DrawConfigRow("Stand behind Passage of Arms", config.ManagePassageOfArmsPositioning, config.Enabled && config.ManageMovement && config.ManagePassageOfArmsPositioning, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManagePassageOfArmsPositioning, "Stand behind Passage of Arms")));
             this.DrawConfigRow("Avoid standing inside bosses", config.AvoidStandingInsideEnemies, config.Enabled && config.ManageMovement && config.AvoidStandingInsideEnemies, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.AvoidStandingInsideEnemies, "Avoid standing inside bosses")));
@@ -584,7 +534,7 @@ internal sealed class DecisionOverlayController(
             this.DrawConfigRow("Move for better AoE hits", config.ManageAoePackPositioning, config.Enabled && config.ManageMovement && config.ManageAoePackPositioning, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageAoePackPositioning, "Move for better AoE hits")));
             this.DrawConfigRow("Pick better AoE target", config.PickBetterAoeTarget, config.Enabled && config.PickBetterAoeTarget, this.DisabledReason((config.Enabled, "Enabled"), (config.PickBetterAoeTarget, "Pick better AoE target")));
             this.DrawConfigRow("Keep a trash target selected", config.KeepTrashTargetSelected, config.Enabled && config.KeepTrashTargetSelected, this.DisabledReason((config.Enabled, "Enabled"), (config.KeepTrashTargetSelected, "Keep a trash target selected")));
-            this.DrawConfigRow("Healer AoE positioning", config.ManageHealerAoePositioning, config.Enabled && config.ManageMovement && config.ManageHealerAoePositioning, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageHealerAoePositioning, "Healer AoE positioning")));
+            this.DrawConfigRow("Healer coverage zone", config.ManageHealerCoverageZone, config.Enabled && config.ManageMovement && config.ManageHealerCoverageZone, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageHealerCoverageZone, "Healer coverage zone")));
 
             this.DrawConfigSection("Positionals");
             this.DrawConfigRow("Do positionals", config.ManagePositionals, config.Enabled && config.ManagePositionals, this.DisabledReason((config.Enabled, "Enabled"), (config.ManagePositionals, "Do positionals")));
@@ -716,7 +666,7 @@ internal sealed class DecisionOverlayController(
     {
         if (nextAction.IsFriendly && nextAction.Shape == RsrAoeShape.Circle)
         {
-            return healerAoePositioningController.Overlay?.Candidate ?? player.Position;
+            return player.Position;
         }
 
         var injectedOverlay = aoePackPositioningController.Overlay;
@@ -792,12 +742,6 @@ internal sealed class DecisionOverlayController(
                 ? [new(state, target.Position, target.HitboxRadius, null), landingMarker]
                 : [new(state, target.Position, target.HitboxRadius, null)]);
 
-    }
-
-
-    private IEnumerable<IBattleChara> GetVisiblePartyMembers(IBattleChara player)
-    {
-        return PartyAllyProvider.EnumerateVisiblePartyAllies(services, player);
     }
 
     private void DrawSnapshot(ImDrawListPtr drawList, DecisionOverlaySnapshot snapshot)
@@ -1139,7 +1083,7 @@ internal sealed class DecisionOverlayController(
 
     private static bool ShouldFillShape(DecisionOverlayState state, DecisionOverlaySource source)
     {
-        if (source == DecisionOverlaySource.NextAction)
+        if (source is DecisionOverlaySource.NextAction or DecisionOverlaySource.HealerCoverage)
         {
             return false;
         }
@@ -1176,7 +1120,6 @@ internal sealed class DecisionOverlayController(
             or DecisionOverlaySource.GapCloser
             or DecisionOverlaySource.AoE
             or DecisionOverlaySource.HealerCoverage
-            or DecisionOverlaySource.PartyGravity
             or DecisionOverlaySource.PassageOfArms
             or DecisionOverlaySource.SurvivabilityZone;
     }
@@ -1230,7 +1173,6 @@ internal sealed class DecisionOverlayController(
             DecisionOverlaySource.AoE => new Vector4(1f, 0.55f, 0.18f, alpha),
             DecisionOverlaySource.HealerCoverage => new Vector4(0.35f, 0.95f, 0.48f, alpha),
             DecisionOverlaySource.SurvivabilityZone => new Vector4(0.35f, 0.95f, 0.48f, alpha),
-            DecisionOverlaySource.PartyGravity => new Vector4(0.35f, 0.82f, 1f, alpha),
             DecisionOverlaySource.PassageOfArms => new Vector4(1f, 0.88f, 0.25f, alpha),
             DecisionOverlaySource.BossFrontalCone => new Vector4(1f, 0.45f, 0.45f, alpha),
             DecisionOverlaySource.Positionals => new Vector4(0.88f, 0.45f, 1f, alpha),

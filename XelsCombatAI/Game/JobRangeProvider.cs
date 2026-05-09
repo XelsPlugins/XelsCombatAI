@@ -38,7 +38,7 @@ internal sealed class JobRangeProvider(DalamudServices services) : IDisposable
             // Healers
             6 or 24 => (25f, 8f),   // CNJ / WHM — Holy
             28      => (25f, 5f),   // SCH — Art of War
-            33      => (25f, 8f),   // AST — Gravity
+            33      => (25f, 25f),   // AST — Gravity
             40      => (25f, 5f),   // SGE — Dyskrasia
             // Magic Ranged — AoE at 25y except RDM
             7 or 25 => (25f, 25f),  // THM / BLM

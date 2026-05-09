@@ -448,11 +448,10 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var activePriority = contributions.Max(c => c.Priority);
-            var active = contributions.Where(c => c.Priority == activePriority).ToArray();
-            this.lastGoalPriority = activePriority.ToString();
-            this.lastGoalSources = string.Join(", ", active.Select(c => c.Label).Distinct(StringComparer.Ordinal));
-            goalZones.Add(CreateAdvisoryGoalDelegate(active));
+            var highestPriority = contributions.Max(c => c.Priority);
+            this.lastGoalPriority = highestPriority.ToString();
+            this.lastGoalSources = string.Join(", ", contributions.Select(c => c.Label).Distinct(StringComparer.Ordinal));
+            goalZones.Add(CreateAdvisoryGoalDelegate(contributions));
         }
 
         private static Delegate CreateAdvisoryGoalDelegate(IReadOnlyList<BossModGoalContribution> contributions)
@@ -467,15 +466,14 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             var wposType = parameters[0].ParameterType;
             var parameter = Expression.Parameter(wposType, "p");
-            Expression max = Expression.Constant(0f);
-            var mathMax = typeof(Math).GetMethod(nameof(Math.Max), [typeof(float), typeof(float)])!;
+            Expression sum = Expression.Constant(0f);
             foreach (var goal in goals)
             {
-                max = Expression.Call(mathMax, max, Expression.Invoke(Expression.Constant(goal, goal.GetType()), parameter));
+                sum = Expression.Add(sum, Expression.Invoke(Expression.Constant(goal, goal.GetType()), parameter));
             }
 
             var clamp = typeof(GoalZoneScorePolicy).GetMethod(nameof(GoalZoneScorePolicy.ClampAdvisoryScore), BindingFlags.Static | BindingFlags.Public)!;
-            var score = Expression.Call(clamp, max);
+            var score = Expression.Call(clamp, sum);
             var delegateType = typeof(Func<,>).MakeGenericType(wposType, typeof(float));
             return Expression.Lambda(delegateType, score, parameter).Compile();
         }

@@ -15,7 +15,6 @@ internal sealed class CombatRuntime(
     BossModGoalZoneHook aoeGoalHook,
     AoePackPositioningController aoePackPositioningController,
     PassageOfArmsPositioningController passageOfArmsPositioningController,
-    PartyGravityPositioningController partyGravityPositioningController,
     HealerAoePositioningController healerAoePositioningController,
     SurvivabilityZonePositioningController survivabilityZonePositioningController,
     AggroSafetyController aggroSafetyController,
@@ -46,6 +45,7 @@ internal sealed class CombatRuntime(
 
         if (!config.Enabled)
         {
+            this.HandleDisabled();
             return;
         }
 
@@ -57,23 +57,16 @@ internal sealed class CombatRuntime(
 
         this.ClearDependencyWaitState();
 
-        if (config.ManageAoePackPositioning ||
-            config.ManagePartyGravityPositioning ||
-            config.KeepTrashTargetSelected ||
-            config.ManageTargetUptime ||
-            config.ManageAggroSafetyMovement ||
-            config.AvoidStandingInsideEnemies ||
-            config.ManageDefensiveGroundZonePositioning ||
-            config.ManagePassageOfArmsPositioning ||
-            config.AvoidBossFrontalCone)
-        {
-            aoeGoalHook.EnsureActive();
-        }
-
         if (!services.Condition[ConditionFlag.InCombat])
         {
+            if (this.wasInCombat || presetController.InitializedPreset)
+            {
+                this.HandleOutOfCombat();
+            }
+
             this.wasInCombat = false;
-            this.HandleOutOfCombat();
+            this.wasDead = false;
+            this.manualMovementSuppressUntil = DateTime.MinValue;
             return;
         }
 
@@ -84,9 +77,28 @@ internal sealed class CombatRuntime(
         }
 
         var isDead = services.Condition[ConditionFlag.Unconscious];
-        if (this.wasDead && !isDead)
+        if (isDead)
+        {
+            if (!this.wasDead)
+            {
+                this.HandleDeath();
+            }
+
+            this.wasDead = true;
+            return;
+        }
+
+        if (this.wasDead)
+        {
             this.ResetRuntimeCache();
+        }
+
         this.wasDead = isDead;
+
+        if (this.ShouldUseGoalHook())
+        {
+            aoeGoalHook.EnsureActive();
+        }
 
         var now = DateTime.UtcNow;
         if (now < this.nextRuntimeUpdate)
@@ -138,7 +150,6 @@ internal sealed class CombatRuntime(
         presetController.ResetCache();
         aoePackPositioningController.Reset();
         passageOfArmsPositioningController.Reset();
-        partyGravityPositioningController.Reset();
         healerAoePositioningController.Reset();
         survivabilityZonePositioningController.Reset();
         aggroSafetyController.Reset();
@@ -193,10 +204,6 @@ internal sealed class CombatRuntime(
             presetController.LastLeylinesBetweenTheLines,
             presetController.LastLeylinesRetrace,
             presetController.LastLeylinesGoal,
-            presetController.LastHealerHeal,
-            presetController.LastHealerEsuna,
-            presetController.LastHealerOutOfCombat,
-            presetController.LastHealerRaise,
             config.GapCloserPLD,
             config.GapCloserWAR,
             config.GapCloserDRK,
@@ -222,8 +229,7 @@ internal sealed class CombatRuntime(
             aoeGoalHook.Diagnostics,
             aoePackPositioningController.Status,
             passageOfArmsPositioningController.Status,
-            partyGravityPositioningController.Status,
-            healerAoePositioningController.Status,
+            healerAoePositioningController.Status, // HealerCoveragePositioning
             survivabilityZonePositioningController.Status,
             aggroSafetyController.Status,
             manualMovement.Status,
@@ -242,6 +248,7 @@ internal sealed class CombatRuntime(
         }
 
         aoeGoalHook.Dispose();
+        survivabilityZonePositioningController.Dispose();
     }
 
     private void HandleOutOfCombat()
@@ -249,10 +256,9 @@ internal sealed class CombatRuntime(
         if (presetController.InitializedPreset)
         {
             presetController.Deactivate();
-            this.ResetRuntimeCache();
         }
 
-        this.manualMovementSuppressUntil = DateTime.MinValue;
+        this.ResetRuntimeCache();
     }
 
     private void WaitForDependencies(string missing)
@@ -262,13 +268,7 @@ internal sealed class CombatRuntime(
             presetController.Deactivate();
         }
 
-        presetController.ResetCache();
-        aoePackPositioningController.Reset();
-        passageOfArmsPositioningController.Reset();
-        partyGravityPositioningController.Reset();
-        healerAoePositioningController.Reset();
-        aoeGoalHook.Reset();
-        this.manualMovementSuppressUntil = DateTime.MinValue;
+        this.ResetRuntimeCache();
         if (!string.Equals(this.lastMissingDependencies, missing, StringComparison.Ordinal))
         {
             this.lastMissingDependencies = missing;
@@ -302,5 +302,46 @@ internal sealed class CombatRuntime(
         }
 
         return now < this.manualMovementSuppressUntil;
+    }
+
+    private void HandleDisabled()
+    {
+        if (!this.wasInCombat && !this.wasDead && !presetController.InitializedPreset)
+        {
+            return;
+        }
+
+        if (presetController.InitializedPreset)
+        {
+            presetController.Deactivate();
+        }
+
+        this.wasInCombat = false;
+        this.wasDead = false;
+        this.ResetRuntimeCache();
+    }
+
+    private void HandleDeath()
+    {
+        if (presetController.InitializedPreset)
+        {
+            presetController.Deactivate();
+        }
+
+        this.ResetRuntimeCache();
+    }
+
+    private bool ShouldUseGoalHook()
+    {
+        return config.ManageAoePackPositioning ||
+               config.KeepTrashTargetSelected ||
+               config.ManageTargetUptime ||
+               config.ManageAggroSafetyMovement ||
+               config.AvoidStandingInsideEnemies ||
+               config.ManageHealerCoverageZone ||
+               config.ManageDefensiveGroundZonePositioning ||
+               config.ManagePassageOfArmsPositioning ||
+               config.AvoidBossFrontalCone ||
+               config.AvoidArenaEdge;
     }
 }

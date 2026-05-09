@@ -58,16 +58,10 @@ internal sealed class CombatHistory
             TrueNorthCharges: status.TrueNorthCharges,
             GapSafety: status.LastGapCloserSafety,
             EscapeSafety: status.LastEscapeGapCloserSafety,
-            PartyGravityReason: status.PartyGravityPositioning.LastReason,
-            PartyGravityInjected: status.PartyGravityPositioning.Injected,
-            PartyGravityMembers: status.PartyGravityPositioning.PartyMembers,
-            PartyGravityClusterMembers: status.PartyGravityPositioning.ClusterMembers,
-            PartyGravityDutySupportMembers: status.PartyGravityPositioning.DutySupportMembers,
-            HealerAoeReason: status.HealerAoePositioning.LastReason,
-            HealerAoeInjected: status.HealerAoePositioning.Injected,
-            HealerAoeMembers: status.HealerAoePositioning.PartyMembers,
-            HealerAoeCurrentHits: status.HealerAoePositioning.CurrentHits,
-            HealerAoeBestHits: status.HealerAoePositioning.BestHits,
+            HealerCoverageReason: status.HealerCoveragePositioning.LastReason,
+            HealerCoverageInjected: status.HealerCoveragePositioning.Injected,
+            HealerCoverageMembers: status.HealerCoveragePositioning.PartyMembers,
+            HealerCoverageDist: status.HealerCoveragePositioning.DistanceToCenter,
             Reason: aoe.LastReason,
             Henched: aoe.RsrHenchedActive,
             Targets: aoe.PriorityTargetCount,
@@ -75,7 +69,19 @@ internal sealed class CombatHistory
             BestHits: aoe.BestHits,
             Injected: aoe.Injected,
             ActionName: aoe.ActionName,
-            Shape: aoe.Shape);
+            Shape: aoe.Shape,
+            SurvZoneReason: status.SurvivabilityZonePositioning.LastReason,
+            SurvZoneInjected: status.SurvivabilityZonePositioning.Injected,
+            SurvZoneName: status.SurvivabilityZonePositioning.ZoneName,
+            SurvZoneDistance: status.SurvivabilityZonePositioning.DistanceToCenter,
+            PassageReason: status.PassageOfArmsPositioning.LastReason,
+            PassageInjected: status.PassageOfArmsPositioning.Injected,
+            PassageDistance: status.PassageOfArmsPositioning.DistanceToPreferred,
+            PassageInCone: status.PassageOfArmsPositioning.PlayerInCone,
+            AggroReason: status.AggroSafety.LastReason,
+            AggroInjected: status.AggroSafety.Injected,
+            AggroSeconds: status.AggroSafety.AggroSeconds,
+            BossFrontalReason: status.BossFrontalConeReason);
 
         var index = (this.head + this.count) % MaxFrames;
         this.frames[index] = frame;
@@ -101,7 +107,7 @@ internal sealed class CombatHistory
         sb.AppendLine($"Start={this.combatStart:O}  Duration={last.T:0.0}s  Frames={this.count}");
         sb.AppendLine();
         sb.AppendLine("[Header]");
-        sb.AppendLine($"Job={first.PlayerClassJobId}  TargetUptime={config.ManageTargetUptime}  PartyGravity={config.ManagePartyGravityPositioning}  PickAoeTarget={config.PickBetterAoeTarget}  KeepTrashTarget={config.KeepTrashTargetSelected}  ManagePositionals={config.ManagePositionals}  ManageTrueNorth={config.ManageTrueNorth}  CombatStyle={config.CombatStyle}  RsrSnapshot={this.lastSeenRsrSnapshotMode}");
+        sb.AppendLine($"Job={first.PlayerClassJobId}  TargetUptime={config.ManageTargetUptime}  PickAoeTarget={config.PickBetterAoeTarget}  KeepTrashTarget={config.KeepTrashTargetSelected}  ManagePositionals={config.ManagePositionals}  ManageTrueNorth={config.ManageTrueNorth}  CombatStyle={config.CombatStyle}  RsrSnapshot={this.lastSeenRsrSnapshotMode}");
         sb.AppendLine();
         sb.AppendLine("[Frames]");
 
@@ -126,16 +132,10 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "TNCharges", frame.TrueNorthCharges, prev?.TrueNorthCharges);
             AppendIfChanged(sb, "Gap", frame.GapSafety, prev?.GapSafety);
             AppendIfChanged(sb, "Escape", frame.EscapeSafety, prev?.EscapeSafety);
-            AppendIfChanged(sb, "PartyGravity", frame.PartyGravityReason, prev?.PartyGravityReason);
-            AppendIfChanged(sb, "PGInjected", frame.PartyGravityInjected, prev?.PartyGravityInjected);
-            AppendIfChanged(sb, "PGMembers", frame.PartyGravityMembers, prev?.PartyGravityMembers);
-            AppendIfChanged(sb, "PGCluster", frame.PartyGravityClusterMembers, prev?.PartyGravityClusterMembers);
-            AppendIfChanged(sb, "PGDutySupport", frame.PartyGravityDutySupportMembers, prev?.PartyGravityDutySupportMembers);
-            AppendIfChanged(sb, "HealerAoE", frame.HealerAoeReason, prev?.HealerAoeReason);
-            AppendIfChanged(sb, "HAInjected", frame.HealerAoeInjected, prev?.HealerAoeInjected);
-            AppendIfChanged(sb, "HAMembers", frame.HealerAoeMembers, prev?.HealerAoeMembers);
-            if (frame.HealerAoeCurrentHits != 0 || frame.HealerAoeBestHits != 0 || prev?.HealerAoeCurrentHits != 0 || prev?.HealerAoeBestHits != 0)
-                AppendIfChanged(sb, "HAHits", $"{frame.HealerAoeCurrentHits}/{frame.HealerAoeBestHits}", $"{prev?.HealerAoeCurrentHits}/{prev?.HealerAoeBestHits}");
+            AppendIfChanged(sb, "HealerCoverage", frame.HealerCoverageReason, prev?.HealerCoverageReason);
+            AppendIfChanged(sb, "HCInjected", frame.HealerCoverageInjected, prev?.HealerCoverageInjected);
+            AppendIfChanged(sb, "HCMembers", frame.HealerCoverageMembers, prev?.HealerCoverageMembers);
+            AppendIfChanged(sb, "HCDist", $"{frame.HealerCoverageDist:0.0}", prev == null ? null : $"{prev.HealerCoverageDist:0.0}");
 
             // AoE pack fields — only print when relevant
             AppendIfChanged(sb, "AoEPack", frame.Reason, prev?.Reason);
@@ -146,6 +146,46 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "Injected", frame.Injected, prev?.Injected);
             if (frame.ActionName != "<none>")
                 AppendIfChanged(sb, "Action", $"{frame.ActionName}({frame.Shape})", prev == null ? null : $"{prev.ActionName}({prev.Shape})");
+
+            // Survivability zone — only print when active or just cleared
+            if (frame.SurvZoneInjected || prev?.SurvZoneInjected == true)
+            {
+                AppendIfChanged(sb, "SurvZone", frame.SurvZoneReason, prev?.SurvZoneReason);
+                AppendIfChanged(sb, "SurvZoneInjected", frame.SurvZoneInjected, prev?.SurvZoneInjected);
+                if (frame.SurvZoneName != "<none>") AppendIfChanged(sb, "SurvZoneName", frame.SurvZoneName, prev?.SurvZoneName);
+                AppendIfChanged(sb, "SurvZoneDist", $"{frame.SurvZoneDistance:0.0}", prev == null ? null : $"{prev.SurvZoneDistance:0.0}");
+            }
+            else
+            {
+                AppendIfChanged(sb, "SurvZone", frame.SurvZoneReason, prev?.SurvZoneReason);
+            }
+
+            // Passage of arms — only print when active or just cleared
+            if (frame.PassageInjected || prev?.PassageInjected == true)
+            {
+                AppendIfChanged(sb, "Passage", frame.PassageReason, prev?.PassageReason);
+                AppendIfChanged(sb, "PassageInjected", frame.PassageInjected, prev?.PassageInjected);
+                AppendIfChanged(sb, "PassageDist", $"{frame.PassageDistance:0.0}", prev == null ? null : $"{prev.PassageDistance:0.0}");
+                AppendIfChanged(sb, "PassageInCone", frame.PassageInCone, prev?.PassageInCone);
+            }
+            else
+            {
+                AppendIfChanged(sb, "Passage", frame.PassageReason, prev?.PassageReason);
+            }
+
+            // Aggro safety — only print when active or just cleared
+            if (frame.AggroInjected || prev?.AggroInjected == true)
+            {
+                AppendIfChanged(sb, "Aggro", frame.AggroReason, prev?.AggroReason);
+                AppendIfChanged(sb, "AggroInjected", frame.AggroInjected, prev?.AggroInjected);
+                AppendIfChanged(sb, "AggroSecs", $"{frame.AggroSeconds:0.0}", prev == null ? null : $"{prev.AggroSeconds:0.0}");
+            }
+            else
+            {
+                AppendIfChanged(sb, "Aggro", frame.AggroReason, prev?.AggroReason);
+            }
+
+            AppendIfChanged(sb, "BossFrontal", frame.BossFrontalReason, prev?.BossFrontalReason);
 
             sb.AppendLine();
             prev = frame;

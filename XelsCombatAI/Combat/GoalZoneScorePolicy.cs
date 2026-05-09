@@ -10,7 +10,6 @@ internal static class GoalZoneScorePolicy
     public const float AoeRepositionPreference = 0.5f;
     public const float WeakPreference = 0.25f;
     public const float PackApproachPreference = 0.2f;
-    public const float PartyGravityPreference = 0.1f;
 
     public static float ClampAdvisoryScore(float rawScore)
     {

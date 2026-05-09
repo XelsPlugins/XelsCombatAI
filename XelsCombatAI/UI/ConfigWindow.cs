@@ -203,6 +203,11 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.SameLine();
         if (ImGui.Button("Reset everything"))
         {
+            if (this.config.Enabled)
+            {
+                this.setEnabled(false);
+            }
+
             this.config.ResetAll();
             changed = true;
         }
@@ -242,11 +247,11 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
 
         changed |= this.Checkbox(
-            "Stay near party",
-            this.config.ManagePartyGravityPositioning,
-            this.defaultConfig.ManagePartyGravityPositioning,
-            v => this.config.ManagePartyGravityPositioning = v,
-            "Prefers standing near your party when it is safe.\nMagic ranged jobs ignore this while they can keep casting at a target.",
+            "Stay in healer range (healers only)",
+            this.config.ManageHealerCoverageZone,
+            this.defaultConfig.ManageHealerCoverageZone,
+            v => this.config.ManageHealerCoverageZone = v,
+            "Healers only: prefers safe positions where your 20-yalm healing circle covers as many visible party members as possible.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Stand in defensive ground effects",

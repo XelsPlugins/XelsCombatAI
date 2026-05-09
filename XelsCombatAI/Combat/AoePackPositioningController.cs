@@ -235,13 +235,13 @@ internal sealed class AoePackPositioningController(
         {
             if (config.PickBetterAoeTarget || config.KeepTrashTargetSelected)
             {
-                this.ApplyRsrHenched();
+                var rsrReady = this.ApplyRsrHenched();
                 // Only update target if the current one is invalid — don't flip targets mid-stabilisation
                 // as that resets the debounce and prevents committing to a candidate position.
                 var currentIsValid = services.TargetManager.Target is IBattleNpc t &&
                                      t.StatusFlags.HasFlag(StatusFlags.InCombat) &&
                                      !t.IsDead && t.CurrentHp > 0 && t.IsHostile();
-                if (!currentIsValid)
+                if (rsrReady && !currentIsValid)
                     this.UpdateTarget(this.lastBestPrimaryId, targets);
             }
 
@@ -615,29 +615,45 @@ internal sealed class AoePackPositioningController(
         return Math.Clamp(hitboxRadius * 0.2f, 1.25f, 3f);
     }
 
-    private void ApplyRsrHenched()
+    private bool ApplyRsrHenched()
     {
-        if (this.rsrHenchedActive) return;
-        var snapshot = rotationSolverIpc.TryGetCurrentState(services.Log);
-        if (snapshot == null)
-        {
-            this.rsrRestoreStatus = "snapshot unavailable";
-            this.rsrLastRestoreStatus = "snapshot unavailable";
-            return;
-        }
+        if (this.rsrHenchedActive) return true;
 
-        // Never restore to Henched or Off — both indicate an unreliable snapshot; default to Auto.
-        this.rsrSnapshotMode = (snapshot.Value == StateCommandType.Henched || snapshot.Value == StateCommandType.Off)
-            ? StateCommandType.Auto
-            : snapshot.Value;
-        this.rsrRestoreStatus = $"snapshot {snapshot.Value} -> restore {this.rsrSnapshotMode}";
-        rotationSolverIpc.SetHenched();
-        this.rsrHenchedActive = true;
+        try
+        {
+            var snapshot = rotationSolverIpc.TryGetCurrentState(services.Log);
+            if (snapshot == null)
+            {
+                this.rsrRestoreStatus = "snapshot unavailable";
+                this.rsrLastRestoreStatus = "snapshot unavailable";
+                return false;
+            }
+
+            // Never restore to Henched or Off — both indicate an unreliable snapshot; default to Auto.
+            this.rsrSnapshotMode = (snapshot.Value == StateCommandType.Henched || snapshot.Value == StateCommandType.Off)
+                ? StateCommandType.Auto
+                : snapshot.Value;
+            this.rsrRestoreStatus = $"snapshot {snapshot.Value} -> restore {this.rsrSnapshotMode}";
+            rotationSolverIpc.SetHenched();
+            this.rsrHenchedActive = true;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.rsrRestoreStatus = "set Henched failed";
+            this.rsrLastRestoreStatus = "set Henched failed";
+            services.Log.Verbose(ex, "Could not set Rotation Solver Reborn Henched mode.");
+            return false;
+        }
     }
 
     private void ApplyRsrTargeting(ulong primaryId, IReadOnlyCollection<TargetSnapshot>? priorityTargets = null, bool forcePreferred = false)
     {
-        this.ApplyRsrHenched();
+        if (!this.ApplyRsrHenched())
+        {
+            return;
+        }
+
         this.UpdateTarget(primaryId, priorityTargets, forcePreferred);
     }
 
@@ -950,10 +966,22 @@ internal sealed class AoePackPositioningController(
     private void RestoreRsrIfNeeded()
     {
         if (!this.rsrHenchedActive) return;
-        this.rsrRestoreStatus = $"restored {this.rsrSnapshotMode}";
-        this.rsrLastRestoreStatus = $"snapshot {this.rsrSnapshotMode} restored";
-        rotationSolverIpc.RestoreMode(this.rsrSnapshotMode);
-        this.rsrHenchedActive = false;
+        try
+        {
+            rotationSolverIpc.RestoreMode(this.rsrSnapshotMode);
+            this.rsrRestoreStatus = $"restored {this.rsrSnapshotMode}";
+            this.rsrLastRestoreStatus = $"snapshot {this.rsrSnapshotMode} restored";
+        }
+        catch (Exception ex)
+        {
+            this.rsrRestoreStatus = "restore failed";
+            this.rsrLastRestoreStatus = $"restore {this.rsrSnapshotMode} failed";
+            services.Log.Verbose(ex, "Could not restore Rotation Solver Reborn mode.");
+        }
+        finally
+        {
+            this.rsrHenchedActive = false;
+        }
     }
 
     private bool EnsureResolved(Type hintsType)

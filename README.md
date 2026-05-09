@@ -21,7 +21,6 @@ While you are in combat, the plugin automatically:
 - **Picks better AoE and trash targets** when target choice affects how many enemies you hit
 - **Moves closer to trash packs** when you are too far away to hit them well
 - **Avoids awkward boss-center positions** and small enemy hitboxes when choosing movement goals
-- **Prefers the party cluster** by letting BossMod gently gravitate toward your current 4-player or 8-player party during combat, while magic ranged jobs avoid party-gravity movement when they can keep casting at a target
 - **Prefers helpful defensive ground effects** such as Asylum, Sacred Soil, Earthly Star, and Collective Unconscious
 - **Prefers Paladin Passage of Arms protection** by letting BossMod prefer the protected cone behind a party Paladin while the buff is active
 - **Brings stray aggro to a party tank** when a non-tank is targeted by a mob for more than 3 seconds

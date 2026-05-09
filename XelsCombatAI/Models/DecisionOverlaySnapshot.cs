@@ -16,7 +16,6 @@ internal enum DecisionOverlaySource
     GapCloserLanding,
     EscapeLanding,
     PassageOfArms,
-    PartyGravity,
     SurvivabilityZone,
     BossFrontalCone,
 }

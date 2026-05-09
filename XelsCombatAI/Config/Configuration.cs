@@ -16,7 +16,7 @@ public sealed class Configuration : IPluginConfiguration
     public const float MinimumGapCloserDistanceMin = 0f;
     public const float MinimumGapCloserDistanceMax = 20f;
 
-    public int Version { get; set; } = 14;
+    public int Version { get; set; } = 13;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -56,8 +56,7 @@ public sealed class Configuration : IPluginConfiguration
     public float MinimumReengageGapCloserDistance { get; set; } = DefaultMinimumReengageGapCloserDistance;
     public float MinimumEscapeGapCloserDistance { get; set; } = DefaultMinimumEscapeGapCloserDistance;
     public bool ManageAoePackPositioning { get; set; } = true;
-    public bool ManagePartyGravityPositioning { get; set; } = true;
-    public bool ManageHealerAoePositioning { get; set; } = true;
+    public bool ManageHealerCoverageZone { get; set; } = true;
     public bool ManageDefensiveGroundZonePositioning { get; set; } = true;
     public bool ManagePassageOfArmsPositioning { get; set; } = true;
     public bool PickBetterAoeTarget { get; set; } = false;
@@ -69,11 +68,18 @@ public sealed class Configuration : IPluginConfiguration
     public bool ShowDecisionOverlay { get; set; } = false;
     public bool ShowDecisionOverlayHud { get; set; } = false;
 
+    private bool? manageSurvivabilityZonePositioningCompatibility;
+    private bool? manageMultiTargetTargetingCompatibility;
+    private bool? aoePackPositioningControlRsrTargetCompatibility;
+    private bool? manageTrueNorthInRsrCompatibility;
+    private bool? manageHealerAoePositioningCompatibility;
+
     [JsonProperty("ManageSurvivabilityZonePositioning")]
     private bool ManageSurvivabilityZonePositioningCompatibility
     {
         set
         {
+            this.manageSurvivabilityZonePositioningCompatibility = value;
             this.ManageDefensiveGroundZonePositioning = value;
             this.ManagePassageOfArmsPositioning = value;
         }
@@ -82,13 +88,21 @@ public sealed class Configuration : IPluginConfiguration
     [JsonProperty("ManageMultiTargetTargeting")]
     private bool ManageMultiTargetTargetingCompatibility
     {
-        set => this.KeepTrashTargetSelected = value;
+        set
+        {
+            this.manageMultiTargetTargetingCompatibility = value;
+            this.KeepTrashTargetSelected = value;
+        }
     }
 
     [JsonProperty("AoePackPositioningControlRsrTarget")]
     private bool AoePackPositioningControlRsrTargetCompatibility
     {
-        set => this.PickBetterAoeTarget = value;
+        set
+        {
+            this.aoePackPositioningControlRsrTargetCompatibility = value;
+            this.PickBetterAoeTarget = value;
+        }
     }
 
     [JsonProperty("MoveCloserToTrashPacks")]
@@ -114,7 +128,11 @@ public sealed class Configuration : IPluginConfiguration
     [JsonProperty("ManageTrueNorthInRsr")]
     private bool ManageTrueNorthInRsrCompatibility
     {
-        set => this.ManageTrueNorth = value;
+        set
+        {
+            this.manageTrueNorthInRsrCompatibility = value;
+            this.ManageTrueNorth = value;
+        }
     }
 
     [JsonProperty("ManageRange")]
@@ -129,104 +147,54 @@ public sealed class Configuration : IPluginConfiguration
         set { }
     }
 
+    [JsonProperty("ManageHealerAoePositioning")]
+    private bool ManageHealerAoePositioningCompatibility
+    {
+        set
+        {
+            this.manageHealerAoePositioningCompatibility = value;
+            this.ManageHealerCoverageZone = value;
+        }
+    }
+
     internal void Migrate()
     {
-        if (this.Version < 2)
-        {
-            this.Version = 2;
-        }
-
-        if (this.Version < 3)
-        {
-            this.Version = 3;
-        }
-
-        if (this.Version < 4)
+        if (this.Version < 13)
         {
             this.ManageTrueNorth = false;
-            this.Version = 4;
-        }
-
-        if (this.Version < 5)
-        {
-            this.GapCloserSAM = false;
-            this.Version = 5;
-        }
-
-        if (this.Version < 6)
-        {
+            this.GapCloserSAM = true;
             this.GapCloserPLD = true;
             this.GapCloserWAR = true;
             this.GapCloserDRK = true;
             this.GapCloserGNB = true;
-            this.GapCloserSAM = true;
             this.GapCloserRPR = true;
-            this.Version = 6;
-        }
-
-        if (this.Version < 7)
-        {
+            this.GapCloserDNC = true;
             this.UseEscapeGapCloser = false;
             this.EscapeGapCloserMNK = true;
             this.EscapeGapCloserNIN = true;
             this.EscapeGapCloserRPR = true;
             this.EscapeGapCloserVPR = true;
-            this.Version = 7;
-        }
-
-        if (this.Version < 8)
-        {
             this.EscapeGapCloserBLM = true;
             this.EscapeGapCloserSGE = true;
             this.EscapeGapCloserPCT = true;
-            this.Version = 8;
-        }
-
-        if (this.Version < 9)
-        {
-            this.GapCloserDNC = true;
             this.EscapeGapCloserDNC = true;
-            this.Version = 9;
-        }
-
-        if (this.Version < 10)
-        {
-            this.Version = 10;
-        }
-
-        if (this.Version < 11)
-        {
             this.MinimumReengageGapCloserDistance = DefaultMinimumReengageGapCloserDistance;
             this.MinimumEscapeGapCloserDistance = DefaultMinimumEscapeGapCloserDistance;
-            this.Version = 11;
-        }
-
-        if (this.Version < 12)
-        {
             this.RespectManualMovement = true;
-            this.Version = 12;
-        }
-
-        if (this.Version < 13)
-        {
             this.ManageAoePackPositioning = true;
-            this.ManagePartyGravityPositioning = true;
-            this.ManageHealerAoePositioning = true;
+            this.ManageHealerCoverageZone = true;
             this.ManageDefensiveGroundZonePositioning = true;
             this.ManagePassageOfArmsPositioning = true;
             this.PickBetterAoeTarget = false;
             this.KeepTrashTargetSelected = true;
+            this.ManageAggroSafetyMovement = true;
             this.AvoidStandingInsideEnemies = true;
             this.AvoidArenaEdge = true;
+            this.AvoidBossFrontalCone = true;
             this.ShowDecisionOverlay = false;
             this.ShowDecisionOverlayHud = false;
+            this.ApplyCompatibilityValues();
             this.Version = 13;
-        }
-
-        if (this.Version < 14)
-        {
-            this.AvoidBossFrontalCone = true;
-            this.Version = 14;
         }
     }
 
@@ -286,8 +254,7 @@ public sealed class Configuration : IPluginConfiguration
         this.EchoStatusToChat = true;
         this.CombatStyle = CombatStyle.Normal;
         this.ManageAoePackPositioning = true;
-        this.ManagePartyGravityPositioning = true;
-        this.ManageHealerAoePositioning = true;
+        this.ManageHealerCoverageZone = true;
         this.ManageDefensiveGroundZonePositioning = true;
         this.ManagePassageOfArmsPositioning = true;
         this.PickBetterAoeTarget = false;
@@ -295,9 +262,39 @@ public sealed class Configuration : IPluginConfiguration
         this.ManageAggroSafetyMovement = true;
         this.AvoidStandingInsideEnemies = true;
         this.AvoidArenaEdge = true;
+        this.AvoidBossFrontalCone = true;
         this.ShowDecisionOverlay = false;
         this.ShowDecisionOverlayHud = false;
         this.ResetBehaviorSettings();
+    }
+
+    private void ApplyCompatibilityValues()
+    {
+        if (this.manageSurvivabilityZonePositioningCompatibility.HasValue)
+        {
+            this.ManageDefensiveGroundZonePositioning = this.manageSurvivabilityZonePositioningCompatibility.Value;
+            this.ManagePassageOfArmsPositioning = this.manageSurvivabilityZonePositioningCompatibility.Value;
+        }
+
+        if (this.manageMultiTargetTargetingCompatibility.HasValue)
+        {
+            this.KeepTrashTargetSelected = this.manageMultiTargetTargetingCompatibility.Value;
+        }
+
+        if (this.aoePackPositioningControlRsrTargetCompatibility.HasValue)
+        {
+            this.PickBetterAoeTarget = this.aoePackPositioningControlRsrTargetCompatibility.Value;
+        }
+
+        if (this.manageTrueNorthInRsrCompatibility.HasValue)
+        {
+            this.ManageTrueNorth = this.manageTrueNorthInRsrCompatibility.Value;
+        }
+
+        if (this.manageHealerAoePositioningCompatibility.HasValue)
+        {
+            this.ManageHealerCoverageZone = this.manageHealerAoePositioningCompatibility.Value;
+        }
     }
 
     internal void Save(IDalamudPluginInterface pluginInterface)

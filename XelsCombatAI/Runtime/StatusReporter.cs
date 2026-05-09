@@ -9,7 +9,7 @@ internal static class StatusReporter
 {
     public static string Build(RuntimeStatus status)
     {
-        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={status.LastPositional}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, TargetUptime={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, AoEPack={status.AoePackPositioning.LastReason}, HealerAoE={status.HealerAoePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, PartyGravity={status.PartyGravityPositioning.LastReason}, AggroSafety={status.AggroSafety.LastReason}, Initialized={status.InitializedPreset}";
+        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={status.LastPositional}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, TargetUptime={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, AoEPack={status.AoePackPositioning.LastReason}, HealerCoverage={status.HealerCoveragePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, AggroSafety={status.AggroSafety.LastReason}, Initialized={status.InitializedPreset}";
     }
 
     public static string BuildDebug(Configuration config, RuntimeStatus status)
@@ -49,10 +49,6 @@ internal static class StatusReporter
         Append(builder, "LastLeylinesBetweenTheLines", status.LastLeylinesBetweenTheLines);
         Append(builder, "LastLeylinesRetrace", status.LastLeylinesRetrace);
         Append(builder, "LastLeylinesGoal", status.LastLeylinesGoal);
-        Append(builder, "LastHealerHeal", status.LastHealerHeal);
-        Append(builder, "LastHealerEsuna", status.LastHealerEsuna);
-        Append(builder, "LastHealerOutOfCombat", status.LastHealerOutOfCombat);
-        Append(builder, "LastHealerRaise", status.LastHealerRaise);
         builder.AppendLine();
 
         AppendSection(builder, "Gap Closer State");
@@ -87,8 +83,7 @@ internal static class StatusReporter
         Append(builder, "RotationSolverAction", status.AoePackPositioning.RsrReflectionDiagnostics);
         Append(builder, "AoePackGoalMembers", status.AoePackPositioning.LastReason);
         Append(builder, "PassageGoalMembers", status.PassageOfArmsPositioning.LastReason);
-        Append(builder, "PartyGravityGoalMembers", status.PartyGravityPositioning.LastReason);
-        Append(builder, "HealerAoeGoalMembers", status.HealerAoePositioning.LastReason);
+        Append(builder, "HealerCoverageGoalMembers", status.HealerCoveragePositioning.LastReason);
         Append(builder, "SurvivabilityZoneGoalMembers", status.SurvivabilityZonePositioning.LastReason);
         Append(builder, "AggroSafetyGoalMembers", status.AggroSafety.LastReason);
         Append(builder, "BossFrontalCone", status.BossFrontalConeReason);
@@ -121,24 +116,13 @@ internal static class StatusReporter
         Append(builder, "PlayerInCone", status.PassageOfArmsPositioning.PlayerInCone);
         builder.AppendLine();
 
-        AppendSection(builder, "Party Gravity Positioning");
-        Append(builder, "HookState", status.PartyGravityPositioning.HookState);
-        Append(builder, "LastReason", status.PartyGravityPositioning.LastReason);
-        Append(builder, "Injected", status.PartyGravityPositioning.Injected);
-        Append(builder, "PartyMembers", status.PartyGravityPositioning.PartyMembers);
-        Append(builder, "PartyListMembers", status.PartyGravityPositioning.PartyListMembers);
-        Append(builder, "DutySupportMembers", status.PartyGravityPositioning.DutySupportMembers);
-        Append(builder, "ClusterMembers", status.PartyGravityPositioning.ClusterMembers);
-        Append(builder, "DistanceToCluster", status.PartyGravityPositioning.DistanceToCluster);
-        builder.AppendLine();
-
-        AppendSection(builder, "Healer AoE Positioning");
-        Append(builder, "HookState", status.HealerAoePositioning.HookState);
-        Append(builder, "LastReason", status.HealerAoePositioning.LastReason);
-        Append(builder, "Injected", status.HealerAoePositioning.Injected);
-        Append(builder, "PartyMembers", status.HealerAoePositioning.PartyMembers);
-        Append(builder, "CurrentHits", status.HealerAoePositioning.CurrentHits);
-        Append(builder, "BestHits", status.HealerAoePositioning.BestHits);
+        AppendSection(builder, "Healer Coverage Zone");
+        Append(builder, "HookState", status.HealerCoveragePositioning.HookState);
+        Append(builder, "LastReason", status.HealerCoveragePositioning.LastReason);
+        Append(builder, "Injected", status.HealerCoveragePositioning.Injected);
+        Append(builder, "PartyMembers", status.HealerCoveragePositioning.PartyMembers);
+        Append(builder, "CoveredMembers", status.HealerCoveragePositioning.CoveredMembers);
+        Append(builder, "DistanceToCoveragePosition", status.HealerCoveragePositioning.DistanceToCenter);
         builder.AppendLine();
 
         AppendSection(builder, "Survivability Zone Positioning");
@@ -148,6 +132,7 @@ internal static class StatusReporter
         Append(builder, "ZoneName", status.SurvivabilityZonePositioning.ZoneName);
         Append(builder, "CasterName", status.SurvivabilityZonePositioning.CasterName);
         Append(builder, "DistanceToCenter", status.SurvivabilityZonePositioning.DistanceToCenter);
+        Append(builder, "Diagnostics", status.SurvivabilityZonePositioning.Diagnostics);
         builder.AppendLine();
 
         AppendSection(builder, "Aggro Safety");

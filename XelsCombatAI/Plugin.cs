@@ -78,13 +78,12 @@ public sealed class Plugin : IDalamudPlugin
         var escapeGapCloserController = new EscapeGapCloserController(this.config, this.services, bossModSafety, gapCloserController);
         var aoePackPositioningController = new AoePackPositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), this.jobRangeProvider);
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
-        var partyGravityPositioningController = new PartyGravityPositioningController(this.config, this.services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true, targetUptimePlanner.ShouldDeferPartyGravityForMeleeUptime);
-        var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, new RotationSolverActionReflection(PluginInterface, Log), () => runtime?.AutomatedMovementSuppressed == true);
+        var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var aggroSafetyController = new AggroSafetyController(this.config, this.services);
         var bossFrontalConeController = new BossFrontalConeController(this.config, this.services, bossMod);
         var arenaEdgePositioningController = new ArenaEdgePositioningController(this.config, this.services);
-        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, [aggroSafetyController, bossFrontalConeController, aoePackPositioningController, passageOfArmsPositioningController, partyGravityPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController]);
+        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, [aggroSafetyController, bossFrontalConeController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController]);
         presetController = new BossModPresetController(
             this.config,
             this.services,
@@ -105,7 +104,6 @@ public sealed class Plugin : IDalamudPlugin
             aoeGoalHook,
             aoePackPositioningController,
             passageOfArmsPositioningController,
-            partyGravityPositioningController,
             healerAoePositioningController,
             survivabilityZonePositioningController,
             aggroSafetyController,
@@ -123,7 +121,6 @@ public sealed class Plugin : IDalamudPlugin
             this.services,
             aoePackPositioningController,
             passageOfArmsPositioningController,
-            partyGravityPositioningController,
             healerAoePositioningController,
             survivabilityZonePositioningController,
             bossModSafety,

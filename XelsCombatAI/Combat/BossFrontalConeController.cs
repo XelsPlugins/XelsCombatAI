@@ -114,6 +114,12 @@ internal sealed class BossFrontalConeController(Configuration config, DalamudSer
             return;
         }
 
+        if (boss.HitboxRadius > 6f)
+        {
+            this.lastReason = "boss too large to avoid front";
+            return;
+        }
+
         this.bossPosition = new Vector2(boss.Position.X, boss.Position.Z);
         this.bossRotation = boss.Rotation;
         this.bossReach = boss.HitboxRadius + 10f;
@@ -125,12 +131,6 @@ internal sealed class BossFrontalConeController(Configuration config, DalamudSer
         if (bossTargetId != selectedTank.GameObjectId)
         {
             this.lastReason = "boss not targeting tank";
-            return;
-        }
-
-        if (!this.IsPositionInFrontalCone(selectedTank.Position))
-        {
-            this.lastReason = "tank not in frontal cone";
             return;
         }
 

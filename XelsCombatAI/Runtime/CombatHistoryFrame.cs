@@ -22,18 +22,11 @@ internal sealed record CombatHistoryFrame(
     // Gap closers
     string GapSafety,
     string EscapeSafety,
-    // Party gravity
-    string PartyGravityReason,
-    bool PartyGravityInjected,
-    int PartyGravityMembers,
-    int PartyGravityClusterMembers,
-    int PartyGravityDutySupportMembers,
-    // Healer AoE
-    string HealerAoeReason,
-    bool HealerAoeInjected,
-    int HealerAoeMembers,
-    int HealerAoeCurrentHits,
-    int HealerAoeBestHits,
+    // Healer coverage zone
+    string HealerCoverageReason,
+    bool HealerCoverageInjected,
+    int HealerCoverageMembers,
+    float HealerCoverageDist,
     // AoE pack
     string Reason,
     bool Henched,
@@ -42,4 +35,20 @@ internal sealed record CombatHistoryFrame(
     int BestHits,
     bool Injected,
     string ActionName,
-    string Shape);
+    string Shape,
+    // Survivability zone
+    string SurvZoneReason,
+    bool SurvZoneInjected,
+    string SurvZoneName,
+    float SurvZoneDistance,
+    // Passage of arms
+    string PassageReason,
+    bool PassageInjected,
+    float PassageDistance,
+    bool PassageInCone,
+    // Aggro safety
+    string AggroReason,
+    bool AggroInjected,
+    float AggroSeconds,
+    // Boss frontal cone
+    string BossFrontalReason);
