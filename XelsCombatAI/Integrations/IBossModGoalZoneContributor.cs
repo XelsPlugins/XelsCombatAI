@@ -21,6 +21,10 @@ internal interface IBossModGoalZoneContributor
     {
     }
 
+    void SetBossModEncounterState(bool activeModule)
+    {
+    }
+
     void TryInjectGoal(object hints, ICollection<BossModGoalContribution> contributions);
 
     void Reset();

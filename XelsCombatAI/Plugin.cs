@@ -64,6 +64,7 @@ public sealed class Plugin : IDalamudPlugin
 
         var bossMod = new BossModIpc(PluginInterface);
         var bossModSafety = new BossModReflectionSafety(PluginInterface, Log);
+        var vnavmesh = new VNavmeshIpc(PluginInterface);
         var manualMovement = new ManualMovementInputDetector();
         var rotationSolver = new RotationSolverIpc(PluginInterface);
         var rotationSolverActions = new RotationSolverActionReflection(PluginInterface, Log);
@@ -74,15 +75,15 @@ public sealed class Plugin : IDalamudPlugin
         BossModPresetController? presetController = null;
         CombatRuntime? runtime = null;
         var positionalsController = new PositionalsController(this.config, this.services, rotationSolver, positional => presetController!.SetPositional(positional), this.UpdateDtr);
-        var gapCloserController = new GapCloserController(this.config, this.services, bossMod, bossModSafety);
-        var escapeGapCloserController = new EscapeGapCloserController(this.config, this.services, bossModSafety, gapCloserController);
+        var gapCloserController = new GapCloserController(this.config, this.services, bossMod, bossModSafety, vnavmesh, this.jobRangeProvider);
+        var escapeGapCloserController = new EscapeGapCloserController(this.config, this.services, bossModSafety, vnavmesh, gapCloserController);
         var aoePackPositioningController = new AoePackPositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), this.jobRangeProvider);
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var aggroSafetyController = new AggroSafetyController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var arenaEdgePositioningController = new ArenaEdgePositioningController(this.config, this.services);
-        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, [aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController]);
+        var aoeGoalHook = new BossModGoalZoneHook(this.config, PluginInterface, this.services, Log, vnavmesh, [aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController]);
         var combatLogWriter = new CombatLogWriter(Path.Combine(ResolveConfigDirectory(), "combat-logs"), Log);
         presetController = new BossModPresetController(
             this.config,

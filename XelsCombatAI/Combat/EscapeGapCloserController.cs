@@ -8,7 +8,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace XelsCombatAI.Combat;
 
-internal sealed class EscapeGapCloserController(Configuration config, DalamudServices services, BossModReflectionSafety bossModSafety, GapCloserController gapCloserController)
+internal sealed class EscapeGapCloserController(Configuration config, DalamudServices services, BossModReflectionSafety bossModSafety, VNavmeshIpc vnavmesh, GapCloserController gapCloserController)
 {
     private DateTime nextEscapeGapCloserAttempt = DateTime.MinValue;
     private DateTime escapeDangerDetectedAt = DateTime.MinValue;
@@ -99,6 +99,13 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
             return false;
         }
 
+        if (config.GuardUnknownBossNavigationWithVnavmesh && gapCloserController.HasNearbyUnknownBossLikeThreat(player.Position))
+        {
+            this.lastEscapeGapCloserSafety = "unknown boss module; escape dash disabled";
+            this.lastSafeEscapeDestination = null;
+            return false;
+        }
+
         return classJobId switch
         {
             2 or 20 when config.EscapeGapCloserMNK => this.TryUseFriendlyEscapeGapCloser(ActionUse.MonkThunderclapActionId, CombatConstants.GapCloserMaxRange, safeMovementDestination),
@@ -114,7 +121,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         };
     }
 
-    public static bool TryValidateEscapeDestination(DalamudServices services, BossModReflectionSafety bossModSafety, Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, float minimumDistance, out string reason)
+    public static bool TryValidateEscapeDestination(Configuration config, DalamudServices services, BossModReflectionSafety bossModSafety, VNavmeshIpc vnavmesh, Vector3 playerPosition, Vector3 destination, Vector3 safeMovementDestination, float minimumDistance, out string reason)
     {
         _ = services;
         if (!IsUsefulEscapeDestination(playerPosition, destination, safeMovementDestination, minimumDistance, out reason))
@@ -139,6 +146,13 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
             return false;
         }
 
+        if (config.GuardUnknownBossNavigationWithVnavmesh &&
+            !vnavmesh.TryValidateReachable(playerPosition, destination, out var vnavmeshReason))
+        {
+            reason = vnavmeshReason;
+            return false;
+        }
+
         return true;
     }
 
@@ -158,7 +172,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
 
         foreach (var ally in this.EnumerateFriendlyEscapeTargets(player, maxRange))
         {
-            if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, ally.Position, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
+            if (!TryValidateEscapeDestination(config, services, bossModSafety, vnavmesh, player.Position, ally.Position, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
             {
                 this.lastEscapeGapCloserSafety = reason;
                 continue;
@@ -199,7 +213,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
 
         foreach (var candidate in this.EnumerateEscapeLocationCandidates(player.Position, maxRange))
         {
-            if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, candidate, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
+            if (!TryValidateEscapeDestination(config, services, bossModSafety, vnavmesh, player.Position, candidate, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
             {
                 this.lastEscapeGapCloserSafety = reason;
                 continue;
@@ -235,7 +249,7 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         }
 
         var destination = player.Position + Geometry.RotationToDirection(player.Rotation) * CombatConstants.FixedForwardGapCloserRange;
-        if (!TryValidateEscapeDestination(services, bossModSafety, player.Position, destination, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
+        if (!TryValidateEscapeDestination(config, services, bossModSafety, vnavmesh, player.Position, destination, safeMovementDestination, config.MinimumEscapeGapCloserDistance, out var reason))
         {
             this.lastEscapeGapCloserSafety = reason;
             return false;

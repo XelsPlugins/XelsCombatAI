@@ -87,6 +87,7 @@ internal static class StatusReporter
         Append(builder, "BossModNavigationDestination", status.BossModMovement.NavigationDestination);
         Append(builder, "BossModNavigationNextWaypoint", status.BossModMovement.NavigationNextWaypoint);
         Append(builder, "BossModNavigationStats", status.BossModMovement.NavigationStats);
+        Append(builder, "BossModVnavmeshGuard", status.BossModMovement.VnavmeshGuard);
         Append(builder, "BossModControllerTarget", status.BossModMovement.ControllerTarget);
         Append(builder, "BossModMovementOverride", status.BossModMovement.MovementOverride);
         Append(builder, "BossModHintSummary", status.BossModMovement.HintSummary);

@@ -74,6 +74,7 @@ internal sealed record CombatHistoryFrame(
     string BossModNavigationDestination,
     string BossModNavigationNextWaypoint,
     string BossModNavigationStats,
+    string BossModVnavmeshGuard,
     string BossModControllerTarget,
     string BossModMovementOverride,
     string BossModHintSummary,

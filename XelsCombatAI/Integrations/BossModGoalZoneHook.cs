@@ -6,7 +6,10 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Numerics;
 using System.Reflection;
+using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 
@@ -18,6 +21,7 @@ internal sealed record BossModMovementDiagnostics(
     string NavigationDestination,
     string NavigationNextWaypoint,
     string NavigationStats,
+    string VnavmeshGuard,
     string ControllerTarget,
     string MovementOverride,
     string HintSummary,
@@ -34,6 +38,7 @@ internal sealed record BossModMovementDiagnostics(
         "<none>",
         "<none>",
         "<none>",
+        "disabled",
         "<none>",
         "<none>",
         "<none>",
@@ -123,8 +128,10 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private const int MaxFailures = 3;
 
     private readonly IDalamudPluginInterface pluginInterface;
+    private readonly Configuration config;
     private readonly DalamudServices services;
     private readonly IPluginLog log;
+    private readonly VNavmeshIpc vnavmesh;
     private readonly IReadOnlyList<IBossModGoalZoneContributor> contributors;
     private DateTime nextResolveAttempt = DateTime.MinValue;
     private int failures;
@@ -132,11 +139,13 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private string status = "unresolved";
     private ReflectedDraw? draw;
 
-    public BossModGoalZoneHook(IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, IReadOnlyList<IBossModGoalZoneContributor> contributors)
+    public BossModGoalZoneHook(Configuration config, IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, VNavmeshIpc vnavmesh, IReadOnlyList<IBossModGoalZoneContributor> contributors)
     {
+        this.config = config;
         this.pluginInterface = pluginInterface;
         this.services = services;
         this.log = log;
+        this.vnavmesh = vnavmesh;
         this.contributors = contributors;
         this.SetContributorHookState(this.status);
     }
@@ -183,7 +192,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.contributors, this.services, this.log, out var reason);
+            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.services, this.log, this.vnavmesh, out var reason);
             if (reflectedDraw == null)
             {
                 this.SetStatus(reason);
@@ -275,9 +284,11 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly IDalamudPluginInterface bmrPluginInterface;
         private readonly Action originalDraw;
         private readonly Action wrapperDraw;
+        private readonly Configuration config;
         private readonly IReadOnlyList<IBossModGoalZoneContributor> contributors;
         private readonly DalamudServices services;
         private readonly IPluginLog log;
+        private readonly VNavmeshIpc vnavmesh;
         private readonly MethodInfo executeHintsMethod;
         private readonly FieldInfo previousUpdateTimeField;
         private readonly object dtr;
@@ -292,9 +303,15 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly object ai;
         private readonly object broadcast;
         private readonly object movementOverride;
+        private readonly FieldInfo? aiControllerField;
+        private readonly FieldInfo? controllerNaviTargetPosField;
+        private readonly FieldInfo? controllerNaviTargetVerticalField;
+        private readonly FieldInfo? hintsForcedMovementField;
+        private readonly FieldInfo? movementDesiredDirectionField;
         private readonly MethodInfo dtrUpdateMethod;
         private readonly MethodInfo worldStateSyncUpdateMethod;
         private readonly MethodInfo bossModuleUpdateMethod;
+        private readonly PropertyInfo? activeBossModuleProperty;
         private readonly FieldInfo activeZoneModuleField;
         private readonly MethodInfo? activeZoneModuleUpdateMethod;
         private readonly MethodInfo hintsBuilderUpdateMethod;
@@ -317,26 +334,40 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly PropertyInfo? gameUiHiddenProperty;
         private readonly FieldInfo? windowSystemField;
         private readonly MethodInfo? windowSystemDrawMethod;
+        private Task<List<Vector3>>? vnavPathfindTask;
+        private Vector3 vnavPathfindStart;
+        private Vector3 vnavPathfindDestination;
+        private DateTime vnavPathfindStarted = DateTime.MinValue;
+        private string vnavmeshGuardStatus = "not checked";
         private string lastGoalPriority = "None";
         private string lastGoalSources = "<none>";
         private BossModMovementDiagnostics movementDiagnostics = BossModMovementDiagnostics.Empty;
+        private static readonly TimeSpan VnavPathfindCacheDuration = TimeSpan.FromSeconds(1);
+        private const float VnavPathfindDestinationTolerance = 1.5f;
+        private const float VnavPathfindStartTolerance = 5f;
+        private const float UnknownBossHitboxRadius = 4f;
+        private const float UnknownBossThreatRadius = 80f;
 
         private ReflectedDraw(
             object plugin,
             IDalamudPluginInterface bmrPluginInterface,
             Action originalDraw,
+            Configuration config,
             IReadOnlyList<IBossModGoalZoneContributor> contributors,
             DalamudServices services,
             IPluginLog log,
+            VNavmeshIpc vnavmesh,
             ReflectedMembers members)
         {
             this.plugin = plugin;
             this.bmrPluginInterface = bmrPluginInterface;
             this.originalDraw = originalDraw;
             this.wrapperDraw = this.Draw;
+            this.config = config;
             this.contributors = contributors;
             this.services = services;
             this.log = log;
+            this.vnavmesh = vnavmesh;
             this.executeHintsMethod = members.ExecuteHintsMethod;
             this.previousUpdateTimeField = members.PreviousUpdateTimeField;
             this.dtr = members.Dtr;
@@ -351,9 +382,15 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.ai = members.Ai;
             this.broadcast = members.Broadcast;
             this.movementOverride = members.MovementOverride;
+            this.aiControllerField = members.AiControllerField;
+            this.controllerNaviTargetPosField = members.ControllerNaviTargetPosField;
+            this.controllerNaviTargetVerticalField = members.ControllerNaviTargetVerticalField;
+            this.hintsForcedMovementField = members.HintsForcedMovementField;
+            this.movementDesiredDirectionField = members.MovementDesiredDirectionField;
             this.dtrUpdateMethod = members.DtrUpdateMethod;
             this.worldStateSyncUpdateMethod = members.WorldStateSyncUpdateMethod;
             this.bossModuleUpdateMethod = members.BossModuleUpdateMethod;
+            this.activeBossModuleProperty = members.ActiveBossModuleProperty;
             this.activeZoneModuleField = members.ActiveZoneModuleField;
             this.activeZoneModuleUpdateMethod = members.ActiveZoneModuleUpdateMethod;
             this.hintsBuilderUpdateMethod = members.HintsBuilderUpdateMethod;
@@ -382,7 +419,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         public string LastGoalSources => this.lastGoalSources;
         public BossModMovementDiagnostics MovementDiagnostics => this.movementDiagnostics;
 
-        public static ReflectedDraw? TryCreate(object plugin, IReadOnlyList<IBossModGoalZoneContributor> contributors, DalamudServices services, IPluginLog log, out string reason)
+        public static ReflectedDraw? TryCreate(object plugin, Configuration config, IReadOnlyList<IBossModGoalZoneContributor> contributors, DalamudServices services, IPluginLog log, VNavmeshIpc vnavmesh, out string reason)
         {
             reason = string.Empty;
             const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -441,6 +478,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             members.DtrUpdateMethod = Require(members.Dtr.GetType().GetMethod("Update", InstanceFlags), "DTR.Update");
             members.WorldStateSyncUpdateMethod = Require(members.WorldStateSync.GetType().GetMethod("Update", InstanceFlags), "WorldStateSync.Update");
             members.BossModuleUpdateMethod = Require(members.BossModuleManager.GetType().GetMethod("Update", InstanceFlags), "BossModuleManager.Update");
+            members.ActiveBossModuleProperty = members.BossModuleManager.GetType().GetProperty("ActiveModule", InstanceFlags);
             members.ActiveZoneModuleField = Require(members.ZoneModuleManager.GetType().GetField("ActiveModule", InstanceFlags), "ZoneModuleManager.ActiveModule");
             members.ActiveZoneModuleUpdateMethod = members.ActiveZoneModuleField.FieldType.GetMethod("Update", InstanceFlags);
             members.HintsBuilderUpdateMethod = Require(members.HintsBuilder.GetType().GetMethod("Update", InstanceFlags, null, [hintsType, typeof(int), typeof(bool)], null), "AIHintsBuilder.Update");
@@ -453,6 +491,12 @@ internal sealed class BossModGoalZoneHook : IDisposable
             members.IsMoveRequestedMethod = Require(members.MovementOverride.GetType().GetMethod("IsMoveRequested", InstanceFlags), "MovementOverride.IsMoveRequested");
             members.IsForceUnblockedMethod = Require(members.MovementOverride.GetType().GetMethod("IsForceUnblocked", InstanceFlags), "MovementOverride.IsForceUnblocked");
             members.IsMovingMethod = Require(members.MovementOverride.GetType().GetMethod("IsMoving", InstanceFlags), "MovementOverride.IsMoving");
+            members.AiControllerField = members.Ai.GetType().GetField("Controller", InstanceFlags);
+            var controller = members.AiControllerField?.GetValue(members.Ai);
+            members.ControllerNaviTargetPosField = controller?.GetType().GetField("NaviTargetPos", InstanceFlags);
+            members.ControllerNaviTargetVerticalField = controller?.GetType().GetField("NaviTargetVertical", InstanceFlags);
+            members.HintsForcedMovementField = hintsType.GetField("ForcedMovement", InstanceFlags);
+            members.MovementDesiredDirectionField = members.MovementOverride.GetType().GetField("DesiredDirection", InstanceFlags);
             var cameraInstance = members.CameraInstanceField?.GetValue(null);
             members.CameraUpdateMethod = cameraInstance?.GetType().GetMethod("Update", InstanceFlags);
             members.CameraDrawWorldPrimitivesMethod = cameraInstance?.GetType().GetMethod("DrawWorldPrimitives", InstanceFlags);
@@ -461,7 +505,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             try
             {
-                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, contributors, services, log, members);
+                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, services, log, vnavmesh, members);
             }
             catch (Exception ex)
             {
@@ -512,10 +556,15 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.cameraUpdateMethod?.Invoke(camera, []);
             this.worldStateSyncUpdateMethod.Invoke(this.worldStateSync, [this.previousUpdateTimeField.GetValue(this.plugin)]);
             this.bossModuleUpdateMethod.Invoke(this.bossModuleManager, []);
-            var activeModule = this.activeZoneModuleField.GetValue(this.zoneModuleManager);
-            if (activeModule != null)
+            var activeBossModule = this.activeBossModuleProperty?.GetValue(this.bossModuleManager);
+            var activeZoneModule = this.activeZoneModuleField.GetValue(this.zoneModuleManager);
+            if (activeZoneModule != null)
             {
-                this.activeZoneModuleUpdateMethod?.Invoke(activeModule, []);
+                this.activeZoneModuleUpdateMethod?.Invoke(activeZoneModule, []);
+            }
+            foreach (var contributor in this.contributors)
+            {
+                contributor.SetBossModEncounterState(activeBossModule != null || activeZoneModule != null);
             }
 
             this.hintsBuilderUpdateMethod.Invoke(this.hintsBuilder, [this.hints, (int)this.playerSlotField.GetRawConstantValue()!, moveImminent]);
@@ -523,7 +572,8 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.queueManualActionsMethod.Invoke(this.actionManager, []);
             this.rotationUpdateMethod.Invoke(this.rotation, [this.animationLockDelayEstimateProperty.GetValue(this.actionManager), (bool)this.isMovingMethod.Invoke(this.movementOverride, [])!, this.services.Condition[ConditionFlag.DutyRecorderPlayback]]);
             this.aiUpdateMethod.Invoke(this.ai, []);
-            this.CaptureMovementDiagnostics(activeModule);
+            this.ApplyVnavmeshReachabilityGuard(activeBossModule);
+            this.CaptureMovementDiagnostics(activeBossModule);
             this.broadcastUpdateMethod.Invoke(this.broadcast, []);
             this.finishActionGatherMethod.Invoke(this.actionManager, []);
 
@@ -570,6 +620,209 @@ internal sealed class BossModGoalZoneHook : IDisposable
             goalZones.Add(CreateAdvisoryGoalDelegate(activeContributions));
         }
 
+        private void ApplyVnavmeshReachabilityGuard(object? activeModule)
+        {
+            if (!this.config.Enabled || !this.config.ManageMovement || !this.config.GuardUnknownBossNavigationWithVnavmesh)
+            {
+                this.vnavmeshGuardStatus = "disabled";
+                return;
+            }
+
+            if (this.activeBossModuleProperty == null)
+            {
+                this.vnavmeshGuardStatus = "BMR active module unavailable";
+                return;
+            }
+
+            if (activeModule != null)
+            {
+                this.vnavmeshGuardStatus = "known encounter module";
+                return;
+            }
+
+            var player = this.services.ObjectTable.LocalPlayer;
+            if (!this.services.Condition[ConditionFlag.InCombat] || player == null)
+            {
+                this.vnavmeshGuardStatus = "not in combat";
+                return;
+            }
+
+            var controller = this.aiControllerField?.GetValue(this.ai);
+            var rawDestination = this.controllerNaviTargetPosField?.GetValue(controller);
+            var destination2D = ReadWPos(rawDestination);
+            var start = player.Position;
+            Vector3 destination;
+            string destinationSource;
+            if (destination2D.HasValue)
+            {
+                destination = new Vector3(destination2D.Value.X, start.Y, destination2D.Value.Y);
+                destinationSource = "BMR navigation target";
+            }
+            else
+            {
+                var forcedMovement = ReadVector3(this.hintsForcedMovementField?.GetValue(this.hints) ?? this.movementDesiredDirectionField?.GetValue(this.movementOverride));
+                if (!forcedMovement.HasValue || ((forcedMovement.Value.X * forcedMovement.Value.X) + (forcedMovement.Value.Z * forcedMovement.Value.Z)) < 0.0625f)
+                {
+                    this.vnavmeshGuardStatus = "no BMR movement target";
+                    return;
+                }
+
+                destination = new Vector3(start.X + forcedMovement.Value.X, start.Y, start.Z + forcedMovement.Value.Z);
+                destinationSource = "BMR forced movement";
+            }
+
+            if (Distance2D(start, destination) < 0.25f)
+            {
+                this.vnavmeshGuardStatus = $"{destinationSource} already reached";
+                return;
+            }
+
+            var statusPrefix = string.Empty;
+            if (this.ShouldBlockUnknownBossMovement(player, start, destination, out var unknownBossReason))
+            {
+                this.vnavmeshGuardStatus = this.SuppressBossModNavigation(controller)
+                    ? $"blocked {unknownBossReason} {destinationSource} {FormatVector(destination)}"
+                    : $"{unknownBossReason} suppress failed {destinationSource} {FormatVector(destination)}";
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(unknownBossReason))
+            {
+                statusPrefix = $"{unknownBossReason}; ";
+            }
+
+            if (!this.vnavmesh.IsReady())
+            {
+                this.vnavmeshGuardStatus = $"{statusPrefix}vnavmesh unavailable";
+                return;
+            }
+
+            this.EnsureVnavmeshPathfindTask(start, destination);
+            if (this.vnavPathfindTask == null)
+            {
+                this.vnavmeshGuardStatus = $"{statusPrefix}vnavmesh pathfind unavailable";
+                return;
+            }
+
+            if (!this.vnavPathfindTask.IsCompleted)
+            {
+                this.vnavmeshGuardStatus = this.SuppressBossModNavigation(controller)
+                    ? $"{statusPrefix}pending {destinationSource} {FormatVector(destination)}"
+                    : $"{statusPrefix}pending suppress failed {destinationSource} {FormatVector(destination)}";
+                return;
+            }
+
+            if (!this.vnavPathfindTask.IsCompletedSuccessfully || this.vnavPathfindTask.Result.Count == 0)
+            {
+                this.vnavmeshGuardStatus = this.SuppressBossModNavigation(controller)
+                    ? $"{statusPrefix}blocked unreachable {destinationSource} {FormatVector(destination)}"
+                    : $"{statusPrefix}blocked suppress failed {destinationSource} {FormatVector(destination)}";
+                return;
+            }
+
+            this.vnavmeshGuardStatus = $"{statusPrefix}reachable {destinationSource} {FormatVector(destination)}";
+        }
+
+        private bool ShouldBlockUnknownBossMovement(IGameObject player, Vector3 start, Vector3 destination, out string reason)
+        {
+            reason = string.Empty;
+            if (!this.HasNearbyUnknownBossLikeThreat(start))
+            {
+                return false;
+            }
+
+            if (this.IsDestinationTowardCurrentTarget(player, start, destination, out var targetApproachReason))
+            {
+                reason = $"unknown boss module target approach allowed {targetApproachReason}";
+                return false;
+            }
+
+            reason = "unknown boss module";
+            return true;
+        }
+
+        private bool IsDestinationTowardCurrentTarget(IGameObject player, Vector3 start, Vector3 destination, out string reason)
+        {
+            reason = string.Empty;
+            var target = this.services.TargetManager.Target;
+            if (target == null)
+            {
+                return false;
+            }
+
+            var currentDistance = Geometry.DistanceToHitbox(start, player.HitboxRadius, target.Position, target.HitboxRadius);
+            var destinationDistance = Geometry.DistanceToHitbox(destination, player.HitboxRadius, target.Position, target.HitboxRadius);
+            if (destinationDistance < currentDistance - 0.5f)
+            {
+                reason = string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"target distance {currentDistance:0.0}->{destinationDistance:0.0}");
+                return true;
+            }
+
+            reason = string.Create(
+                CultureInfo.InvariantCulture,
+                $"target distance {currentDistance:0.0}->{destinationDistance:0.0}");
+            return false;
+        }
+
+        private bool HasNearbyUnknownBossLikeThreat(Vector3 playerPosition)
+        {
+            foreach (var obj in this.services.ObjectTable.OfType<IBattleNpc>())
+            {
+                if (obj.BattleNpcKind != BattleNpcSubKind.Combatant)
+                {
+                    continue;
+                }
+
+                if (obj.HitboxRadius < UnknownBossHitboxRadius)
+                {
+                    continue;
+                }
+
+                if (Distance2D(playerPosition, obj.Position) <= UnknownBossThreatRadius)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void EnsureVnavmeshPathfindTask(Vector3 start, Vector3 destination)
+        {
+            var now = DateTime.UtcNow;
+            var destinationChanged = Distance2D(this.vnavPathfindDestination, destination) > VnavPathfindDestinationTolerance;
+            var startChanged = Distance2D(this.vnavPathfindStart, start) > VnavPathfindStartTolerance;
+            var cacheExpired = now - this.vnavPathfindStarted > VnavPathfindCacheDuration && this.vnavPathfindTask?.IsCompleted == true;
+            if (this.vnavPathfindTask != null && !destinationChanged && !startChanged && !cacheExpired)
+            {
+                return;
+            }
+
+            this.vnavPathfindStart = start;
+            this.vnavPathfindDestination = destination;
+            this.vnavPathfindStarted = now;
+            this.vnavPathfindTask = this.vnavmesh.Pathfind(start, destination);
+        }
+
+        private bool SuppressBossModNavigation(object? controller)
+        {
+            try
+            {
+                this.controllerNaviTargetPosField?.SetValue(controller, null);
+                this.controllerNaviTargetVerticalField?.SetValue(controller, null);
+                this.hintsForcedMovementField?.SetValue(this.hints, null);
+                this.movementDesiredDirectionField?.SetValue(this.movementOverride, null);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                this.vnavmeshGuardStatus = $"suppress failed: {ex.Message}";
+                return false;
+            }
+        }
+
         private void CaptureMovementDiagnostics(object? activeModule)
         {
             try
@@ -608,7 +861,9 @@ internal sealed class BossModGoalZoneHook : IDisposable
                         $"TTG={FormatNumber(timeToGoal)}",
                         $"PathMs={FormatTimeMs(pathfindTime)}",
                         $"RasterMs={FormatTimeMs(rasterizeTime)}",
-                        $"ForceMoveIn={FormatNumber(forceMovementIn)}"),
+                        $"ForceMoveIn={FormatNumber(forceMovementIn)}",
+                        $"VnavGuard={this.vnavmeshGuardStatus}"),
+                    this.vnavmeshGuardStatus,
                     string.Join(
                         ",",
                         $"Navi={FormatWPos(naviTarget)}",
@@ -784,6 +1039,13 @@ internal sealed class BossModGoalZoneHook : IDisposable
             var x = ReadFloatField(value, type, "X");
             var z = ReadFloatField(value, type, "Z");
             return x.HasValue && z.HasValue ? new Vector2(x.Value, z.Value) : null;
+        }
+
+        private static float Distance2D(Vector3 a, Vector3 b)
+        {
+            var dx = a.X - b.X;
+            var dz = a.Z - b.Z;
+            return MathF.Sqrt((dx * dx) + (dz * dz));
         }
 
         private static string FormatVector(object? value)
@@ -963,10 +1225,16 @@ internal sealed class BossModGoalZoneHook : IDisposable
             public object MovementOverride = null!;
             public object ActionManagerConfig = null!;
             public FieldInfo PlayerSlotField = null!;
+            public FieldInfo? AiControllerField;
+            public FieldInfo? ControllerNaviTargetPosField;
+            public FieldInfo? ControllerNaviTargetVerticalField;
+            public FieldInfo? HintsForcedMovementField;
+            public FieldInfo? MovementDesiredDirectionField;
 
             public MethodInfo DtrUpdateMethod = null!;
             public MethodInfo WorldStateSyncUpdateMethod = null!;
             public MethodInfo BossModuleUpdateMethod = null!;
+            public PropertyInfo? ActiveBossModuleProperty;
             public FieldInfo ActiveZoneModuleField = null!;
             public MethodInfo? ActiveZoneModuleUpdateMethod;
             public MethodInfo HintsBuilderUpdateMethod = null!;

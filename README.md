@@ -58,7 +58,7 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 ### Movement tab
 
-**Movement** — Control automatic movement, manual movement pause, movement timing, attack range, danger-zone spacing, party positioning, defensive ground effects, Passage of Arms, aggro safety, and weak edge-avoidance preferences.
+**Movement** — Control automatic movement, manual movement pause, movement timing, attack range, danger-zone spacing, party positioning, defensive ground effects, Passage of Arms, aggro safety, unknown-boss vnavmesh reachability guarding, and weak edge-avoidance preferences.
 
 ### AoE & Trash tab
 

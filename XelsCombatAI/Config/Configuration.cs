@@ -16,7 +16,7 @@ public sealed class Configuration : IPluginConfiguration
     public const float MinimumGapCloserDistanceMin = 0f;
     public const float MinimumGapCloserDistanceMax = 20f;
 
-    public int Version { get; set; } = 13;
+    public int Version { get; set; } = 16;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -44,11 +44,15 @@ public sealed class Configuration : IPluginConfiguration
     public bool GapCloserWHM { get; set; } = true;
     public bool UseEscapeGapCloser { get; set; } = false;
     public bool EscapeGapCloserMNK { get; set; } = true;
+    public bool EscapeGapCloserDRG { get; set; } = true;
     public bool EscapeGapCloserNIN { get; set; } = true;
+    public bool EscapeGapCloserSAM { get; set; } = true;
+    public bool EscapeGapCloserBRD { get; set; } = true;
     public bool EscapeGapCloserRPR { get; set; } = true;
     public bool EscapeGapCloserVPR { get; set; } = true;
     public bool EscapeGapCloserWHM { get; set; } = true;
     public bool EscapeGapCloserBLM { get; set; } = true;
+    public bool EscapeGapCloserRDM { get; set; } = true;
     public bool EscapeGapCloserSGE { get; set; } = true;
     public bool EscapeGapCloserDNC { get; set; } = true;
     public bool EscapeGapCloserPCT { get; set; } = true;
@@ -64,6 +68,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool PickBetterAoeTarget { get; set; } = false;
     public bool KeepTrashTargetSelected { get; set; } = true;
     public bool ManageAggroSafetyMovement { get; set; } = true;
+    public bool GuardUnknownBossNavigationWithVnavmesh { get; set; } = true;
     public bool AvoidStandingInsideEnemies { get; set; } = true;
     public bool AvoidArenaEdge { get; set; } = true;
     public bool ShowDecisionOverlay { get; set; } = false;
@@ -198,6 +203,26 @@ public sealed class Configuration : IPluginConfiguration
             this.ApplyCompatibilityValues();
             this.Version = 13;
         }
+
+        if (this.Version < 14)
+        {
+            this.GuardUnknownBossNavigationWithVnavmesh = true;
+            this.Version = 14;
+        }
+
+        if (this.Version < 15)
+        {
+            this.EscapeGapCloserRDM = true;
+            this.Version = 15;
+        }
+
+        if (this.Version < 16)
+        {
+            this.EscapeGapCloserDRG = true;
+            this.EscapeGapCloserSAM = true;
+            this.EscapeGapCloserBRD = true;
+            this.Version = 16;
+        }
     }
 
     internal void Clamp()
@@ -214,6 +239,7 @@ public sealed class Configuration : IPluginConfiguration
         this.ManageTargetUptime = true;
         this.ManageForbiddenZoneDistance = true;
         this.ManageAggroSafetyMovement = true;
+        this.GuardUnknownBossNavigationWithVnavmesh = true;
         this.PreferredForbiddenZoneDistance = DefaultPreferredForbiddenZoneDistance;
         this.MinimumReengageGapCloserDistance = DefaultMinimumReengageGapCloserDistance;
         this.MinimumEscapeGapCloserDistance = DefaultMinimumEscapeGapCloserDistance;
@@ -247,11 +273,15 @@ public sealed class Configuration : IPluginConfiguration
         this.GapCloserWHM = true;
         this.UseEscapeGapCloser = false;
         this.EscapeGapCloserMNK = true;
+        this.EscapeGapCloserDRG = true;
         this.EscapeGapCloserNIN = true;
+        this.EscapeGapCloserSAM = true;
+        this.EscapeGapCloserBRD = true;
         this.EscapeGapCloserRPR = true;
         this.EscapeGapCloserVPR = true;
         this.EscapeGapCloserWHM = true;
         this.EscapeGapCloserBLM = true;
+        this.EscapeGapCloserRDM = true;
         this.EscapeGapCloserSGE = true;
         this.EscapeGapCloserDNC = true;
         this.EscapeGapCloserPCT = true;
@@ -264,6 +294,7 @@ public sealed class Configuration : IPluginConfiguration
         this.PickBetterAoeTarget = false;
         this.KeepTrashTargetSelected = true;
         this.ManageAggroSafetyMovement = true;
+        this.GuardUnknownBossNavigationWithVnavmesh = true;
         this.AvoidStandingInsideEnemies = true;
         this.AvoidArenaEdge = true;
         this.ShowDecisionOverlay = false;

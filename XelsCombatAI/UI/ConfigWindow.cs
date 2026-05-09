@@ -275,6 +275,13 @@ internal sealed class ConfigWindow : Window, IDisposable
             "If an enemy targets you for more than 3 seconds, moves toward a party tank and lowers that enemy's target priority. Does nothing on tanks.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
+            "Block unreachable unknown-boss movement",
+            this.config.GuardUnknownBossNavigationWithVnavmesh,
+            this.defaultConfig.GuardUnknownBossNavigationWithVnavmesh,
+            v => this.config.GuardUnknownBossNavigationWithVnavmesh = v,
+            "When BossMod has no known encounter module, blocks automatic movement to destinations vnavmesh cannot path to. Does nothing if vnavmesh is unavailable.",
+            movementDisabledTooltip);
+        changed |= this.Checkbox(
             "Avoid standing inside bosses",
             this.config.AvoidStandingInsideEnemies,
             this.defaultConfig.AvoidStandingInsideEnemies,

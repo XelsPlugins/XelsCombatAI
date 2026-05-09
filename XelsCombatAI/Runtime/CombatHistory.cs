@@ -121,6 +121,7 @@ internal sealed class CombatHistory
             BossModNavigationDestination: status.BossModMovement.NavigationDestination,
             BossModNavigationNextWaypoint: status.BossModMovement.NavigationNextWaypoint,
             BossModNavigationStats: status.BossModMovement.NavigationStats,
+            BossModVnavmeshGuard: status.BossModMovement.VnavmeshGuard,
             BossModControllerTarget: status.BossModMovement.ControllerTarget,
             BossModMovementOverride: status.BossModMovement.MovementOverride,
             BossModHintSummary: status.BossModMovement.HintSummary,
@@ -182,6 +183,7 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "BMRDest", frame.BossModNavigationDestination, prev?.BossModNavigationDestination);
             AppendIfChanged(sb, "BMRNext", frame.BossModNavigationNextWaypoint, prev?.BossModNavigationNextWaypoint);
             AppendIfChanged(sb, "BMRNav", frame.BossModNavigationStats, prev?.BossModNavigationStats);
+            AppendIfChanged(sb, "BMRVnavGuard", frame.BossModVnavmeshGuard, prev?.BossModVnavmeshGuard);
             AppendIfChanged(sb, "BMRController", frame.BossModControllerTarget, prev?.BossModControllerTarget);
             AppendIfChanged(sb, "BMRMove", frame.BossModMovementOverride, prev?.BossModMovementOverride);
             AppendIfChanged(sb, "BMRHints", frame.BossModHintSummary, prev?.BossModHintSummary);

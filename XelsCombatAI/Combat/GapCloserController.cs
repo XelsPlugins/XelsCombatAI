@@ -9,8 +9,10 @@ using XelsCombatAI.Game;
 
 namespace XelsCombatAI.Combat;
 
-internal sealed class GapCloserController(Configuration config, DalamudServices services, BossModIpc bossMod, BossModReflectionSafety bossModSafety)
+internal sealed class GapCloserController(Configuration config, DalamudServices services, BossModIpc bossMod, BossModReflectionSafety bossModSafety, VNavmeshIpc vnavmesh, JobRangeProvider jobRangeProvider)
 {
+    private const float BossLikeHitboxRadius = 4f;
+
     private DateTime nextGapCloserAttempt = DateTime.MinValue;
     private string lastGapCloserSafety = "not checked";
     private Vector3? lastSafeLandingPosition;
@@ -48,6 +50,13 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
             return false;
         }
 
+        if (config.GuardUnknownBossNavigationWithVnavmesh && this.IsUnknownBossLikeTarget(target))
+        {
+            this.lastGapCloserSafety = "unknown boss module; gap closer disabled";
+            this.lastSafeLandingPosition = null;
+            return false;
+        }
+
         if (player.IsCasting)
         {
             this.lastGapCloserSafety = "player casting";
@@ -62,7 +71,8 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
 
         var distanceToHitbox = Geometry.DistanceToHitbox(player.Position, player.HitboxRadius, target.Position, target.HitboxRadius);
 
-        if (distanceToHitbox > CombatConstants.MeleeActionRange && PartyAllyProvider.GetVisiblePartyAllies(services, player).Members.Count >= 4)
+        var reengageRange = MathF.Max(CombatConstants.MeleeActionRange, jobRangeProvider.EngagementRange);
+        if (distanceToHitbox > reengageRange && PartyAllyProvider.GetVisiblePartyAllies(services, player).Members.Count >= 4)
         {
             var targetIsBoss = target is IBattleNpc bossCheck && bossMod.HasModuleByDataId(bossCheck.BaseId);
             if (!targetIsBoss)
@@ -76,9 +86,11 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
             }
         }
 
-        if (distanceToHitbox <= CombatConstants.MeleeActionRange || distanceToHitbox > CombatConstants.GapCloserMaxRange)
+        if (distanceToHitbox <= reengageRange || distanceToHitbox > CombatConstants.GapCloserMaxRange)
         {
-            this.lastGapCloserSafety = "target not in gap closer range";
+            this.lastGapCloserSafety = distanceToHitbox <= reengageRange
+                ? $"target within {reengageRange:0.#}y engagement range"
+                : "target not in gap closer range";
             this.lastSafeLandingPosition = null;
             return false;
         }
@@ -100,10 +112,10 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
             4 or 22 when config.GapCloserDRG => this.TryUseTargetGapCloser(ActionUse.DragoonWingedGlideActionId, distanceToHitbox, target),
             29 or 30 when config.GapCloserNIN => this.TryUseNinjaShukuchi(target),
             34 when config.GapCloserSAM => this.TryUseTargetGapCloser(ActionUse.SamuraiGyotenActionId, distanceToHitbox, target),
-            38 when config.GapCloserDNC => this.TryUseForwardGapCloser(ActionUse.DancerEnAvantActionId, distanceToHitbox),
-            39 when config.GapCloserRPR => this.TryUseReaperRegress(ref this.lastGapCloserSafety, distanceToHitbox) || this.TryUseForwardGapCloser(ActionUse.ReaperHellsIngressActionId, distanceToHitbox),
+            38 when config.GapCloserDNC => this.TryUseForwardGapCloser(ActionUse.DancerEnAvantActionId, distanceToHitbox, reengageRange),
+            39 when config.GapCloserRPR => this.TryUseReaperRegress(ref this.lastGapCloserSafety, distanceToHitbox) || this.TryUseForwardGapCloser(ActionUse.ReaperHellsIngressActionId, distanceToHitbox, MathF.Max(reengageRange, CombatConstants.MeleeActionRange + 1f)),
             41 when config.GapCloserVPR => this.TryUseTargetGapCloser(ActionUse.ViperSlitherActionId, distanceToHitbox, target),
-            24 when config.GapCloserWHM => this.TryUseForwardGapCloser(ActionUse.WhiteMageAetherialShiftActionId, distanceToHitbox),
+            24 when config.GapCloserWHM => this.TryUseForwardGapCloser(ActionUse.WhiteMageAetherialShiftActionId, distanceToHitbox, reengageRange),
             _ => false
         };
     }
@@ -132,7 +144,7 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
         var portalPosition = portal.Position;
 
         if (safeMovementDestination.HasValue &&
-            !EscapeGapCloserController.TryValidateEscapeDestination(services, bossModSafety, player.Position, portalPosition, safeMovementDestination.Value, config.MinimumEscapeGapCloserDistance, out var usefulReason))
+            !EscapeGapCloserController.TryValidateEscapeDestination(config, services, bossModSafety, vnavmesh, player.Position, portalPosition, safeMovementDestination.Value, config.MinimumEscapeGapCloserDistance, out var usefulReason))
         {
             lastSafety = $"Regress: {usefulReason}";
             return false;
@@ -202,7 +214,7 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
         return used;
     }
 
-    private unsafe bool TryUseForwardGapCloser(uint actionId, float distanceToHitbox)
+    private unsafe bool TryUseForwardGapCloser(uint actionId, float distanceToHitbox, float requiredLandingRange)
     {
         var player = services.ObjectTable.LocalPlayer;
         var target = services.TargetManager.Target;
@@ -235,7 +247,7 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
 
         var destination = player.Position + forward * CombatConstants.FixedForwardGapCloserRange;
         var destinationDistanceToHitbox = Geometry.DistanceToHitbox(destination, player.HitboxRadius, target.Position, target.HitboxRadius);
-        if (destinationDistanceToHitbox >= distanceToHitbox || destinationDistanceToHitbox > CombatConstants.MeleeActionRange + 1f)
+        if (destinationDistanceToHitbox >= distanceToHitbox || destinationDistanceToHitbox > requiredLandingRange)
         {
             this.lastGapCloserSafety = "fixed dash would not re-engage";
             return false;
@@ -302,6 +314,37 @@ internal sealed class GapCloserController(Configuration config, DalamudServices 
         if (string.IsNullOrEmpty(this.lastGapCloserSafety) || this.lastGapCloserSafety == "safe Shukuchi destination found")
         {
             this.lastGapCloserSafety = "no safe Shukuchi destination";
+        }
+
+        return false;
+    }
+
+    internal bool IsUnknownBossLikeTarget(IGameObject target)
+    {
+        return target is IBattleNpc battleNpc &&
+               battleNpc.BattleNpcKind == BattleNpcSubKind.Combatant &&
+               target.HitboxRadius >= BossLikeHitboxRadius &&
+               !bossMod.HasModuleByDataId(battleNpc.BaseId);
+    }
+
+    internal bool HasNearbyUnknownBossLikeThreat(Vector3 playerPosition)
+    {
+        foreach (var obj in services.ObjectTable.OfType<IBattleNpc>())
+        {
+            if (obj.BattleNpcKind != BattleNpcSubKind.Combatant)
+            {
+                continue;
+            }
+
+            if (obj.HitboxRadius < BossLikeHitboxRadius || bossMod.HasModuleByDataId(obj.BaseId))
+            {
+                continue;
+            }
+
+            if (Vector3.Distance(playerPosition, obj.Position) <= 60f)
+            {
+                return true;
+            }
         }
 
         return false;
