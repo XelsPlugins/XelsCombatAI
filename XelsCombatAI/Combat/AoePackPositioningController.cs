@@ -63,6 +63,7 @@ internal sealed class AoePackPositioningController(
     private FieldInfo? forbiddenZonesField;
     private FieldInfo? pathfindMapCenterField;
     private FieldInfo? pathfindMapBoundsField;
+    private FieldInfo? potentialTargetsField;
     private PropertyInfo? priorityTargetsProperty;
     private FieldInfo? enemyActorField;
     private MemberInfo? actorPositionField;
@@ -86,6 +87,8 @@ internal sealed class AoePackPositioningController(
     private bool lastInjected;
     private ulong lastBestPrimaryId;
     private bool rsrHenchedActive;
+    private bool bossModEncounterActive;
+    private bool bossLikeCombatActive;
     private StateCommandType rsrSnapshotMode;
     private int lastPriorityTargetCount;
     private Vector2 lastInjectedCandidate;
@@ -102,8 +105,10 @@ internal sealed class AoePackPositioningController(
     private static readonly TimeSpan TargetSwitchCooldown = TimeSpan.FromMilliseconds(1500);
     private const float CandidateMovementThreshold = 2f;
     private const float CentroidMovementThreshold = 3f;
+    private const float PotentialPackClusterRadius = 12f;
     private const float AvoidancePenaltyFreeRadius = 4f;
     private const float BossHitboxAvoidanceScale = 0.8f;
+    private const float BossLikeHitboxRadius = 4f;
 
     public AoePackPositioningStatus Status => new(
         this.hookState,
@@ -134,6 +139,11 @@ internal sealed class AoePackPositioningController(
         this.hookState = state;
     }
 
+    public void SetBossModEncounterState(bool activeModule)
+    {
+        this.bossModEncounterActive = activeModule;
+    }
+
     public void Reset()
     {
         this.goalZonesField = null;
@@ -141,6 +151,7 @@ internal sealed class AoePackPositioningController(
         this.forbiddenZonesField = null;
         this.pathfindMapCenterField = null;
         this.pathfindMapBoundsField = null;
+        this.potentialTargetsField = null;
         this.priorityTargetsProperty = null;
         this.enemyActorField = null;
         this.actorPositionField = null;
@@ -161,6 +172,8 @@ internal sealed class AoePackPositioningController(
         this.lastBestHits = 0;
         this.lastInjected = false;
         this.lastBestPrimaryId = 0;
+        this.bossModEncounterActive = false;
+        this.bossLikeCombatActive = false;
         this.lastPriorityTargetCount = 0;
         this.lastInjectedCandidate = default;
         this.lastInjectedHits = 0;
@@ -191,6 +204,7 @@ internal sealed class AoePackPositioningController(
         if (!services.Condition[ConditionFlag.InCombat] || services.Condition[ConditionFlag.Unconscious])
         {
             this.lastReason = "not active in combat";
+            this.bossLikeCombatActive = false;
             this.RestoreRsrIfNeeded();
             return;
         }
@@ -201,9 +215,29 @@ internal sealed class AoePackPositioningController(
             return;
         }
 
-        var targets = this.ReadPriorityTargets(hints);
+        var priorityTargets = this.ReadPriorityTargets(hints);
+        var potentialTargets = priorityTargets.Count < 2 ? this.ReadPotentialTargets(hints) : [];
+        if (config.KeepTrashTargetSelected)
+        {
+            this.TrySelectInitialCombatTarget(priorityTargets.Count > 0 ? priorityTargets : potentialTargets);
+        }
+
+        var targetHasBossModule = currentTargetHasBossModule();
+        var effectivePackTargets = this.SelectEffectivePackTargets(priorityTargets, potentialTargets);
+        var packLikeTrashContext = !targetHasBossModule && !this.bossModEncounterActive && effectivePackTargets.Count >= 3;
+        var hitboxBossLikeContext = this.BossLikeTargetActive(priorityTargets) || this.BossLikeTargetActive(potentialTargets);
+        this.bossLikeCombatActive = targetHasBossModule ||
+                                    this.bossModEncounterActive ||
+                                    (!packLikeTrashContext && (hitboxBossLikeContext || this.bossLikeCombatActive));
+        var bossModuleContext = this.bossLikeCombatActive;
+        var targets = bossModuleContext ? priorityTargets : effectivePackTargets;
         this.lastPriorityTargetCount = targets.Count;
-        var inAoeSituation = targets.Count >= 2 && !currentTargetHasBossModule();
+        var inAoeSituation = targets.Count >= 2 && !bossModuleContext;
+        if (bossModuleContext && this.rsrHenchedActive)
+        {
+            this.RestoreRsrIfNeeded();
+        }
+
         if (config.KeepTrashTargetSelected && inAoeSituation)
         {
             this.ApplyRsrTargeting(this.SelectPackPrimaryTarget(targets), targets);
@@ -701,6 +735,12 @@ internal sealed class AoePackPositioningController(
     private bool ApplyRsrHenched()
     {
         if (this.rsrHenchedActive) return true;
+        if (currentTargetHasBossModule() || this.bossModEncounterActive || this.bossLikeCombatActive)
+        {
+            this.rsrRestoreStatus = "boss combat active; Henched skipped";
+            this.rsrLastRestoreStatus = "boss combat active; Henched skipped";
+            return false;
+        }
 
         try
         {
@@ -730,6 +770,19 @@ internal sealed class AoePackPositioningController(
         }
     }
 
+    private bool BossLikeTargetActive(IReadOnlyList<TargetSnapshot> priorityTargets)
+    {
+        if (services.TargetManager.Target is IBattleChara target &&
+            !target.IsDead &&
+            target.CurrentHp > 0 &&
+            target.HitboxRadius >= BossLikeHitboxRadius)
+        {
+            return true;
+        }
+
+        return priorityTargets.Any(target => target.Radius >= BossLikeHitboxRadius);
+    }
+
     private void ApplyRsrTargeting(ulong primaryId, IReadOnlyCollection<TargetSnapshot>? priorityTargets = null, bool forcePreferred = false)
     {
         if (!this.ApplyRsrHenched())
@@ -738,6 +791,16 @@ internal sealed class AoePackPositioningController(
         }
 
         this.UpdateTarget(primaryId, priorityTargets, forcePreferred);
+    }
+
+    private void TrySelectInitialCombatTarget(IReadOnlyList<TargetSnapshot> targets)
+    {
+        if (targets.Count == 0 || this.HasValidCurrentCombatTarget())
+        {
+            return;
+        }
+
+        this.UpdateTarget(this.SelectPackPrimaryTarget(targets), targets, forcePreferred: true);
     }
 
     private void UpdateTarget(ulong preferredId, IReadOnlyCollection<TargetSnapshot>? priorityTargets = null, bool forcePreferred = false)
@@ -796,6 +859,15 @@ internal sealed class AoePackPositioningController(
         }
     }
 
+    private bool HasValidCurrentCombatTarget()
+    {
+        return services.TargetManager.Target is IBattleNpc currentTarget &&
+               currentTarget.StatusFlags.HasFlag(StatusFlags.InCombat) &&
+               !currentTarget.IsDead &&
+               currentTarget.CurrentHp > 0 &&
+               currentTarget.IsHostile();
+    }
+
     private bool TryKeepCurrentPriorityTarget(ulong preferredId, IReadOnlyCollection<TargetSnapshot>? priorityTargets)
     {
         if (priorityTargets == null || priorityTargets.Count == 0)
@@ -834,7 +906,6 @@ internal sealed class AoePackPositioningController(
         if (!this.TryInjectPackCenterMovement(hints, targets, "holding near pack", aoeRange, inAoeSituation, contributions))
         {
             this.ClearAoeCandidateGoal();
-            this.lastReason = "holding near pack";
         }
     }
 
@@ -1028,9 +1099,14 @@ internal sealed class AoePackPositioningController(
             return 1;
         }
 
-        // Close-range AoE jobs like SGE/SCH/DNC/WHM/RDM need to actually be in the pack;
-        // one target in range is not enough for their spammable AoE.
-        return engagementRange <= 8f ? Math.Min(2, targetCount) : 1;
+        // Close-range AoE jobs like SGE/SCH/DNC/WHM/RDM need to actually be in the pack.
+        // Requiring only two hits leaves them at the edge of large trash pulls and can stall combo flow.
+        if (engagementRange <= 8f)
+        {
+            return Math.Min(targetCount, Math.Min(4, Math.Max(2, (int)MathF.Ceiling(targetCount * 0.6f))));
+        }
+
+        return 1;
     }
 
     private bool CandidateInsidePathfindBounds(object hints, Vector2 candidate)
@@ -1121,6 +1197,7 @@ internal sealed class AoePackPositioningController(
             this.forbiddenZonesField != null &&
             this.pathfindMapCenterField != null &&
             this.pathfindMapBoundsField != null &&
+            this.potentialTargetsField != null &&
             this.priorityTargetsProperty != null &&
             this.enemyActorField != null &&
             this.actorPositionField != null &&
@@ -1140,6 +1217,7 @@ internal sealed class AoePackPositioningController(
         var forbiddenZones = hintsType.GetField("ForbiddenZones", InstanceFlags);
         var pathfindMapCenter = hintsType.GetField("PathfindMapCenter", InstanceFlags);
         var pathfindMapBounds = hintsType.GetField("PathfindMapBounds", InstanceFlags);
+        var potentialTargets = hintsType.GetField("PotentialTargets", InstanceFlags);
         var priorityTargets = hintsType.GetProperty("PriorityTargets", InstanceFlags);
         var wposType = hintsType.Assembly.GetType("BossMod.WPos");
         var wdirType = hintsType.Assembly.GetType("BossMod.WDir");
@@ -1171,7 +1249,7 @@ internal sealed class AoePackPositioningController(
                     var parameterType = parameters[0].ParameterType;
                     return parameterType == wdirType || (parameterType.IsByRef && parameterType.GetElementType() == wdirType);
                 });
-        if (goalZones == null || forcedMovement == null || forbiddenZones == null || pathfindMapCenter == null || pathfindMapBounds == null || priorityTargets == null || wposType == null || wdirType == null || actorField == null || positionField == null || hitboxField == null || instanceField == null || xField == null || zField == null || wdirConstructor == null || boundsContainsMethod == null)
+        if (goalZones == null || forcedMovement == null || forbiddenZones == null || pathfindMapCenter == null || pathfindMapBounds == null || potentialTargets == null || priorityTargets == null || wposType == null || wdirType == null || actorField == null || positionField == null || hitboxField == null || instanceField == null || xField == null || zField == null || wdirConstructor == null || boundsContainsMethod == null)
         {
             this.lastReason = $"BMR AoE goal reflection members unavailable: {FormatMissing(
                 (goalZones == null, "AIHints.GoalZones"),
@@ -1179,6 +1257,7 @@ internal sealed class AoePackPositioningController(
                 (forbiddenZones == null, "AIHints.ForbiddenZones"),
                 (pathfindMapCenter == null, "AIHints.PathfindMapCenter"),
                 (pathfindMapBounds == null, "AIHints.PathfindMapBounds"),
+                (potentialTargets == null, "AIHints.PotentialTargets"),
                 (priorityTargets == null, "AIHints.PriorityTargets"),
                 (wposType == null, "BossMod.WPos"),
                 (wdirType == null, "BossMod.WDir"),
@@ -1201,6 +1280,7 @@ internal sealed class AoePackPositioningController(
         this.forbiddenZonesField = forbiddenZones;
         this.pathfindMapCenterField = pathfindMapCenter;
         this.pathfindMapBoundsField = pathfindMapBounds;
+        this.potentialTargetsField = potentialTargets;
         this.priorityTargetsProperty = priorityTargets;
         this.enemyActorField = actorField;
         this.actorPositionField = (MemberInfo)positionField;
@@ -1234,14 +1314,72 @@ internal sealed class AoePackPositioningController(
         return string.Join(", ", missing);
     }
 
-    private List<TargetSnapshot> ReadPriorityTargets(object hints)
+    private List<TargetSnapshot> SelectEffectivePackTargets(IReadOnlyList<TargetSnapshot> priorityTargets, IReadOnlyList<TargetSnapshot> potentialTargets)
     {
-        var result = new List<TargetSnapshot>(8);
-        if (this.priorityTargetsProperty!.GetValue(hints) is not IEnumerable enemies)
+        if (priorityTargets.Count >= 2 || potentialTargets.Count < 2)
         {
-            return result;
+            return priorityTargets.ToList();
         }
 
+        if (services.TargetManager.Target is not IBattleNpc currentTarget ||
+            currentTarget.IsDead ||
+            currentTarget.CurrentHp <= 0 ||
+            !currentTarget.IsHostile())
+        {
+            return priorityTargets.ToList();
+        }
+
+        var currentId = currentTarget.GameObjectId;
+        TargetSnapshot? currentSnapshot = null;
+        foreach (var target in potentialTargets)
+        {
+            if (target.InstanceId == currentId)
+            {
+                currentSnapshot = target;
+                break;
+            }
+        }
+
+        if (currentSnapshot == null)
+        {
+            return priorityTargets.ToList();
+        }
+
+        var current = currentSnapshot.Value;
+        var cluster = potentialTargets
+            .Where(target =>
+                target.InstanceId == currentId ||
+                Vector2.Distance(target.Position, current.Position) - target.Radius - current.Radius <= PotentialPackClusterRadius)
+            .OrderByDescending(target => target.InstanceId == currentId)
+            .ThenBy(target => Vector2.DistanceSquared(target.Position, current.Position))
+            .ToList();
+
+        return cluster.Count >= 2 ? cluster : priorityTargets.ToList();
+    }
+
+    private List<TargetSnapshot> ReadPriorityTargets(object hints)
+    {
+        if (this.priorityTargetsProperty!.GetValue(hints) is not IEnumerable enemies)
+        {
+            return [];
+        }
+
+        return this.ReadTargets(enemies);
+    }
+
+    private List<TargetSnapshot> ReadPotentialTargets(object hints)
+    {
+        if (this.potentialTargetsField!.GetValue(hints) is not IEnumerable enemies)
+        {
+            return [];
+        }
+
+        return this.ReadTargets(enemies);
+    }
+
+    private List<TargetSnapshot> ReadTargets(IEnumerable enemies)
+    {
+        var result = new List<TargetSnapshot>(8);
         foreach (var enemy in enemies)
         {
             if (enemy == null)

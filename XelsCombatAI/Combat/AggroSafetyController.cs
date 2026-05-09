@@ -8,6 +8,7 @@ using System.Reflection;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using XelsCombatAI.Game;
 using XelsCombatAI.Integrations;
 
@@ -29,6 +30,7 @@ internal sealed class AggroSafetyController(
     : IBossModGoalZoneContributor
 {
     private static readonly TimeSpan AggroThreshold = TimeSpan.FromSeconds(3);
+    private const float TankPickupSurfaceDistance = 8f;
     private static readonly MethodInfo ScoreFromWPosMethod = typeof(AggroSafetyController).GetMethod(nameof(ScoreFromWPos), BindingFlags.Instance | BindingFlags.NonPublic)!;
 
     private readonly Dictionary<ulong, DateTime> aggroStartByMob = [];
@@ -36,6 +38,7 @@ internal sealed class AggroSafetyController(
     private string lastReason = "not evaluated";
     private bool injected;
     private ulong activeMobId;
+    private ulong latchedAggroMobId;
     private ulong selectedTankId;
     private float aggroSeconds;
     private bool priorityDevalued;
@@ -93,6 +96,12 @@ internal sealed class AggroSafetyController(
             return;
         }
 
+        if (!IsInInstancedDuty())
+        {
+            this.ResetTracking("not in duty");
+            return;
+        }
+
         if (JobRoles.IsTankJob(player.ClassJob.RowId))
         {
             this.ResetTracking("player is tank");
@@ -102,6 +111,7 @@ internal sealed class AggroSafetyController(
         var now = DateTime.UtcNow;
         var attackers = this.GetAttackers(player).ToArray();
         this.UpdateAggroTracking(attackers, now);
+        var active = this.SelectActiveAggroMob(attackers, now);
         if (automatedMovementSuppressed())
         {
             this.aggroSeconds = attackers.Length == 0
@@ -111,11 +121,6 @@ internal sealed class AggroSafetyController(
             return;
         }
 
-        var active = attackers
-            .Select(mob => (Mob: mob, Started: this.aggroStartByMob.TryGetValue(mob.GameObjectId, out var started) ? started : now))
-            .Where(entry => now - entry.Started >= AggroThreshold)
-            .OrderBy(entry => entry.Started)
-            .FirstOrDefault();
         if (active.Mob == null)
         {
             this.aggroSeconds = attackers.Length == 0
@@ -144,6 +149,16 @@ internal sealed class AggroSafetyController(
         this.tankPosition = new Vector2(tank.Position.X, tank.Position.Z);
         this.tankRadius = MathF.Max(1.5f, tank.HitboxRadius + 1.5f);
         this.priorityDevalued = this.TryDevalueTarget(hints, active.Mob.GameObjectId);
+
+        var mobTankDistance = Geometry.DistanceToHitbox(active.Mob.Position, active.Mob.HitboxRadius, tank.Position, tank.HitboxRadius);
+        if (mobTankDistance <= TankPickupSurfaceDistance)
+        {
+            this.lastReason = this.priorityDevalued
+                ? $"aggro near tank; priority only ({mobTankDistance:0.#}y)"
+                : $"aggro near tank; priority unchanged ({mobTankDistance:0.#}y)";
+            return;
+        }
+
         this.lastGoalDelegate = this.CreateGoalDelegate();
         contributions.Add(new(this.lastGoalDelegate, BossModGoalPriority.ImmediateAction, "Aggro safety"));
         this.injected = true;
@@ -174,10 +189,44 @@ internal sealed class AggroSafetyController(
             this.aggroStartByMob.Remove(id);
         }
 
+        if (this.latchedAggroMobId != 0 && !activeIds.Contains(this.latchedAggroMobId))
+        {
+            this.latchedAggroMobId = 0;
+        }
+
         foreach (var mob in attackers)
         {
             this.aggroStartByMob.TryAdd(mob.GameObjectId, now);
         }
+    }
+
+    private (IBattleNpc? Mob, DateTime Started) SelectActiveAggroMob(IReadOnlyCollection<IBattleNpc> attackers, DateTime now)
+    {
+        if (this.latchedAggroMobId != 0)
+        {
+            foreach (var mob in attackers)
+            {
+                if (mob.GameObjectId == this.latchedAggroMobId)
+                {
+                    return (mob, this.aggroStartByMob.TryGetValue(mob.GameObjectId, out var started) ? started : now);
+                }
+            }
+
+            this.latchedAggroMobId = 0;
+        }
+
+        var active = attackers
+            .Select(mob => (Mob: mob, Started: this.aggroStartByMob.TryGetValue(mob.GameObjectId, out var started) ? started : now))
+            .Where(entry => now - entry.Started >= AggroThreshold)
+            .OrderBy(entry => entry.Started)
+            .FirstOrDefault();
+
+        if (active.Mob != null)
+        {
+            this.latchedAggroMobId = active.Mob.GameObjectId;
+        }
+
+        return active;
     }
 
     private bool TrySelectTank(IBattleChara player, out IBattleChara tank)
@@ -253,6 +302,11 @@ internal sealed class AggroSafetyController(
         this.wposXField = xField;
         this.wposZField = zField;
         return true;
+    }
+
+    private static unsafe bool IsInInstancedDuty()
+    {
+        return GameMain.Instance()->CurrentContentFinderConditionId != 0;
     }
 
     private bool TryDevalueTarget(object hints, ulong mobId)
@@ -348,6 +402,7 @@ internal sealed class AggroSafetyController(
         this.aggroStartByMob.Clear();
         this.injected = false;
         this.activeMobId = 0;
+        this.latchedAggroMobId = 0;
         this.selectedTankId = 0;
         this.aggroSeconds = 0f;
         this.priorityDevalued = false;
