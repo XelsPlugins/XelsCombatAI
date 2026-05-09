@@ -24,8 +24,9 @@ While you are in combat, the plugin automatically:
 - **Prefers the party cluster** by letting BossMod gently gravitate toward your current 4-player or 8-player party during combat, while magic ranged jobs avoid party-gravity movement when they can keep casting at a target
 - **Prefers helpful defensive ground effects** such as Asylum, Sacred Soil, Earthly Star, and Collective Unconscious
 - **Prefers Paladin Passage of Arms protection** by letting BossMod prefer the protected cone behind a party Paladin while the buff is active
+- **Brings stray aggro to a party tank** when a non-tank is targeted by a mob for more than 3 seconds
 - **Avoids hugging the arena edge** as a weak preference when stronger movement goals do not matter
-- **Shows a decision overlay** with projected in-world markers for current movement decisions and candidates (optional, off by default)
+- **Shows a decision overlay** with projected in-world markers for current movement decisions, candidates, and debug context, plus an optional movable debug HUD (off by default)
 - **Pauses automated movement** briefly when you move manually, including remapped movement or gamepad input reported by BossMod
 - **Manages True North** usage and disables RSR's Auto True North to prevent conflicts (optional, requires RSR)
 
@@ -58,7 +59,7 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 ### Movement tab
 
-**Movement** — Control automatic movement, manual movement pause, movement timing, attack range, danger-zone spacing, party positioning, defensive ground effects, Passage of Arms, and weak edge-avoidance preferences.
+**Movement** — Control automatic movement, manual movement pause, movement timing, attack range, danger-zone spacing, party positioning, defensive ground effects, Passage of Arms, aggro safety, and weak edge-avoidance preferences.
 
 ### AoE & Trash tab
 
@@ -78,4 +79,4 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 ### Troubleshooting tab
 
-**Troubleshooting** — Show the movement overlay, copy a debug snapshot, or copy recent combat decisions.
+**Troubleshooting** — Show the movement overlay, toggle the movable debug HUD, copy a debug snapshot, or copy recent combat decisions.

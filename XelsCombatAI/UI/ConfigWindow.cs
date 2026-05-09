@@ -263,11 +263,25 @@ internal sealed class ConfigWindow : Window, IDisposable
             "Moves behind a Paladin using Passage of Arms when it is safe.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
+            "Bring aggro to tank",
+            this.config.ManageAggroSafetyMovement,
+            this.defaultConfig.ManageAggroSafetyMovement,
+            v => this.config.ManageAggroSafetyMovement = v,
+            "If an enemy targets you for more than 3 seconds, moves toward a party tank and lowers that enemy's target priority. Does nothing on tanks.",
+            movementDisabledTooltip);
+        changed |= this.Checkbox(
             "Avoid standing inside bosses",
             this.config.AvoidStandingInsideEnemies,
             this.defaultConfig.AvoidStandingInsideEnemies,
             v => this.config.AvoidStandingInsideEnemies = v,
             "Moves out of the center of a boss hitbox when BossMod has an active module for the current target.",
+            movementDisabledTooltip);
+        changed |= this.Checkbox(
+            "Avoid boss frontal cone",
+            this.config.AvoidBossFrontalCone,
+            this.defaultConfig.AvoidBossFrontalCone,
+            v => this.config.AvoidBossFrontalCone = v,
+            "Slightly prefers not standing in front of the boss where the tank holds aggro.\nOnly applies when a boss module is active and a tank is in the party.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Avoid arena edge",
@@ -411,7 +425,6 @@ internal sealed class ConfigWindow : Window, IDisposable
             changed |= this.JobCheckbox("BLM", this.config.EscapeGapCloserBLM, this.defaultConfig.EscapeGapCloserBLM, v => this.config.EscapeGapCloserBLM = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("SGE", this.config.EscapeGapCloserSGE, this.defaultConfig.EscapeGapCloserSGE, v => this.config.EscapeGapCloserSGE = v, escapeDisabledTooltip);
             changed |= this.JobCheckbox("PCT", this.config.EscapeGapCloserPCT, this.defaultConfig.EscapeGapCloserPCT, v => this.config.EscapeGapCloserPCT = v, escapeDisabledTooltip);
-            changed |= this.JobCheckbox("BLU", this.config.EscapeGapCloserBLU, this.defaultConfig.EscapeGapCloserBLU, v => this.config.EscapeGapCloserBLU = v, escapeDisabledTooltip);
             ImGui.EndTable();
         }
         ImGui.Unindent(8f);
@@ -443,7 +456,19 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.ShowDecisionOverlay,
             this.defaultConfig.ShowDecisionOverlay,
             v => this.config.ShowDecisionOverlay = v,
-            "Shows movement goals and suggested positions in the game world.");
+            "Shows movement goals, suggested positions, and debug visuals in the game world.");
+        var overlayDisabledTooltip = !this.config.ShowDecisionOverlay ? "Disabled by Show movement overlay." : null;
+        if (!this.config.ShowDecisionOverlay)
+            ImGui.BeginDisabled();
+        changed |= this.Checkbox(
+            "Show overlay debug HUD",
+            this.config.ShowDecisionOverlayHud,
+            this.defaultConfig.ShowDecisionOverlayHud,
+            v => this.config.ShowDecisionOverlayHud = v,
+            "Shows a movable debug window with current overlay settings and effective states.",
+            overlayDisabledTooltip);
+        if (!this.config.ShowDecisionOverlay)
+            ImGui.EndDisabled();
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
@@ -580,16 +605,30 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.setEnabled(current);
     }
 
-    private bool Checkbox(string label, bool value, bool defaultValue, Action<bool> setter, string? tooltip = null, string? disabledTooltip = null)
+    private bool Checkbox(string label, bool value, bool defaultValue, Action<bool> setter, string? tooltip = null, string? disabledTooltip = null, FontAwesomeIcon? icon = null, string? iconTooltip = null)
     {
         var current = value;
         var changed = ImGui.Checkbox(label, ref current);
         var hoveredForTooltip = this.IsItemHoveredAllowDisabled();
         var hovered = ImGui.IsItemHovered();
+        var iconHovered = false;
+        if (icon != null)
+        {
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextUnformatted(icon.Value.ToIconString());
+            ImGui.PopFont();
+            iconHovered = this.IsItemHoveredAllowDisabled();
+            if (iconHovered && iconTooltip != null)
+            {
+                DrawWrappedTooltip(iconTooltip);
+            }
+        }
+
         this.DrawInfoIcon(tooltip);
         this.DrawTooltip(hoveredForTooltip, disabledTooltip: disabledTooltip);
 
-        if (IsResetRequested(hovered))
+        if (IsResetRequested(hovered || iconHovered))
         {
             if (value == defaultValue)
                 return false;
