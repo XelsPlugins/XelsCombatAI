@@ -34,6 +34,16 @@ internal sealed class BossModReflectionSafety
     }
 
     public string Status => this.status;
+    public string Diagnostics => string.Join(
+        "; ",
+        $"Status={this.status}",
+        $"PluginCached={this.bossModPlugin != null}",
+        $"HintsField={this.hintsField != null}",
+        $"ImminentSpecialModeField={this.imminentSpecialModeField != null}",
+        $"ForcedMovementField={this.forcedMovementField != null}",
+        $"WPosConstructor={this.wposConstructor != null}",
+        $"IsDashDangerousMethod={this.isDashDangerousMethod != null}",
+        $"NextResolveUtc={this.nextResolveAttempt:O}");
 
     public void Reset()
     {
@@ -226,7 +236,10 @@ internal sealed class BossModReflectionSafety
             var actionDefinitionsType = assembly.GetType(BossModActionDefinitionsTypeName);
             if (hintsType == null || wposType == null || actionDefinitionsType == null)
             {
-                this.ResetWithStatus("BMR safety types not found");
+                this.ResetWithStatus($"BMR safety types not found: {FormatMissing(
+                    (hintsType == null, BossModHintsTypeName),
+                    (wposType == null, BossModWPosTypeName),
+                    (actionDefinitionsType == null, BossModActionDefinitionsTypeName))}");
                 return false;
             }
 
@@ -241,7 +254,10 @@ internal sealed class BossModReflectionSafety
 
             if (hints == null || wposCtor == null || isDashDangerous == null)
             {
-                this.ResetWithStatus("BMR safety members not found");
+                this.ResetWithStatus($"BMR safety members not found: {FormatMissing(
+                    (hints == null, "BossMod.Plugin._hints"),
+                    (wposCtor == null, "BossMod.WPos(float, float)"),
+                    (isDashDangerous == null, "BossMod.ActionDefinitions.IsDashDangerous(WPos, WPos, AIHints)"))}");
                 return false;
             }
 
@@ -352,6 +368,20 @@ internal sealed class BossModReflectionSafety
         }
 
         return null;
+    }
+
+    private static string FormatMissing(params (bool Missing, string Name)[] members)
+    {
+        var missing = new List<string>();
+        foreach (var member in members)
+        {
+            if (member.Missing)
+            {
+                missing.Add(member.Name);
+            }
+        }
+
+        return string.Join(", ", missing);
     }
 
     private static object? FindObject(object root, string typeFullName, int maxDepth)

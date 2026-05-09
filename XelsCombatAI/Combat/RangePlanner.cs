@@ -1,66 +1,15 @@
 using System;
-using ECommons.GameFunctions;
+using System.Numerics;
+using Dalamud.Game.ClientState.Objects.Types;
+using XelsCombatAI.Game;
 
 namespace XelsCombatAI.Combat;
 
-internal sealed class RangePlanner(Configuration config, DalamudServices services, BossModIpc bossMod)
+internal sealed class TargetUptimePlanner(DalamudServices services, BossModIpc bossMod, JobRangeProvider jobRangeProvider)
 {
-    public float CalculateDesiredRange()
-    {
-        var rangeRole = this.GetCurrentRangeRole();
-        if (config.AoERangeInMultiTarget && services.TargetManager.Target != null)
-        {
-            var enemyCount = ObjectFunctions.GetAttackableEnemyCountAroundPoint(services.TargetManager.Target.Position, Configuration.EnemyCountRadius);
-            if (enemyCount > config.AoEEnemyThreshold)
-            {
-                var classJobId = services.ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;
-                if (rangeRole == RangeRole.Melee || (config.AoEHealerMeleeRange && JobRoles.IsMeleeAoEHealer(classJobId)))
-                    return config.AoEMeleeRange;
-                if (!config.RoleBasedRange)
-                    return config.AoERangedRange;
-                return rangeRole switch
-                {
-                    RangeRole.PhysicalRanged => config.AoEPhysicalRangedRange,
-                    RangeRole.Healer => config.AoEHealerRange,
-                    RangeRole.MagicRanged => config.AoEMagicRangedRange,
-                    _ => config.AoERangedRange
-                };
-            }
-        }
+    private const float MeleeUptimeTolerance = 0.5f;
 
-        if (!config.RoleBasedRange)
-        {
-            return config.MeleeRange;
-        }
-
-        return rangeRole switch
-        {
-            RangeRole.PhysicalRanged => config.PhysicalRangedRange,
-            RangeRole.Healer => config.HealerRange,
-            RangeRole.MagicRanged => config.MagicRangedRange,
-            _ => config.MeleeRange
-        };
-    }
-
-    public bool IsAoEMultiTargetActive()
-    {
-        if (!config.AoERangeInMultiTarget || services.TargetManager.Target == null) return false;
-        return ObjectFunctions.GetAttackableEnemyCountAroundPoint(
-            services.TargetManager.Target.Position, Configuration.EnemyCountRadius) > config.AoEEnemyThreshold;
-    }
-
-    public float CalculateHealerCoverageRange()
-    {
-        var classJobId = services.ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;
-        if (this.IsAoEMultiTargetActive() &&
-            config.AoEHealerMeleeRange &&
-            JobRoles.IsMeleeAoEHealer(classJobId))
-        {
-            return config.AoEMeleeRange;
-        }
-
-        return CombatConstants.HealerCoverageAttackRange;
-    }
+    public float CalculateTargetUptimeRange() => jobRangeProvider.EngagementRange;
 
     public bool CurrentTargetHasBossModule()
     {
@@ -81,8 +30,20 @@ internal sealed class RangePlanner(Configuration config, DalamudServices service
         }
     }
 
-    public RangeRole GetCurrentRangeRole()
+    public bool ShouldDeferPartyGravityForMeleeUptime()
     {
-        return JobRoles.GetRangeRole(services.ObjectTable.LocalPlayer);
+        var player = services.ObjectTable.LocalPlayer;
+        var target = services.TargetManager.Target as IBattleChara;
+        if (player == null ||
+            target == null ||
+            jobRangeProvider.EngagementRange > Configuration.InternalMeleeUptimeRange)
+        {
+            return false;
+        }
+
+        var playerPosition = new Vector2(player.Position.X, player.Position.Z);
+        var targetPosition = new Vector2(target.Position.X, target.Position.Z);
+        var uptimeRadius = target.HitboxRadius + Configuration.InternalMeleeUptimeRange + MeleeUptimeTolerance;
+        return Vector2.DistanceSquared(playerPosition, targetPosition) > uptimeRadius * uptimeRadius;
     }
 }

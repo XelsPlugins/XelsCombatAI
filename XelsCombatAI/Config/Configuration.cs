@@ -7,32 +7,21 @@ namespace XelsCombatAI.Config;
 
 public sealed class Configuration : IPluginConfiguration
 {
-    public const float BossModMinRange = 1.1f;
-    public const float BossModMaxRange = 30f;
-    public const float DefaultMeleeRange = 2.6f;
-    public const float DefaultRangedRange = 15f;
-    public const float DefaultPhysicalRangedRange = 15f;
-    public const float DefaultHealerRange = 15f;
-    public const float DefaultMagicRangedRange = 20f;
-    public const float DefaultAoEMeleeRange = 2.6f;
-    public const float DefaultAoERangedRange = 15f;
-    public const float DefaultAoEPhysicalRangedRange = 15f;
-    public const float DefaultAoEHealerRange = 15f;
-    public const float DefaultAoEMagicRangedRange = 20f;
-    public const int DefaultAoEEnemyThreshold = 2;
+    public const float InternalMeleeUptimeRange = 2.6f;
+    public const float InternalRangedUptimeRange = 25f;
+    public const float InternalDisabledUptimeRange = 30f;
     public const float DefaultPreferredForbiddenZoneDistance = 1f;
     public const float DefaultMinimumReengageGapCloserDistance = 8f;
     public const float DefaultMinimumEscapeGapCloserDistance = 8f;
     public const float MinimumGapCloserDistanceMin = 0f;
     public const float MinimumGapCloserDistanceMax = 20f;
-    public const float EnemyCountRadius = 10f;
 
-    public int Version { get; set; } = 14;
+    public int Version { get; set; } = 13;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
     public bool RespectManualMovement { get; set; } = true;
-    public bool ManageRange { get; set; } = true;
+    public bool ManageTargetUptime { get; set; } = true;
     public bool ManageForbiddenZoneDistance { get; set; } = true;
     public bool ManagePositionals { get; set; } = true;
     public bool ManageTrueNorth { get; set; } = false;
@@ -40,9 +29,6 @@ public sealed class Configuration : IPluginConfiguration
     public bool UseBetweenTheLines { get; set; } = true;
     public bool UseRetrace { get; set; } = true;
     public bool ReturnToLeylines { get; set; } = true;
-    public bool RoleBasedRange { get; set; } = true;
-    public bool AoERangeInMultiTarget { get; set; } = true;
-    public bool AoEHealerMeleeRange { get; set; } = false;
     public bool UseGapCloser { get; set; } = false;
     public bool GapCloserPLD { get; set; } = true;
     public bool GapCloserWAR { get; set; } = true;
@@ -67,26 +53,61 @@ public sealed class Configuration : IPluginConfiguration
     public bool EscapeGapCloserBLU { get; set; } = true;
     public bool EchoStatusToChat { get; set; } = true;
     public CombatStyle CombatStyle { get; set; } = CombatStyle.Normal;
-    public float MeleeRange { get; set; } = DefaultMeleeRange;
-    public float RangedRange { get; set; } = DefaultRangedRange;
-    public float PhysicalRangedRange { get; set; } = DefaultPhysicalRangedRange;
-    public float HealerRange { get; set; } = DefaultHealerRange;
-    public float MagicRangedRange { get; set; } = DefaultMagicRangedRange;
-    public float AoEMeleeRange { get; set; } = DefaultAoEMeleeRange;
-    public float AoERangedRange { get; set; } = DefaultAoERangedRange;
-    public float AoEPhysicalRangedRange { get; set; } = DefaultAoEPhysicalRangedRange;
-    public float AoEHealerRange { get; set; } = DefaultAoEHealerRange;
-    public float AoEMagicRangedRange { get; set; } = DefaultAoEMagicRangedRange;
-    public int AoEEnemyThreshold { get; set; } = DefaultAoEEnemyThreshold;
     public float PreferredForbiddenZoneDistance { get; set; } = DefaultPreferredForbiddenZoneDistance;
     public float MinimumReengageGapCloserDistance { get; set; } = DefaultMinimumReengageGapCloserDistance;
     public float MinimumEscapeGapCloserDistance { get; set; } = DefaultMinimumEscapeGapCloserDistance;
-    public bool HealerPartyCoverage { get; set; } = true;
-    public bool ManageAoePackPositioning { get; set; } = false;
-    public int AoePackPositioningMinimumExtraTargets { get; set; } = 1;
-    public bool AoePackPositioningControlRsrTarget { get; set; } = false;
-    public bool AoePackPositioningAoeCombatControl { get; set; } = false;
+    public bool ManageAoePackPositioning { get; set; } = true;
+    public bool ManagePartyGravityPositioning { get; set; } = true;
+    public bool ManageHealerAoePositioning { get; set; } = true;
+    public bool ManageDefensiveGroundZonePositioning { get; set; } = true;
+    public bool ManagePassageOfArmsPositioning { get; set; } = true;
+    public bool PickBetterAoeTarget { get; set; } = false;
+    public bool KeepTrashTargetSelected { get; set; } = true;
+    public bool AvoidStandingInsideEnemies { get; set; } = true;
+    public bool AvoidArenaEdge { get; set; } = true;
     public bool ShowDecisionOverlay { get; set; } = false;
+
+    [JsonProperty("ManageSurvivabilityZonePositioning")]
+    private bool ManageSurvivabilityZonePositioningCompatibility
+    {
+        set
+        {
+            this.ManageDefensiveGroundZonePositioning = value;
+            this.ManagePassageOfArmsPositioning = value;
+        }
+    }
+
+    [JsonProperty("ManageMultiTargetTargeting")]
+    private bool ManageMultiTargetTargetingCompatibility
+    {
+        set => this.KeepTrashTargetSelected = value;
+    }
+
+    [JsonProperty("AoePackPositioningControlRsrTarget")]
+    private bool AoePackPositioningControlRsrTargetCompatibility
+    {
+        set => this.PickBetterAoeTarget = value;
+    }
+
+    [JsonProperty("MoveCloserToTrashPacks")]
+    private bool MoveCloserToTrashPacksCompatibility
+    {
+        set => this.ManageTargetUptime |= value;
+    }
+
+    [JsonProperty("AoePackPositioningAoeCombatControl")]
+    private bool AoePackPositioningAoeCombatControlCompatibility
+    {
+        set
+        {
+            if (!value)
+                return;
+
+            this.PickBetterAoeTarget = true;
+            this.KeepTrashTargetSelected = true;
+            this.ManageTargetUptime = true;
+        }
+    }
 
     [JsonProperty("ManageTrueNorthInRsr")]
     private bool ManageTrueNorthInRsrCompatibility
@@ -94,21 +115,27 @@ public sealed class Configuration : IPluginConfiguration
         set => this.ManageTrueNorth = value;
     }
 
+    [JsonProperty("ManageRange")]
+    private bool ManageRangeCompatibility
+    {
+        set => this.ManageTargetUptime = value;
+    }
+
+    [JsonProperty("HealerPartyCoverage")]
+    private bool HealerPartyCoverageCompatibility
+    {
+        set { }
+    }
+
     internal void Migrate()
     {
         if (this.Version < 2)
         {
-            this.PhysicalRangedRange = this.RangedRange;
-            this.HealerRange = this.RangedRange;
-            this.MagicRangedRange = this.RangedRange;
             this.Version = 2;
         }
 
         if (this.Version < 3)
         {
-            this.AoEPhysicalRangedRange = this.AoERangedRange;
-            this.AoEHealerRange = this.AoERangedRange;
-            this.AoEMagicRangedRange = this.AoERangedRange;
             this.Version = 3;
         }
 
@@ -163,7 +190,6 @@ public sealed class Configuration : IPluginConfiguration
 
         if (this.Version < 10)
         {
-            this.HealerPartyCoverage = true;
             this.Version = 10;
         }
 
@@ -182,51 +208,33 @@ public sealed class Configuration : IPluginConfiguration
 
         if (this.Version < 13)
         {
-            this.ManageAoePackPositioning = false;
-            this.AoePackPositioningMinimumExtraTargets = 1;
-            this.Version = 13;
-        }
-
-        if (this.Version < 14)
-        {
+            this.ManageAoePackPositioning = true;
+            this.ManagePartyGravityPositioning = true;
+            this.ManageHealerAoePositioning = true;
+            this.ManageDefensiveGroundZonePositioning = true;
+            this.ManagePassageOfArmsPositioning = true;
+            this.PickBetterAoeTarget = false;
+            this.KeepTrashTargetSelected = true;
+            this.AvoidStandingInsideEnemies = true;
+            this.AvoidArenaEdge = true;
             this.ShowDecisionOverlay = false;
-            this.Version = 14;
+            this.Version = 13;
         }
     }
 
     internal void Clamp()
     {
-        this.MeleeRange = Math.Clamp(this.MeleeRange, BossModMinRange, BossModMaxRange);
-        this.RangedRange = Math.Clamp(this.RangedRange, BossModMinRange, BossModMaxRange);
-        this.PhysicalRangedRange = Math.Clamp(this.PhysicalRangedRange, BossModMinRange, BossModMaxRange);
-        this.HealerRange = Math.Clamp(this.HealerRange, BossModMinRange, BossModMaxRange);
-        this.MagicRangedRange = Math.Clamp(this.MagicRangedRange, BossModMinRange, BossModMaxRange);
-        this.AoEMeleeRange = Math.Clamp(this.AoEMeleeRange, BossModMinRange, BossModMaxRange);
-        this.AoERangedRange = Math.Clamp(this.AoERangedRange, BossModMinRange, BossModMaxRange);
-        this.AoEPhysicalRangedRange = Math.Clamp(this.AoEPhysicalRangedRange, BossModMinRange, BossModMaxRange);
-        this.AoEHealerRange = Math.Clamp(this.AoEHealerRange, BossModMinRange, BossModMaxRange);
-        this.AoEMagicRangedRange = Math.Clamp(this.AoEMagicRangedRange, BossModMinRange, BossModMaxRange);
-        this.AoEEnemyThreshold = Math.Clamp(this.AoEEnemyThreshold, 1, 10);
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);
         this.MinimumReengageGapCloserDistance = MathF.Round(Math.Clamp(this.MinimumReengageGapCloserDistance, MinimumGapCloserDistanceMin, MinimumGapCloserDistanceMax));
         this.MinimumEscapeGapCloserDistance = MathF.Round(Math.Clamp(this.MinimumEscapeGapCloserDistance, MinimumGapCloserDistanceMin, MinimumGapCloserDistanceMax));
-        this.AoePackPositioningMinimumExtraTargets = Math.Clamp(this.AoePackPositioningMinimumExtraTargets, 1, 5);
         this.CombatStyle = Enum.IsDefined(this.CombatStyle) ? this.CombatStyle : CombatStyle.Normal;
     }
 
-    internal void ResetRanges()
+    internal void ResetBehaviorSettings()
     {
-        this.MeleeRange = DefaultMeleeRange;
-        this.RangedRange = DefaultRangedRange;
-        this.PhysicalRangedRange = DefaultPhysicalRangedRange;
-        this.HealerRange = DefaultHealerRange;
-        this.MagicRangedRange = DefaultMagicRangedRange;
-        this.AoEMeleeRange = DefaultAoEMeleeRange;
-        this.AoERangedRange = DefaultAoERangedRange;
-        this.AoEPhysicalRangedRange = DefaultAoEPhysicalRangedRange;
-        this.AoEHealerRange = DefaultAoEHealerRange;
-        this.AoEMagicRangedRange = DefaultAoEMagicRangedRange;
-        this.AoEEnemyThreshold = DefaultAoEEnemyThreshold;
+        this.CombatStyle = CombatStyle.Normal;
+        this.ManageTargetUptime = true;
+        this.ManageForbiddenZoneDistance = true;
         this.PreferredForbiddenZoneDistance = DefaultPreferredForbiddenZoneDistance;
         this.MinimumReengageGapCloserDistance = DefaultMinimumReengageGapCloserDistance;
         this.MinimumEscapeGapCloserDistance = DefaultMinimumEscapeGapCloserDistance;
@@ -237,7 +245,7 @@ public sealed class Configuration : IPluginConfiguration
         this.Enabled = false;
         this.ManageMovement = true;
         this.RespectManualMovement = true;
-        this.ManageRange = true;
+        this.ManageTargetUptime = true;
         this.ManageForbiddenZoneDistance = true;
         this.ManagePositionals = true;
         this.ManageTrueNorth = false;
@@ -245,8 +253,6 @@ public sealed class Configuration : IPluginConfiguration
         this.UseBetweenTheLines = true;
         this.UseRetrace = true;
         this.ReturnToLeylines = true;
-        this.RoleBasedRange = true;
-        this.AoERangeInMultiTarget = true;
         this.UseGapCloser = false;
         this.GapCloserPLD = true;
         this.GapCloserWAR = true;
@@ -271,13 +277,17 @@ public sealed class Configuration : IPluginConfiguration
         this.EscapeGapCloserBLU = true;
         this.EchoStatusToChat = true;
         this.CombatStyle = CombatStyle.Normal;
-        this.HealerPartyCoverage = true;
-        this.ManageAoePackPositioning = false;
-        this.AoePackPositioningMinimumExtraTargets = 1;
-        this.AoePackPositioningControlRsrTarget = false;
-        this.AoePackPositioningAoeCombatControl = false;
+        this.ManageAoePackPositioning = true;
+        this.ManagePartyGravityPositioning = true;
+        this.ManageHealerAoePositioning = true;
+        this.ManageDefensiveGroundZonePositioning = true;
+        this.ManagePassageOfArmsPositioning = true;
+        this.PickBetterAoeTarget = false;
+        this.KeepTrashTargetSelected = true;
+        this.AvoidStandingInsideEnemies = true;
+        this.AvoidArenaEdge = true;
         this.ShowDecisionOverlay = false;
-        this.ResetRanges();
+        this.ResetBehaviorSettings();
     }
 
     internal void Save(IDalamudPluginInterface pluginInterface)

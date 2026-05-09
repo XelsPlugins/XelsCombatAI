@@ -1,4 +1,8 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin;
@@ -14,23 +18,32 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly DalamudServices services;
     private readonly IPluginLog log;
-    private readonly AoePackPositioningController controller;
+    private readonly IReadOnlyList<IBossModGoalZoneContributor> contributors;
     private DateTime nextResolveAttempt = DateTime.MinValue;
     private int failures;
     private bool disabledAfterFailure;
     private string status = "unresolved";
     private ReflectedDraw? draw;
 
-    public BossModGoalZoneHook(IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, AoePackPositioningController controller)
+    public BossModGoalZoneHook(IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, IReadOnlyList<IBossModGoalZoneContributor> contributors)
     {
         this.pluginInterface = pluginInterface;
         this.services = services;
         this.log = log;
-        this.controller = controller;
-        this.controller.SetHookState(this.status);
+        this.contributors = contributors;
+        this.SetContributorHookState(this.status);
     }
 
     public string Status => this.status;
+    public string Diagnostics => string.Join(
+        "; ",
+        $"Status={this.status}",
+        $"DrawActive={this.draw != null}",
+        $"Failures={this.failures}",
+        $"DisabledAfterFailure={this.disabledAfterFailure}",
+        $"ActiveGoalPriority={this.draw?.LastGoalPriority ?? "None"}",
+        $"ActiveGoalSources={this.draw?.LastGoalSources ?? "<none>"}",
+        $"NextResolveUtc={this.nextResolveAttempt:O}");
 
     public void EnsureActive()
     {
@@ -60,7 +73,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.controller, this.services, this.log, out var reason);
+            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.contributors, this.services, this.log, out var reason);
             if (reflectedDraw == null)
             {
                 this.SetStatus(reason);
@@ -74,7 +87,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         }
         catch (Exception ex)
         {
-            this.HandleFailure(ex, "Could not install BossMod AoE goal draw wrapper.", "BMR AoE goal wrapper install failed");
+            this.HandleFailure(ex, "Could not install BossMod goal draw wrapper.", $"BMR goal wrapper install failed: {ex.Message}");
         }
     }
 
@@ -82,6 +95,11 @@ internal sealed class BossModGoalZoneHook : IDisposable
     {
         this.failures = 0;
         this.disabledAfterFailure = false;
+        foreach (var contributor in this.contributors)
+        {
+            contributor.Reset();
+        }
+
         this.DisposeDraw("unresolved");
     }
 
@@ -105,7 +123,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         if (this.failures >= MaxFailures)
         {
             this.disabledAfterFailure = true;
-            this.DisposeDraw("BMR AoE goal wrapper disabled after repeated errors");
+            this.DisposeDraw("BMR goal wrapper disabled after repeated errors");
             return;
         }
 
@@ -120,7 +138,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         }
         catch (Exception ex)
         {
-            this.log.Verbose($"Could not dispose BossMod AoE goal draw wrapper cleanly: {ex.Message}");
+            this.log.Verbose($"Could not dispose BossMod goal draw wrapper cleanly: {ex.Message}");
         }
 
         this.draw = null;
@@ -130,7 +148,15 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private void SetStatus(string newStatus)
     {
         this.status = newStatus;
-        this.controller.SetHookState(newStatus);
+        this.SetContributorHookState(newStatus);
+    }
+
+    private void SetContributorHookState(string newStatus)
+    {
+        foreach (var contributor in this.contributors)
+        {
+            contributor.SetHookState(newStatus);
+        }
     }
 
     private sealed class ReflectedDraw : IDisposable
@@ -139,7 +165,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly IDalamudPluginInterface bmrPluginInterface;
         private readonly Action originalDraw;
         private readonly Action wrapperDraw;
-        private readonly AoePackPositioningController controller;
+        private readonly IReadOnlyList<IBossModGoalZoneContributor> contributors;
         private readonly DalamudServices services;
         private readonly IPluginLog log;
         private readonly MethodInfo executeHintsMethod;
@@ -150,6 +176,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly object zoneModuleManager;
         private readonly object hintsBuilder;
         private readonly object hints;
+        private readonly FieldInfo goalZonesField;
         private readonly object actionManager;
         private readonly object rotation;
         private readonly object ai;
@@ -180,12 +207,14 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly PropertyInfo? gameUiHiddenProperty;
         private readonly FieldInfo? windowSystemField;
         private readonly MethodInfo? windowSystemDrawMethod;
+        private string lastGoalPriority = "None";
+        private string lastGoalSources = "<none>";
 
         private ReflectedDraw(
             object plugin,
             IDalamudPluginInterface bmrPluginInterface,
             Action originalDraw,
-            AoePackPositioningController controller,
+            IReadOnlyList<IBossModGoalZoneContributor> contributors,
             DalamudServices services,
             IPluginLog log,
             ReflectedMembers members)
@@ -194,7 +223,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.bmrPluginInterface = bmrPluginInterface;
             this.originalDraw = originalDraw;
             this.wrapperDraw = this.Draw;
-            this.controller = controller;
+            this.contributors = contributors;
             this.services = services;
             this.log = log;
             this.executeHintsMethod = members.ExecuteHintsMethod;
@@ -205,6 +234,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.zoneModuleManager = members.ZoneModuleManager;
             this.hintsBuilder = members.HintsBuilder;
             this.hints = members.Hints;
+            this.goalZonesField = members.GoalZonesField;
             this.actionManager = members.ActionManager;
             this.rotation = members.Rotation;
             this.ai = members.Ai;
@@ -237,7 +267,10 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.windowSystemDrawMethod = members.WindowSystemDrawMethod;
         }
 
-        public static ReflectedDraw? TryCreate(object plugin, AoePackPositioningController controller, DalamudServices services, IPluginLog log, out string reason)
+        public string LastGoalPriority => this.lastGoalPriority;
+        public string LastGoalSources => this.lastGoalSources;
+
+        public static ReflectedDraw? TryCreate(object plugin, IReadOnlyList<IBossModGoalZoneContributor> contributors, DalamudServices services, IPluginLog log, out string reason)
         {
             reason = string.Empty;
             const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -277,6 +310,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 ZoneModuleManager = RequireValue(type.GetField("_zonemod", InstanceFlags)?.GetValue(plugin), "_zonemod"),
                 HintsBuilder = RequireValue(type.GetField("_hintsBuilder", InstanceFlags)?.GetValue(plugin), "_hintsBuilder"),
                 Hints = RequireValue(type.GetField("_hints", InstanceFlags)?.GetValue(plugin), "_hints"),
+                GoalZonesField = Require(hintsType.GetField("GoalZones", InstanceFlags), "AIHints.GoalZones"),
                 ActionManager = RequireValue(type.GetField("_amex", InstanceFlags)?.GetValue(plugin), "_amex"),
                 Rotation = RequireValue(type.GetField("_rotation", InstanceFlags)?.GetValue(plugin), "_rotation"),
                 Ai = RequireValue(type.GetField("_ai", InstanceFlags)?.GetValue(plugin), "_ai"),
@@ -315,7 +349,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             try
             {
-                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, controller, services, log, members);
+                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, contributors, services, log, members);
             }
             catch (Exception ex)
             {
@@ -369,7 +403,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             }
 
             this.hintsBuilderUpdateMethod.Invoke(this.hintsBuilder, [this.hints, (int)this.playerSlotField.GetRawConstantValue()!, moveImminent]);
-            this.controller.TryInjectGoal(this.hints);
+            this.InjectContributorGoals();
             this.queueManualActionsMethod.Invoke(this.actionManager, []);
             this.rotationUpdateMethod.Invoke(this.rotation, [this.animationLockDelayEstimateProperty.GetValue(this.actionManager), (bool)this.isMovingMethod.Invoke(this.movementOverride, [])!, this.services.Condition[ConditionFlag.DutyRecorderPlayback]]);
             this.aiUpdateMethod.Invoke(this.ai, []);
@@ -385,6 +419,61 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.executeHintsMethod.Invoke(this.plugin, []);
             this.cameraDrawWorldPrimitivesMethod?.Invoke(camera, []);
             this.previousUpdateTimeField.SetValue(this.plugin, DateTime.Now - tsStart);
+        }
+
+        private void InjectContributorGoals()
+        {
+            var goalZones = this.goalZonesField.GetValue(this.hints) as IList;
+            if (goalZones == null)
+            {
+                this.lastGoalPriority = "None";
+                this.lastGoalSources = "BMR goal zone list unavailable";
+                return;
+            }
+
+            var contributions = new List<BossModGoalContribution>();
+            foreach (var contributor in this.contributors)
+            {
+                contributor.TryInjectGoal(this.hints, contributions);
+            }
+
+            if (contributions.Count == 0)
+            {
+                this.lastGoalPriority = "None";
+                this.lastGoalSources = "<none>";
+                return;
+            }
+
+            var activePriority = contributions.Max(c => c.Priority);
+            var active = contributions.Where(c => c.Priority == activePriority).ToArray();
+            this.lastGoalPriority = activePriority.ToString();
+            this.lastGoalSources = string.Join(", ", active.Select(c => c.Label).Distinct(StringComparer.Ordinal));
+            goalZones.Add(CreateAdvisoryGoalDelegate(active));
+        }
+
+        private static Delegate CreateAdvisoryGoalDelegate(IReadOnlyList<BossModGoalContribution> contributions)
+        {
+            var goals = contributions.Select(c => c.Goal).ToArray();
+            var invoke = Require(goals[0].GetType().GetMethod("Invoke"), $"{goals[0].GetType().FullName}.Invoke");
+            var parameters = invoke.GetParameters();
+            if (parameters.Length != 1 || invoke.ReturnType != typeof(float))
+            {
+                throw new InvalidOperationException($"Unexpected BossMod goal delegate signature: {goals[0].GetType().FullName}.");
+            }
+
+            var wposType = parameters[0].ParameterType;
+            var parameter = Expression.Parameter(wposType, "p");
+            Expression max = Expression.Constant(0f);
+            var mathMax = typeof(Math).GetMethod(nameof(Math.Max), [typeof(float), typeof(float)])!;
+            foreach (var goal in goals)
+            {
+                max = Expression.Call(mathMax, max, Expression.Invoke(Expression.Constant(goal, goal.GetType()), parameter));
+            }
+
+            var clamp = typeof(GoalZoneScorePolicy).GetMethod(nameof(GoalZoneScorePolicy.ClampAdvisoryScore), BindingFlags.Static | BindingFlags.Public)!;
+            var score = Expression.Call(clamp, max);
+            var delegateType = typeof(Func<,>).MakeGenericType(wposType, typeof(float));
+            return Expression.Lambda(delegateType, score, parameter).Compile();
         }
 
         private bool IsUiHidden()
@@ -426,6 +515,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             public object ZoneModuleManager = null!;
             public object HintsBuilder = null!;
             public object Hints = null!;
+            public FieldInfo GoalZonesField = null!;
             public object ActionManager = null!;
             public object Rotation = null!;
             public object Ai = null!;

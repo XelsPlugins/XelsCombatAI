@@ -4,7 +4,6 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Conditions;
-using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 
 namespace XelsCombatAI.UI;
@@ -12,8 +11,11 @@ namespace XelsCombatAI.UI;
 internal sealed class DecisionOverlayController(
     Configuration config,
     DalamudServices services,
-    BossModPresetController presetController,
     AoePackPositioningController aoePackPositioningController,
+    PassageOfArmsPositioningController passageOfArmsPositioningController,
+    PartyGravityPositioningController partyGravityPositioningController,
+    HealerAoePositioningController healerAoePositioningController,
+    SurvivabilityZonePositioningController survivabilityZonePositioningController,
     BossModReflectionSafety bossModSafety,
     GapCloserController gapCloserController,
     EscapeGapCloserController escapeGapCloserController,
@@ -39,7 +41,7 @@ internal sealed class DecisionOverlayController(
         }
 
         var drawList = ImGui.GetBackgroundDrawList();
-        var snapshots = this.BuildSnapshots(player).ToArray();
+        var snapshots = this.BuildSnapshots(player).OrderBy(snapshot => snapshot.Priority).ToArray();
         // Group snapshots by their label anchor position so overlapping labels are stacked vertically.
         var anchorCounts = new Dictionary<(int, int), int>();
         foreach (var snapshot in snapshots)
@@ -62,6 +64,7 @@ internal sealed class DecisionOverlayController(
     {
         var target = services.TargetManager.Target as IBattleChara;
 
+
         if (rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var nextAction, out _))
         {
             var shapeKind = nextAction.Shape switch
@@ -70,17 +73,7 @@ internal sealed class DecisionOverlayController(
                 RsrAoeShape.StraightLine => DecisionOverlayShapeKind.Rectangle,
                 _                        => DecisionOverlayShapeKind.Circle
             };
-            // Project from the best known candidate destination so the player always sees what
-            // they'd hit when they arrive — whether moving (Overlay) or drifting (SuggestedCandidate).
-            var injectedOverlay = aoePackPositioningController.Overlay;
-            var suggestion = aoePackPositioningController.SuggestedCandidate;
-            var actionOrigin = injectedOverlay != null
-                ? injectedOverlay.Candidate
-                : suggestion != null
-                    ? suggestion.Candidate
-                    : nextAction.Shape == RsrAoeShape.Circle
-                        ? nextAction.PrimaryTargetPosition
-                        : player.Position;
+            var actionOrigin = this.ResolveNextActionOrigin(player, nextAction);
             var rotation = MathF.Atan2(
                 nextAction.PrimaryTargetPosition.X - actionOrigin.X,
                 nextAction.PrimaryTargetPosition.Z - actionOrigin.Z);
@@ -95,48 +88,74 @@ internal sealed class DecisionOverlayController(
                 []);
         }
 
-        if (target != null)
+        var healerAoe = healerAoePositioningController.Overlay;
+        if (healerAoe != null)
         {
-            if (presetController.LastRange > 0f)
-            {
-                var state = presetController.LastMovement == true ? DecisionOverlayState.Active : DecisionOverlayState.Suppressed;
-                yield return new(
-                    DecisionOverlaySource.Range,
-                    state,
-                    $"Range: {presetController.LastRange:0}y",
-                    presetController.LastMovement == true ? null : "movement suppressed",
-                    10,
-                    [new(DecisionOverlayShapeKind.Circle, state, target.Position, presetController.LastRange + target.HitboxRadius, 0f, 0f, 0f)],
-                    [],
-                    []);
-            }
-
-
-        }
-
-        if (presetController.LastHealerStayNearParty == true)
-        {
-            var partyMembers = this.GetVisiblePartyMembers(player).ToArray();
-            if (partyMembers.Length > 0)
-            {
-                var center = new Vector3(partyMembers.Average(member => member.Position.X), player.Position.Y, partyMembers.Average(member => member.Position.Z));
-                yield return new(
-                    DecisionOverlaySource.HealerCoverage,
-                    DecisionOverlayState.Candidate,
-                    "Healer: party",
-                    null,
-                    35,
-                    [new(DecisionOverlayShapeKind.Circle, DecisionOverlayState.Candidate, center, 15f, 0f, 0f, 0f)],
-                    [],
-                    partyMembers.Select(member => new DecisionOverlayMarker(DecisionOverlayState.Candidate, member.Position, member.HitboxRadius, null)).ToArray());
-            }
+            yield return new(
+                DecisionOverlaySource.HealerCoverage,
+                DecisionOverlayState.Candidate,
+                $"Heal: {healerAoe.CurrentHits} -> {healerAoe.BestHits}",
+                healerAoe.ActionName,
+                35,
+                [new(DecisionOverlayShapeKind.Circle, DecisionOverlayState.Candidate, healerAoe.Candidate, healerAoe.Radius, 0f, 0f, 0f)],
+                [new(DecisionOverlayState.Candidate, player.Position, healerAoe.Candidate, "Heal")],
+                healerAoe.Targets.Select(t => new DecisionOverlayMarker(
+                    t.Hit ? DecisionOverlayState.Active : DecisionOverlayState.Suppressed,
+                    t.Position, t.Radius, t.Hit ? null : null)).ToArray());
         }
 
         var aoe = aoePackPositioningController.Overlay;
         if (aoe != null)
         {
-            var rotation = MathF.Atan2(aoe.PrimaryTarget.X - aoe.Candidate.X, aoe.PrimaryTarget.Z - aoe.Candidate.Z);
-            var shapeKind = aoe.Shape switch
+            if (string.Equals(aoe.ActionName, "Pack engagement", StringComparison.Ordinal))
+            {
+                // Approach ring — PrimaryTarget is the pack centroid, Radius is the engagement range
+                var centroid = aoe.PrimaryTarget;
+                var rangeLabel = $"{aoe.Radius:0}y";
+                yield return new(
+                    DecisionOverlaySource.AoE,
+                    DecisionOverlayState.Candidate,
+                    "Engage",
+                    rangeLabel,
+                    40,
+                    [new(DecisionOverlayShapeKind.Circle, DecisionOverlayState.Candidate, centroid, aoe.Radius, 0f, aoe.Radius, 0f)],
+                    [new(DecisionOverlayState.Candidate, player.Position, centroid, rangeLabel)],
+                    aoe.Targets.Select(t => new DecisionOverlayMarker(DecisionOverlayState.Suppressed, t.Position, t.Radius, null)).ToArray());
+            }
+            else
+            {
+                var rotation = MathF.Atan2(aoe.PrimaryTarget.X - aoe.Candidate.X, aoe.PrimaryTarget.Z - aoe.Candidate.Z);
+                var shapeKind = aoe.Shape switch
+                {
+                    nameof(RsrAoeShape.Cone)         => DecisionOverlayShapeKind.Cone,
+                    nameof(RsrAoeShape.StraightLine) => DecisionOverlayShapeKind.Rectangle,
+                    _                                => DecisionOverlayShapeKind.Circle
+                };
+                var label = aoePackPositioningController.RsrHenchedActive
+                    ? $"AoE: {aoe.CurrentHits}→{aoe.BestHits} +RSR"
+                    : $"AoE: {aoe.CurrentHits}→{aoe.BestHits}";
+                yield return new(
+                    DecisionOverlaySource.AoE,
+                    DecisionOverlayState.Candidate,
+                    label,
+                    aoe.ActionName,
+                    40,
+                    [new(shapeKind, DecisionOverlayState.Candidate, aoe.Candidate, aoe.Radius, aoe.HalfWidth, aoe.Radius, rotation)],
+                    [new(DecisionOverlayState.Candidate, player.Position, aoe.Candidate, "AoE")],
+                    aoe.Targets.Select(t => new DecisionOverlayMarker(
+                        t.InsideAvoidedHitbox ? DecisionOverlayState.Rejected
+                            : t.Hit ? DecisionOverlayState.Active : DecisionOverlayState.Rejected,
+                        t.Position, t.Radius,
+                        t.InsideAvoidedHitbox ? t.AvoidanceLabel ?? "inside" : t.Hit ? null : "miss")).ToArray());
+            }
+        }
+
+        // AoE suggestion — better position found but still evaluating (debounce not yet elapsed)
+        var suggestion = aoePackPositioningController.SuggestedCandidate;
+        if (suggestion != null && aoe == null)
+        {
+            var rotation = MathF.Atan2(suggestion.PrimaryTarget.X - suggestion.Candidate.X, suggestion.PrimaryTarget.Z - suggestion.Candidate.Z);
+            var shapeKind = suggestion.Shape switch
             {
                 nameof(RsrAoeShape.Cone)         => DecisionOverlayShapeKind.Cone,
                 nameof(RsrAoeShape.StraightLine) => DecisionOverlayShapeKind.Rectangle,
@@ -144,31 +163,86 @@ internal sealed class DecisionOverlayController(
             };
             yield return new(
                 DecisionOverlaySource.AoE,
-                DecisionOverlayState.Candidate,
-                aoePackPositioningController.RsrHenchedActive ? $"AoE: {aoe.CurrentHits} -> {aoe.BestHits} +RSR" : $"AoE: {aoe.CurrentHits} -> {aoe.BestHits}",
-                aoe.ActionName,
-                40,
-                [new(shapeKind, DecisionOverlayState.Candidate, aoe.Candidate, aoe.Radius, aoe.HalfWidth, aoe.Radius, rotation)],
-                [new(DecisionOverlayState.Candidate, player.Position, aoe.Candidate, "AoE")],
-                aoe.Targets.Select(targetMarker => new DecisionOverlayMarker(
-                    targetMarker.Hit ? DecisionOverlayState.Active : DecisionOverlayState.Rejected,
-                    targetMarker.Position,
-                    targetMarker.Radius,
-                    targetMarker.Hit ? null : "miss")).ToArray());
+                DecisionOverlayState.Future,
+                $"AoE: {suggestion.CurrentHits}→{suggestion.BestHits}?",
+                suggestion.ActionName,
+                39,
+                [new(shapeKind, DecisionOverlayState.Future, suggestion.Candidate, suggestion.Radius, suggestion.HalfWidth, suggestion.Radius, rotation)],
+                [new(DecisionOverlayState.Future, player.Position, suggestion.Candidate, "AoE?")],
+                suggestion.Targets.Select(t => new DecisionOverlayMarker(
+                    t.Hit ? DecisionOverlayState.Future : DecisionOverlayState.Suppressed,
+                    t.Position, t.Radius, null)).ToArray());
         }
 
-        var aoeSuggestion = aoePackPositioningController.SuggestedCandidate;
-        if (aoeSuggestion != null)
+
+        passageOfArmsPositioningController.RefreshOverlay();
+        var passage = passageOfArmsPositioningController.Overlay;
+        if (passage != null)
         {
+            var state = passage.Injected
+                ? passage.PlayerInCone ? DecisionOverlayState.Active : DecisionOverlayState.Candidate
+                : DecisionOverlayState.Future;
             yield return new(
-                DecisionOverlaySource.AoE,
-                DecisionOverlayState.Future,
-                $"AoE: drift {aoeSuggestion.CurrentHits} -> {aoeSuggestion.BestHits}",
-                aoeSuggestion.ActionName,
-                38,
-                [],
-                [new(DecisionOverlayState.Future, player.Position, aoeSuggestion.Candidate, "AoE")],
-                []);
+                DecisionOverlaySource.PassageOfArms,
+                state,
+                passage.PlayerInCone ? "Passage: inside" : "Passage",
+                passage.PaladinName,
+                45,
+                [new(DecisionOverlayShapeKind.Cone, state, passage.PaladinPosition, passage.Radius, passage.HalfAngle, passage.Radius, passage.RotationRadians)],
+                [new(state, player.Position, passage.PreferredPosition, "Passage")],
+                [
+                    new DecisionOverlayMarker(DecisionOverlayState.Active, passage.PaladinPosition, 0.35f, "PLD"),
+                    new DecisionOverlayMarker(state, passage.PreferredPosition, 0.35f, "Wings")
+                ]);
+        }
+
+        partyGravityPositioningController.RefreshOverlay();
+        var partyGravity = partyGravityPositioningController.Overlay;
+        if (partyGravity != null)
+        {
+            var state = partyGravity.Injected
+                ? partyGravity.DistanceToCluster <= partyGravity.PullRadius ? DecisionOverlayState.Active : DecisionOverlayState.Candidate
+                : DecisionOverlayState.Future;
+            yield return new(
+                DecisionOverlaySource.PartyGravity,
+                state,
+                partyGravity.DistanceToCluster <= partyGravity.PullRadius ? "Party: grouped" : "Party",
+                $"{partyGravity.Members.Count} members",
+                46,
+                [
+                    new(DecisionOverlayShapeKind.Circle, state, partyGravity.Center, partyGravity.PullRadius, 0f, 0f, 0f)
+                ],
+                partyGravity.DistanceToCluster > partyGravity.PullRadius
+                    ? [new DecisionOverlayLine(state, player.Position, partyGravity.Center, "Party")]
+                    : [],
+                partyGravity.Members
+                    .Select(member => new DecisionOverlayMarker(DecisionOverlayState.Candidate, member, 0.35f, null))
+                    .Append(new DecisionOverlayMarker(DecisionOverlayState.Rejected, partyGravity.Center, 0.25f, "Center"))
+                    .ToArray());
+        }
+
+        survivabilityZonePositioningController.RefreshOverlay();
+        var survZone = survivabilityZonePositioningController.Overlay;
+        if (survZone != null)
+        {
+            var state = survZone.Injected
+                ? survZone.PlayerInZone ? DecisionOverlayState.Active : DecisionOverlayState.Candidate
+                : DecisionOverlayState.Future;
+            var label = survZone.PlayerInZone ? $"{survZone.ZoneName}: inside" : survZone.ZoneName;
+            yield return new(
+                DecisionOverlaySource.SurvivabilityZone,
+                state,
+                label,
+                survZone.CasterName,
+                44,
+                [new(DecisionOverlayShapeKind.Circle, state, survZone.ZoneCenter, survZone.Radius, 0f, 0f, 0f)],
+                survZone.PlayerInZone
+                    ? []
+                    : [new DecisionOverlayLine(state, player.Position, survZone.ZoneCenter, survZone.ZoneName)],
+                [
+                    new DecisionOverlayMarker(DecisionOverlayState.Active, survZone.CasterPosition, 0.35f, survZone.ZoneName[..3]),
+                    new DecisionOverlayMarker(state, survZone.ZoneCenter, 0.25f, "Zone")
+                ]);
         }
 
         this.AddGapCloserSnapshot(player, target, out var gapCloserSnapshot);
@@ -206,6 +280,32 @@ internal sealed class DecisionOverlayController(
                 [new(DecisionOverlayState.Active, player.Position, destination, "Move")],
                 [new(DecisionOverlayState.Active, destination, 0.35f, null)]);
         }
+    }
+
+    private Vector3 ResolveNextActionOrigin(IBattleChara player, RsrAoeActionSnapshot nextAction)
+    {
+        if (nextAction.IsFriendly && nextAction.Shape == RsrAoeShape.Circle)
+        {
+            return healerAoePositioningController.Overlay?.Candidate ?? player.Position;
+        }
+
+        var injectedOverlay = aoePackPositioningController.Overlay;
+        var suggestedOverlay = aoePackPositioningController.SuggestedCandidate;
+        if (injectedOverlay != null &&
+            injectedOverlay.ActionId == nextAction.AdjustedActionId)
+        {
+            return injectedOverlay.Candidate;
+        }
+
+        if (suggestedOverlay != null &&
+            suggestedOverlay.ActionId == nextAction.AdjustedActionId)
+        {
+            return suggestedOverlay.Candidate;
+        }
+
+        var targetCenteredCircle = nextAction.Shape == RsrAoeShape.Circle &&
+                                   nextAction.Range > nextAction.EffectRange + 3f;
+        return targetCenteredCircle ? nextAction.PrimaryTargetPosition : player.Position;
     }
 
 
@@ -267,9 +367,7 @@ internal sealed class DecisionOverlayController(
 
     private IEnumerable<IBattleChara> GetVisiblePartyMembers(IBattleChara player)
     {
-        return services.ObjectTable
-            .OfType<IBattleChara>()
-            .Where(actor => actor.ObjectKind == ObjectKind.Pc && actor.GameObjectId != player.GameObjectId);
+        return PartyAllyProvider.EnumerateVisiblePartyAllies(services, player);
     }
 
     private void DrawSnapshot(ImDrawListPtr drawList, DecisionOverlaySnapshot snapshot, int labelStackIndex = 0)

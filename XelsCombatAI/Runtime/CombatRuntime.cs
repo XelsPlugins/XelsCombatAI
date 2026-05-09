@@ -1,6 +1,7 @@
 using System;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
+using XelsCombatAI.Game;
 
 namespace XelsCombatAI.Runtime;
 
@@ -13,9 +14,14 @@ internal sealed class CombatRuntime(
     BossModReflectionSafety bossModSafety,
     BossModGoalZoneHook aoeGoalHook,
     AoePackPositioningController aoePackPositioningController,
+    PassageOfArmsPositioningController passageOfArmsPositioningController,
+    PartyGravityPositioningController partyGravityPositioningController,
+    HealerAoePositioningController healerAoePositioningController,
+    SurvivabilityZonePositioningController survivabilityZonePositioningController,
     ManualMovementInputDetector manualMovement,
     GapCloserController gapCloserController,
     EscapeGapCloserController escapeGapCloserController,
+    JobRangeProvider jobRangeProvider,
     Action saveConfig,
     Action updateDtr,
     Action<string> print)
@@ -34,14 +40,11 @@ internal sealed class CombatRuntime(
     public void OnFrameworkUpdate(IFramework framework)
     {
         _ = framework;
+        jobRangeProvider.Tick();
+
         if (!config.Enabled)
         {
             return;
-        }
-
-        if (config.ManageAoePackPositioning)
-        {
-            aoeGoalHook.EnsureActive();
         }
 
         if (!dependencyChecker.DependenciesAvailable(out var missing))
@@ -51,6 +54,17 @@ internal sealed class CombatRuntime(
         }
 
         this.ClearDependencyWaitState();
+
+        if (config.ManageAoePackPositioning ||
+            config.ManagePartyGravityPositioning ||
+            config.KeepTrashTargetSelected ||
+            config.ManageTargetUptime ||
+            config.AvoidStandingInsideEnemies ||
+            config.ManageDefensiveGroundZonePositioning ||
+            config.ManagePassageOfArmsPositioning)
+        {
+            aoeGoalHook.EnsureActive();
+        }
 
         if (!services.Condition[ConditionFlag.InCombat])
         {
@@ -119,6 +133,10 @@ internal sealed class CombatRuntime(
         this.manualMovementSuppressUntil = DateTime.MinValue;
         presetController.ResetCache();
         aoePackPositioningController.Reset();
+        passageOfArmsPositioningController.Reset();
+        partyGravityPositioningController.Reset();
+        healerAoePositioningController.Reset();
+        survivabilityZonePositioningController.Reset();
         aoeGoalHook.Reset();
     }
 
@@ -150,8 +168,11 @@ internal sealed class CombatRuntime(
             services.Condition[ConditionFlag.InCombat],
             services.Condition[ConditionFlag.Unconscious],
             player?.ClassJob.RowId ?? 0,
+            jobRangeProvider.PackAoeRange,
+            jobRangeProvider.EngagementRange,
             target != null,
             target?.BaseId ?? 0,
+            target?.GameObjectId ?? 0,
             services.PartyList.Count,
             this.GetDependencyWarning(),
             this.GetTrueNorthWarning(),
@@ -159,14 +180,13 @@ internal sealed class CombatRuntime(
             presetController.LastPositional,
             positionalsController.GetTrueNorthCharges(),
             positionalsController.HasActiveTrueNorth(),
-            presetController.LastRange,
+            presetController.LastTargetUptimeRange,
             presetController.LastMovement,
             presetController.LastMovementRangeStrategy,
             presetController.LastForbiddenZoneCushion,
             presetController.LastLeylinesBetweenTheLines,
             presetController.LastLeylinesRetrace,
             presetController.LastLeylinesGoal,
-            presetController.LastHealerStayNearParty,
             presetController.LastHealerHeal,
             presetController.LastHealerEsuna,
             presetController.LastHealerOutOfCombat,
@@ -192,8 +212,14 @@ internal sealed class CombatRuntime(
             config.EscapeGapCloserPCT,
             config.EscapeGapCloserBLU,
             bossModSafety.Status,
+            bossModSafety.Diagnostics,
             aoeGoalHook.Status,
+            aoeGoalHook.Diagnostics,
             aoePackPositioningController.Status,
+            passageOfArmsPositioningController.Status,
+            partyGravityPositioningController.Status,
+            healerAoePositioningController.Status,
+            survivabilityZonePositioningController.Status,
             manualMovement.Status,
             this.AutomatedMovementSuppressed,
             gapCloserController.LastGapCloserSafety,
@@ -230,6 +256,11 @@ internal sealed class CombatRuntime(
         }
 
         presetController.ResetCache();
+        aoePackPositioningController.Reset();
+        passageOfArmsPositioningController.Reset();
+        partyGravityPositioningController.Reset();
+        healerAoePositioningController.Reset();
+        aoeGoalHook.Reset();
         this.manualMovementSuppressUntil = DateTime.MinValue;
         if (!string.Equals(this.lastMissingDependencies, missing, StringComparison.Ordinal))
         {

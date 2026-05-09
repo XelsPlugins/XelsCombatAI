@@ -7,6 +7,8 @@ internal static class ActionUse
     public const uint TrueNorthActionId = 7546;
     public const uint TrueNorthStatusId = 1250;
     public const uint CircleOfPowerStatusId = 738;
+    public const uint PassageOfArmsActionId = 7385;
+    public const uint PassageOfArmsStatusId = 1175;
     public const uint PaladinInterveneActionId = 16461;
     public const uint WarriorOnslaughtActionId = 7386;
     public const uint DarkKnightShadowstrideActionId = 36926;

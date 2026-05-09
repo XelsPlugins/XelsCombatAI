@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.Dtr;
 using Dalamud.Interface.Windowing;
@@ -6,6 +7,7 @@ using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using ECommons;
+using XelsCombatAI.Game;
 
 namespace XelsCombatAI;
 
@@ -26,6 +28,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static IObjectTable ObjectTable { get; set; } = null!;
     [PluginService] private static ITargetManager TargetManager { get; set; } = null!;
     [PluginService] private static IPartyList PartyList { get; set; } = null!;
+    [PluginService] private static ITextureProvider TextureProvider { get; set; } = null!;
 
     private readonly Configuration config;
     private readonly WindowSystem windowSystem = new("XelsCombatAI");
@@ -34,6 +37,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly DalamudServices services;
     private readonly CombatRuntime runtime;
     private readonly DecisionOverlayController decisionOverlay;
+    private readonly JobRangeProvider jobRangeProvider;
 
     public Plugin()
     {
@@ -61,23 +65,30 @@ public sealed class Plugin : IDalamudPlugin
         var bossMod = new BossModIpc(PluginInterface);
         var bossModSafety = new BossModReflectionSafety(PluginInterface, Log);
         var manualMovement = new ManualMovementInputDetector();
-        var rotationSolver = new RotationSolverIpc();
+        var rotationSolver = new RotationSolverIpc(PluginInterface);
         var rotationSolverActions = new RotationSolverActionReflection(PluginInterface, Log);
         var dependencyChecker = new DependencyChecker(this.config, this.services, bossMod, rotationSolver);
-        var rangePlanner = new RangePlanner(this.config, this.services, bossMod);
+        this.jobRangeProvider = new JobRangeProvider(this.services);
+        this.jobRangeProvider.Initialize();
+        var targetUptimePlanner = new TargetUptimePlanner(this.services, bossMod, this.jobRangeProvider);
         BossModPresetController? presetController = null;
         CombatRuntime? runtime = null;
         var positionalsController = new PositionalsController(this.config, this.services, rotationSolver, positional => presetController!.SetPositional(positional), this.UpdateDtr);
         var gapCloserController = new GapCloserController(this.config, this.services, bossMod, bossModSafety);
         var escapeGapCloserController = new EscapeGapCloserController(this.config, this.services, bossModSafety, gapCloserController);
-        var aoePackPositioningController = new AoePackPositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => rangePlanner.CurrentTargetHasBossModule());
-        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, aoePackPositioningController);
+        var aoePackPositioningController = new AoePackPositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), this.jobRangeProvider);
+        var passageOfArmsPositioningController = new PassageOfArmsPositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
+        var partyGravityPositioningController = new PartyGravityPositioningController(this.config, this.services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true, targetUptimePlanner.ShouldDeferPartyGravityForMeleeUptime);
+        var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, new RotationSolverActionReflection(PluginInterface, Log), () => runtime?.AutomatedMovementSuppressed == true);
+        var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
+        var arenaEdgePositioningController = new ArenaEdgePositioningController(this.config, this.services);
+        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, [aoePackPositioningController, passageOfArmsPositioningController, partyGravityPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController]);
         presetController = new BossModPresetController(
             this.config,
             this.services,
             bossMod,
             bossModSafety,
-            rangePlanner,
+            targetUptimePlanner,
             positionalsController,
             gapCloserController,
             escapeGapCloserController);
@@ -91,9 +102,14 @@ public sealed class Plugin : IDalamudPlugin
             bossModSafety,
             aoeGoalHook,
             aoePackPositioningController,
+            passageOfArmsPositioningController,
+            partyGravityPositioningController,
+            healerAoePositioningController,
+            survivabilityZonePositioningController,
             manualMovement,
             gapCloserController,
             escapeGapCloserController,
+            this.jobRangeProvider,
             this.SaveConfig,
             this.UpdateDtr,
             this.Print);
@@ -101,8 +117,11 @@ public sealed class Plugin : IDalamudPlugin
         this.decisionOverlay = new DecisionOverlayController(
             this.config,
             this.services,
-            presetController,
             aoePackPositioningController,
+            passageOfArmsPositioningController,
+            partyGravityPositioningController,
+            healerAoePositioningController,
+            survivabilityZonePositioningController,
             bossModSafety,
             gapCloserController,
             escapeGapCloserController,
@@ -118,7 +137,9 @@ public sealed class Plugin : IDalamudPlugin
             this.runtime.GetDependencyWarning,
             this.runtime.GetTrueNorthWarning,
             this.runtime.EnsureRsrTrueNorthDisabled,
-            KeyState);
+            KeyState,
+            TextureProvider,
+            Path.Combine(PluginInterface.AssemblyLocation.DirectoryName ?? string.Empty, "icon.png"));
 
         this.dtrEntry = DtrBar.Get("XelsCombatAI");
         this.dtrEntry.OnClick = this.OnDtrClick;
@@ -143,6 +164,7 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         this.runtime.DisposeRuntime();
+        jobRangeProvider.Dispose();
         Framework.Update -= this.runtime.OnFrameworkUpdate;
         PluginInterface.UiBuilder.Draw -= this.decisionOverlay.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= this.OpenConfig;

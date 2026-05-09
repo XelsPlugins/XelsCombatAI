@@ -27,7 +27,9 @@ internal sealed record RsrAoeActionSnapshot(
     ulong PrimaryTargetId,
     Vector3 PrimaryTargetPosition,
     float PrimaryTargetRadius,
-    int AffectedTargetCount);
+    int AffectedTargetCount,
+    bool IsFriendly,
+    bool IsTargetArea);
 
 internal sealed class RotationSolverActionReflection(IDalamudPluginInterface pluginInterface, IPluginLog log)
 {
@@ -39,6 +41,12 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
     private string status = "unresolved";
 
     public string Status => this.status;
+    public string Diagnostics => string.Join(
+        "; ",
+        $"Status={this.status}",
+        $"ActionUpdaterType={this.actionUpdaterType != null}",
+        $"NextGCDActionProperty={this.nextGcdActionProperty != null}",
+        $"NextResolveUtc={this.nextResolveAttempt:O}");
 
     public void Reset()
     {
@@ -91,11 +99,6 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             }
 
             var castType = Convert.ToInt32(GetPropertyValue(actionRow, actionRow.GetType(), "CastType") ?? 0);
-            if (castType is not 2 and not 3 and not 4)
-            {
-                reason = $"RSR unsupported cast type {castType}";
-                return false;
-            }
 
             var targetResultType = targetResult.GetType();
             var primaryTarget = GetPropertyValue(targetResult, targetResultType, "Target");
@@ -120,25 +123,69 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             var xAxisModifier = ReadFloat(GetPropertyValue(actionRow, actionRow.GetType(), "XAxisModifier"), 0f);
             var targetInfo = GetPropertyValue(action, actionType, "TargetInfo");
             var range = targetInfo != null ? ReadFloat(GetPropertyValue(targetInfo, targetInfo.GetType(), "Range"), 25f) : 25f;
+            var isTargetArea = targetInfo != null && ReadBool(GetPropertyValue(targetInfo, targetInfo.GetType(), "IsTargetArea"));
             var config = GetPropertyValue(action, actionType, "Config");
             var aoeCount = config != null ? Math.Max(1, Convert.ToInt32(GetPropertyValue(config, config.GetType(), "AoeCount") ?? 3)) : 3;
+            var setting = GetPropertyValue(action, actionType, "Setting");
+            var isFriendly = setting != null && Convert.ToBoolean(GetPropertyValue(setting, setting.GetType(), "IsFriendly") ?? false);
             var actionId = Convert.ToUInt32(GetPropertyValue(action, actionType, "ID") ?? 0u);
             var adjustedId = Convert.ToUInt32(GetPropertyValue(action, actionType, "AdjustedID") ?? actionId);
             var name = GetPropertyValue(actionRow, actionRow.GetType(), "Name")?.ToString() ?? adjustedId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            // CastType=1 (Targeted) in the Lumina sheet describes targeting UI, not AoE geometry.
+            // Some actions (e.g. Chain Saw) have CastType=1 but fire a multi-hit line or circle AoE.
+            // RSR's GetCanTarget/GetAffectsTarget skips geometry for CastType=1 so affectedCount is
+            // always 0 or 1 — we can't rely on it. Instead infer shape from the action sheet geometry:
+            //   XAxisModifier > 0 && EffectRange > 0 → StraightLine beam (beam half-width from XAxisModifier)
+            //   XAxisModifier == 0 && EffectRange > 0 && Range >> EffectRange → targeted Circle AoE
+            // For inferred shapes, override Range to 0 so the self-origin repositioning path is taken —
+            // the beam fires from the player regardless of the selection range.
+            int resolvedCastType;
+            float resolvedRange;
+            if (castType is 2 or 3 or 4)
+            {
+                resolvedCastType = castType;
+                resolvedRange = range;
+            }
+            else if (castType == 1 && effectRange > 0f && !isTargetArea && !isFriendly)
+            {
+                // XAxisModifier > 0 indicates a beam width — treat as StraightLine.
+                // Otherwise it's a radial AoE around the target — treat as Circle.
+                resolvedCastType = xAxisModifier > 0f ? 4 : 2;
+                resolvedRange = 0f;
+            }
+            else
+            {
+                reason = $"RSR unsupported cast type {castType}";
+                return false;
+            }
+
+            // HalfWidth semantics differ by shape:
+            //   StraightLine: beam half-width in yalms (XAxisModifier / 2)
+            //   Cone: half-angle in radians — RSR hardcodes π/3 (60°) regardless of XAxisModifier
+            //   Circle: unused
+            var halfWidth = (RsrAoeShape)resolvedCastType switch
+            {
+                RsrAoeShape.StraightLine => xAxisModifier > 0f ? xAxisModifier / 2f : 2f,
+                RsrAoeShape.Cone         => MathF.PI / 3f,
+                _                        => 0f,
+            };
 
             snapshot = new(
                 actionId,
                 adjustedId,
                 name,
-                (RsrAoeShape)castType,
-                Math.Max(1f, range),
+                (RsrAoeShape)resolvedCastType,
+                Math.Max(1f, resolvedRange),
                 Math.Max(1f, effectRange),
-                xAxisModifier > 0f ? xAxisModifier / 2f : 2f,
+                halfWidth,
                 aoeCount,
                 primaryId,
                 primaryPosition,
                 primaryRadius,
-                affectedCount);
+                affectedCount,
+                isFriendly,
+                isTargetArea);
             reason = "available";
             return true;
         }
@@ -173,10 +220,16 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             }
 
             var type = FindActionUpdaterType();
-            var property = type?.GetProperty("NextGCDAction", BindingFlags.Static | BindingFlags.NonPublic);
-            if (type == null || property == null)
+            if (type == null)
             {
-                this.ResetWithStatus("RSR action updater not found");
+                this.ResetWithStatus("RSR ActionUpdater type not found");
+                return false;
+            }
+
+            var property = type.GetProperty("NextGCDAction", BindingFlags.Static | BindingFlags.NonPublic);
+            if (property == null)
+            {
+                this.ResetWithStatus("RSR NextGCDAction property not found");
                 return false;
             }
 
@@ -193,27 +246,19 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
         }
     }
 
-    private static Type? FindActionUpdaterType()
+    private Type? FindActionUpdaterType()
     {
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            Type? type;
-            try
-            {
-                type = assembly.GetType(ActionUpdaterTypeName, throwOnError: false);
-            }
-            catch
-            {
-                continue;
-            }
+        var plugin = ReflectionObjectSearch.FindLoadedPlugin(
+            pluginInterface,
+            "RotationSolver.RotationSolverPlugin",
+            maxDepth: 2,
+            "RotationSolver",
+            "Rotation Solver Reborn");
+        if (plugin == null) return null;
 
-            if (type != null)
-            {
-                return type;
-            }
-        }
-
-        return null;
+        var assembly = plugin.GetType().Assembly;
+        try { return assembly.GetType(ActionUpdaterTypeName, throwOnError: false); }
+        catch { return null; }
     }
 
     private static bool IsRotationSolverLoaded(IDalamudPluginInterface pluginInterface)
@@ -258,6 +303,11 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
     private static float ReadFloat(object? value, float fallback)
     {
         return value == null ? fallback : Convert.ToSingle(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static bool ReadBool(object? value)
+    {
+        return value != null && Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static ulong ReadUlong(object? value)

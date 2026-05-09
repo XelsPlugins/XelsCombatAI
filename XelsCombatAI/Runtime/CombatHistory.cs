@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using XelsCombatAI.Combat;
 using XelsCombatAI.Game;
+using XelsCombatAI.Integrations;
 
 namespace XelsCombatAI.Runtime;
 
@@ -15,6 +16,7 @@ internal sealed class CombatHistory
     private int count;
     private DateTime combatStart = DateTime.MinValue;
     private DateTime lastRecordedAt = DateTime.MinValue;
+    private StateCommandType lastSeenRsrSnapshotMode;
 
     public void Reset()
     {
@@ -22,6 +24,7 @@ internal sealed class CombatHistory
         this.count = 0;
         this.combatStart = DateTime.MinValue;
         this.lastRecordedAt = DateTime.MinValue;
+        this.lastSeenRsrSnapshotMode = default;
     }
 
     public void Record(RuntimeStatus status, AoePackPositioningStatus aoe)
@@ -35,22 +38,36 @@ internal sealed class CombatHistory
 
         this.lastRecordedAt = now;
 
+        if (aoe.RsrHenchedActive)
+            this.lastSeenRsrSnapshotMode = aoe.RsrSnapshotMode;
+
         var frame = new CombatHistoryFrame(
             T: (float)(now - this.combatStart).TotalSeconds,
             InCombat: status.InCombat,
             IsDead: status.IsDead,
             PlayerClassJobId: status.PlayerClassJobId,
             TargetBaseId: status.TargetBaseId,
+            TargetObjectId: status.TargetObjectId,
             Movement: status.LastMovement,
             AutomatedMovementSuppressed: status.AutomatedMovementSuppressed,
             MovementRangeStrategy: status.LastMovementRangeStrategy,
-            ForbiddenZoneCushion: status.LastForbiddenZoneCushion,
-            Range: status.LastRange,
+            SafetyBuffer: status.LastForbiddenZoneCushion,
+            TargetUptimeRange: status.LastTargetUptimeRange,
             LastPositional: status.LastPositional,
             TrueNorthActive: status.TrueNorthActive,
             TrueNorthCharges: status.TrueNorthCharges,
             GapSafety: status.LastGapCloserSafety,
             EscapeSafety: status.LastEscapeGapCloserSafety,
+            PartyGravityReason: status.PartyGravityPositioning.LastReason,
+            PartyGravityInjected: status.PartyGravityPositioning.Injected,
+            PartyGravityMembers: status.PartyGravityPositioning.PartyMembers,
+            PartyGravityClusterMembers: status.PartyGravityPositioning.ClusterMembers,
+            PartyGravityDutySupportMembers: status.PartyGravityPositioning.DutySupportMembers,
+            HealerAoeReason: status.HealerAoePositioning.LastReason,
+            HealerAoeInjected: status.HealerAoePositioning.Injected,
+            HealerAoeMembers: status.HealerAoePositioning.PartyMembers,
+            HealerAoeCurrentHits: status.HealerAoePositioning.CurrentHits,
+            HealerAoeBestHits: status.HealerAoePositioning.BestHits,
             Reason: aoe.LastReason,
             Henched: aoe.RsrHenchedActive,
             Targets: aoe.PriorityTargetCount,
@@ -84,7 +101,7 @@ internal sealed class CombatHistory
         sb.AppendLine($"Start={this.combatStart:O}  Duration={last.T:0.0}s  Frames={this.count}");
         sb.AppendLine();
         sb.AppendLine("[Header]");
-        sb.AppendLine($"Job={first.PlayerClassJobId}  AoECombatControl={config.AoePackPositioningAoeCombatControl}  ControlRsrTarget={config.AoePackPositioningControlRsrTarget}  MinExtraTargets={config.AoePackPositioningMinimumExtraTargets}  Threshold={config.AoEEnemyThreshold}  ManagePositionals={config.ManagePositionals}  ManageTrueNorth={config.ManageTrueNorth}  CombatStyle={config.CombatStyle}");
+        sb.AppendLine($"Job={first.PlayerClassJobId}  TargetUptime={config.ManageTargetUptime}  PartyGravity={config.ManagePartyGravityPositioning}  PickAoeTarget={config.PickBetterAoeTarget}  KeepTrashTarget={config.KeepTrashTargetSelected}  ManagePositionals={config.ManagePositionals}  ManageTrueNorth={config.ManageTrueNorth}  CombatStyle={config.CombatStyle}  RsrSnapshot={this.lastSeenRsrSnapshotMode}");
         sb.AppendLine();
         sb.AppendLine("[Frames]");
 
@@ -98,19 +115,30 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "InCombat", frame.InCombat, prev?.InCombat);
             AppendIfChanged(sb, "Dead", frame.IsDead, prev?.IsDead);
             AppendIfChanged(sb, "Target", frame.TargetBaseId, prev?.TargetBaseId);
+            AppendIfChanged(sb, "TargetObj", frame.TargetObjectId, prev?.TargetObjectId);
             AppendIfChanged(sb, "Move", frame.Movement, prev?.Movement);
             AppendIfChanged(sb, "Suppressed", frame.AutomatedMovementSuppressed, prev?.AutomatedMovementSuppressed);
             AppendIfChanged(sb, "Strategy", frame.MovementRangeStrategy, prev?.MovementRangeStrategy);
-            AppendIfChanged(sb, "Cushion", frame.ForbiddenZoneCushion, prev?.ForbiddenZoneCushion);
-            AppendIfChanged(sb, "Range", $"{frame.Range:0.0}", prev == null ? null : $"{prev.Range:0.0}");
+            AppendIfChanged(sb, "SafetyBuffer", frame.SafetyBuffer, prev?.SafetyBuffer);
+            AppendIfChanged(sb, "TargetUptime", $"{frame.TargetUptimeRange:0.0}", prev == null ? null : $"{prev.TargetUptimeRange:0.0}");
             AppendIfChanged(sb, "Positional", frame.LastPositional, prev?.LastPositional);
             AppendIfChanged(sb, "TrueNorth", frame.TrueNorthActive, prev?.TrueNorthActive);
             AppendIfChanged(sb, "TNCharges", frame.TrueNorthCharges, prev?.TrueNorthCharges);
             AppendIfChanged(sb, "Gap", frame.GapSafety, prev?.GapSafety);
             AppendIfChanged(sb, "Escape", frame.EscapeSafety, prev?.EscapeSafety);
+            AppendIfChanged(sb, "PartyGravity", frame.PartyGravityReason, prev?.PartyGravityReason);
+            AppendIfChanged(sb, "PGInjected", frame.PartyGravityInjected, prev?.PartyGravityInjected);
+            AppendIfChanged(sb, "PGMembers", frame.PartyGravityMembers, prev?.PartyGravityMembers);
+            AppendIfChanged(sb, "PGCluster", frame.PartyGravityClusterMembers, prev?.PartyGravityClusterMembers);
+            AppendIfChanged(sb, "PGDutySupport", frame.PartyGravityDutySupportMembers, prev?.PartyGravityDutySupportMembers);
+            AppendIfChanged(sb, "HealerAoE", frame.HealerAoeReason, prev?.HealerAoeReason);
+            AppendIfChanged(sb, "HAInjected", frame.HealerAoeInjected, prev?.HealerAoeInjected);
+            AppendIfChanged(sb, "HAMembers", frame.HealerAoeMembers, prev?.HealerAoeMembers);
+            if (frame.HealerAoeCurrentHits != 0 || frame.HealerAoeBestHits != 0 || prev?.HealerAoeCurrentHits != 0 || prev?.HealerAoeBestHits != 0)
+                AppendIfChanged(sb, "HAHits", $"{frame.HealerAoeCurrentHits}/{frame.HealerAoeBestHits}", $"{prev?.HealerAoeCurrentHits}/{prev?.HealerAoeBestHits}");
 
             // AoE pack fields — only print when relevant
-            AppendIfChanged(sb, "AoE", frame.Reason, prev?.Reason);
+            AppendIfChanged(sb, "AoEPack", frame.Reason, prev?.Reason);
             AppendIfChanged(sb, "Henched", frame.Henched, prev?.Henched);
             AppendIfChanged(sb, "Targets", frame.Targets, prev?.Targets);
             if (frame.CurrentHits != 0 || frame.BestHits != 0 || prev?.CurrentHits != 0 || prev?.BestHits != 0)

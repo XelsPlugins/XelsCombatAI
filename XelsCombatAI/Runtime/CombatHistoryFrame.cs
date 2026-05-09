@@ -8,12 +8,13 @@ internal sealed record CombatHistoryFrame(
     bool IsDead,
     uint PlayerClassJobId,
     uint TargetBaseId,
+    ulong TargetObjectId,
     // Movement
     bool? Movement,
     bool AutomatedMovementSuppressed,
     string? MovementRangeStrategy,
-    string? ForbiddenZoneCushion,
-    float Range,
+    string? SafetyBuffer,
+    float TargetUptimeRange,
     // Positionals
     Positional LastPositional,
     bool TrueNorthActive,
@@ -21,6 +22,18 @@ internal sealed record CombatHistoryFrame(
     // Gap closers
     string GapSafety,
     string EscapeSafety,
+    // Party gravity
+    string PartyGravityReason,
+    bool PartyGravityInjected,
+    int PartyGravityMembers,
+    int PartyGravityClusterMembers,
+    int PartyGravityDutySupportMembers,
+    // Healer AoE
+    string HealerAoeReason,
+    bool HealerAoeInjected,
+    int HealerAoeMembers,
+    int HealerAoeCurrentHits,
+    int HealerAoeBestHits,
     // AoE pack
     string Reason,
     bool Henched,

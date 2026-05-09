@@ -6,7 +6,7 @@ namespace XelsCombatAI.Models;
 internal enum DecisionOverlaySource
 {
     Positionals,
-    Range,
+    TargetUptime,
     AoE,
     LeyLines,
     HealerCoverage,
@@ -15,6 +15,9 @@ internal enum DecisionOverlaySource
     NextAction,
     GapCloserLanding,
     EscapeLanding,
+    PassageOfArms,
+    PartyGravity,
+    SurvivabilityZone,
 }
 
 internal enum DecisionOverlayState

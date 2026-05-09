@@ -18,6 +18,7 @@ internal sealed record AoePackPositioningStatus(
     string HookState,
     string LastReason,
     string RsrStatus,
+    string RsrReflectionDiagnostics,
     uint ActionId,
     string ActionName,
     string Shape,
@@ -25,6 +26,8 @@ internal sealed record AoePackPositioningStatus(
     int BestHits,
     bool Injected,
     bool RsrHenchedActive,
+    StateCommandType RsrSnapshotMode,
+    string RsrLastRestoreStatus,
     int PriorityTargetCount);
 
 internal sealed record AoePackOverlaySnapshot(
@@ -39,7 +42,7 @@ internal sealed record AoePackOverlaySnapshot(
     int BestHits,
     IReadOnlyList<AoePackOverlayTarget> Targets);
 
-internal sealed record AoePackOverlayTarget(Vector3 Position, float Radius, bool Hit);
+internal sealed record AoePackOverlayTarget(Vector3 Position, float Radius, bool Hit, bool InsideAvoidedHitbox = false, string? AvoidanceLabel = null);
 
 internal sealed class AoePackPositioningController(
     Configuration config,
@@ -47,7 +50,9 @@ internal sealed class AoePackPositioningController(
     RotationSolverActionReflection rotationSolverActions,
     Func<bool> automatedMovementSuppressed,
     RotationSolverIpc rotationSolverIpc,
-    Func<bool> currentTargetHasBossModule)
+    Func<bool> currentTargetHasBossModule,
+    JobRangeProvider jobRangeProvider)
+    : IBossModGoalZoneContributor
 {
     private FieldInfo? goalZonesField;
     private PropertyInfo? priorityTargetsProperty;
@@ -61,6 +66,8 @@ internal sealed class AoePackPositioningController(
     private Type? resolvedWPosType;
     private string hookState = "unresolved";
     private string lastReason = "not evaluated";
+    private string rsrRestoreStatus = "not active";
+    private string rsrLastRestoreStatus = "not active";
     private RsrAoeActionSnapshot? lastAction;
     private AoePackOverlaySnapshot? lastOverlay;
     private AoePackOverlaySnapshot? lastSuggestion;
@@ -79,14 +86,18 @@ internal sealed class AoePackPositioningController(
     private DateTime pendingCandidateSince = DateTime.MinValue;
     private Vector2 lastInjectedCentroid;
     private Delegate? lastCentroidGoalDelegate;
+    private DateTime lastTargetSwitchAt = DateTime.MinValue;
     private static readonly TimeSpan CandidateDebounce = TimeSpan.FromMilliseconds(300);
+    private static readonly TimeSpan TargetSwitchCooldown = TimeSpan.FromMilliseconds(1500);
     private const float CandidateMovementThreshold = 0.5f;
     private const float CentroidMovementThreshold = 1f;
+    private const float AvoidancePenaltyFreeRadius = 4f;
 
     public AoePackPositioningStatus Status => new(
         this.hookState,
         this.lastReason,
         rotationSolverActions.Status,
+        $"{rotationSolverActions.Diagnostics}; Restore={this.rsrRestoreStatus}",
         this.lastAction?.AdjustedActionId ?? 0,
         this.lastAction?.ActionName ?? "<none>",
         this.lastAction?.Shape.ToString() ?? "<none>",
@@ -94,6 +105,8 @@ internal sealed class AoePackPositioningController(
         this.lastBestHits,
         this.lastInjected,
         this.rsrHenchedActive,
+        this.rsrSnapshotMode,
+        this.rsrLastRestoreStatus,
         this.lastPriorityTargetCount);
 
     public AoePackOverlaySnapshot? Overlay => this.lastInjected ? this.lastOverlay : null;
@@ -118,6 +131,7 @@ internal sealed class AoePackPositioningController(
         this.resolvedHintsType = null;
         this.resolvedWPosType = null;
         this.lastReason = "reset";
+        this.rsrRestoreStatus = "reset";
         this.lastAction = null;
         this.lastOverlay = null;
         this.lastSuggestion = null;
@@ -134,24 +148,19 @@ internal sealed class AoePackPositioningController(
         this.pendingCandidateSince = DateTime.MinValue;
         this.lastInjectedCentroid = default;
         this.lastCentroidGoalDelegate = null;
+        this.lastTargetSwitchAt = DateTime.MinValue;
         this.RestoreRsrIfNeeded();
         rotationSolverActions.Reset();
     }
 
-    public void TryInjectGoal(object hints)
+    public void TryInjectGoal(object hints, ICollection<BossModGoalContribution> contributions)
     {
         this.lastInjected = false;
         this.lastOverlay = null;
-        if (!config.Enabled || !config.ManageAoePackPositioning)
+        var packCenterMovementEnabled = this.IsPackCenterMovementEnabled();
+        if (!config.Enabled || (!config.ManageAoePackPositioning && !config.KeepTrashTargetSelected && !packCenterMovementEnabled && !(config.AvoidStandingInsideEnemies && config.ManageMovement)))
         {
             this.lastReason = "disabled";
-            this.RestoreRsrIfNeeded();
-            return;
-        }
-
-        if (!config.ManageMovement)
-        {
-            this.lastReason = "movement management disabled";
             this.RestoreRsrIfNeeded();
             return;
         }
@@ -159,13 +168,6 @@ internal sealed class AoePackPositioningController(
         if (!services.Condition[ConditionFlag.InCombat] || services.Condition[ConditionFlag.Unconscious])
         {
             this.lastReason = "not active in combat";
-            this.RestoreRsrIfNeeded();
-            return;
-        }
-
-        if (automatedMovementSuppressed())
-        {
-            this.lastReason = "manual movement suppression active";
             this.RestoreRsrIfNeeded();
             return;
         }
@@ -178,61 +180,72 @@ internal sealed class AoePackPositioningController(
 
         var targets = this.ReadPriorityTargets(hints);
         this.lastPriorityTargetCount = targets.Count;
-        var inAoeSituation = targets.Count >= config.AoePackPositioningMinimumExtraTargets + 1 &&
-                             !currentTargetHasBossModule();
-
-        var hasAoeAction = rotationSolverActions.TryGetUpcomingGcd(requirePreview: true, out var action, out var reason);
-        var isTargetCenteredCircle = hasAoeAction && action.Shape == RsrAoeShape.Circle && action.Range > action.EffectRange + 3f;
-
-        // --- Proactive AoE Combat Control ---
-        // Takes over RSR targeting immediately when threshold is met, pulls toward pack centroid when out of range.
-        if (config.AoePackPositioningAoeCombatControl && inAoeSituation)
+        var inAoeSituation = targets.Count >= 2 && !currentTargetHasBossModule();
+        if (config.KeepTrashTargetSelected && inAoeSituation)
         {
-            this.ApplyRsrHenched();
-            // Only update target if the current one is invalid — don't flip targets mid-stabilisation
-            // as that resets the debounce and prevents committing to a candidate position.
-            var currentIsValid = services.TargetManager.Target is IBattleNpc t &&
-                                 t.StatusFlags.HasFlag(StatusFlags.InCombat) &&
-                                 !t.IsDead && t.CurrentHp > 0 && t.IsHostile();
-            if (!currentIsValid)
-                this.UpdateTarget(this.lastBestPrimaryId);
-
-            if ((!hasAoeAction || isTargetCenteredCircle) && targets.Count >= 2)
-            {
-                var localPlayer = services.ObjectTable.LocalPlayer;
-                if (localPlayer != null)
-                {
-                    var centroid = targets.Aggregate(Vector2.Zero, (acc, t) => acc + t.Position) / targets.Count;
-                    var playerPos2d = new Vector2(localPlayer.Position.X, localPlayer.Position.Z);
-                    // When no AoE action is queued use the last known AoE range, or a fixed approach distance.
-                    // MeleeActionRange (3y) is too tight and causes oscillation — use a wider threshold.
-                    var referenceRange = hasAoeAction ? action.Range : (this.lastAction?.EffectRange ?? 8f);
-                    var distToCentroid = Vector2.Distance(playerPos2d, centroid);
-                    if (!isTargetCenteredCircle && distToCentroid > referenceRange + 1f)
-                    {
-                        var centroidGoalZones = this.goalZonesField!.GetValue(hints) as IList;
-                        if (centroidGoalZones != null)
-                        {
-                            var acceptRadius = hasAoeAction ? Math.Max(1f, action.EffectRange) : 3f;
-                            if (this.lastCentroidGoalDelegate == null ||
-                                Vector2.Distance(centroid, this.lastInjectedCentroid) > CentroidMovementThreshold)
-                            {
-                                this.lastCentroidGoalDelegate = this.CreateCentroidGoalDelegate(centroid, acceptRadius);
-                                this.lastInjectedCentroid = centroid;
-                            }
-
-                            centroidGoalZones.Add(this.lastCentroidGoalDelegate);
-                            this.lastAction = hasAoeAction ? action : null;
-                            this.lastReason = "closing to AoE range";
-                            this.lastCurrentHits = 0;
-                            this.lastBestHits = 0;
-                            return;
-                        }
-                    }
-                }
-            }
+            this.ApplyRsrTargeting(this.SelectPackPrimaryTarget(targets), targets);
         }
-        else
+
+        if (!config.ManageMovement)
+        {
+            if (config.PickBetterAoeTarget && inAoeSituation && services.ObjectTable.LocalPlayer is { } localPlayer &&
+                rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var targetAction, out _) &&
+                this.TrySelectBestAoePrimaryForCurrentPosition(targetAction, targets, localPlayer, out var movementOffPrimaryId))
+            {
+                this.ApplyRsrTargeting(movementOffPrimaryId, targets);
+            }
+
+            if (!config.KeepTrashTargetSelected && !config.PickBetterAoeTarget)
+                this.RestoreRsrIfNeeded();
+
+            this.lastReason = "movement management disabled";
+            return;
+        }
+
+        if (automatedMovementSuppressed())
+        {
+            if (!config.KeepTrashTargetSelected && !config.PickBetterAoeTarget)
+                this.RestoreRsrIfNeeded();
+
+            this.lastReason = "manual movement suppression active";
+            return;
+        }
+
+        if (this.TryInjectBossHitboxAvoidance(hints, targets, contributions))
+        {
+            return;
+        }
+
+        if (!config.ManageAoePackPositioning)
+        {
+            if (packCenterMovementEnabled && inAoeSituation && this.TryInjectPackCenterMovement(hints, targets, "moving closer to trash pack", aoeRange: null, inAoeSituation: inAoeSituation, contributions: contributions))
+            {
+                return;
+            }
+
+            this.lastReason = inAoeSituation && config.KeepTrashTargetSelected ? "trash targeting active" : inAoeSituation ? "pack movement unavailable" : "not enough priority targets";
+            return;
+        }
+
+        var hasAoeAction = rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var action, out var reason);
+        var isTargetCenteredCircle = hasAoeAction && action.Shape == RsrAoeShape.Circle && action.Range > action.EffectRange + 3f && !action.IsTargetArea;
+
+        if (packCenterMovementEnabled && inAoeSituation)
+        {
+            if (config.PickBetterAoeTarget || config.KeepTrashTargetSelected)
+            {
+                this.ApplyRsrHenched();
+                // Only update target if the current one is invalid — don't flip targets mid-stabilisation
+                // as that resets the debounce and prevents committing to a candidate position.
+                var currentIsValid = services.TargetManager.Target is IBattleNpc t &&
+                                     t.StatusFlags.HasFlag(StatusFlags.InCombat) &&
+                                     !t.IsDead && t.CurrentHp > 0 && t.IsHostile();
+                if (!currentIsValid)
+                    this.UpdateTarget(this.lastBestPrimaryId, targets);
+            }
+
+        }
+        if (!config.KeepTrashTargetSelected && !config.PickBetterAoeTarget)
         {
             this.RestoreRsrIfNeeded();
         }
@@ -240,6 +253,13 @@ internal sealed class AoePackPositioningController(
         // --- Common early-exit for non-AoE actions ---
         if (!hasAoeAction || isTargetCenteredCircle)
         {
+            if (packCenterMovementEnabled &&
+                inAoeSituation &&
+                this.TryInjectPackCenterMovement(hints, targets, "moving closer to trash pack", aoeRange: null, inAoeSituation: inAoeSituation, contributions: contributions))
+            {
+                return;
+            }
+
             this.lastAction = hasAoeAction ? action : null;
             this.lastReason = isTargetCenteredCircle ? "target-centered circle AoE skipped" : reason;
             this.lastCurrentHits = 0;
@@ -248,13 +268,28 @@ internal sealed class AoePackPositioningController(
 
             // While Henched with no AoE queued, keep the centroid pull active so BMR
             // doesn't fall back to range management and oscillate.
-            if (this.rsrHenchedActive && targets.Count >= 2)
-                this.InjectCentroidHold(hints, targets, this.lastAction);
+            if (this.rsrHenchedActive && targets.Count >= 2 && config.ManageTargetUptime)
+                this.InjectCentroidHold(hints, targets, this.lastAction, inAoeSituation, contributions);
 
             return;
         }
 
         this.lastAction = action;
+
+        // Only reposition for self-origin AoEs (Range == 0, no TargetArea flag) — the player's
+        // body is the blast origin and standing inside the pack is required to hit more targets.
+        // Ground-placed or target-centered AoEs don't benefit from repositioning; the player can
+        // stand at any range and still place the effect. Running in for those is harmful.
+        if (action.Range > 1f || action.IsTargetArea)
+        {
+            this.lastReason = "non-self-origin AoE — no repositioning";
+            this.lastCurrentHits = 0;
+            this.lastBestHits = 0;
+            this.lastInjectedGoalDelegate = null;
+            if (packCenterMovementEnabled && inAoeSituation)
+                this.TryInjectPackCenterMovement(hints, targets, "non-self-origin AoE — closing to attack range", aoeRange: null, inAoeSituation: inAoeSituation, contributions: contributions);
+            return;
+        }
 
         if (targets.Count < 2)
         {
@@ -281,10 +316,16 @@ internal sealed class AoePackPositioningController(
             ? [this.ResolvePrimaryTarget(action, targets) ?? targets[0]]
             : targets.ToArray();
 
+        var targetPickingEnabled = (config.PickBetterAoeTarget || config.KeepTrashTargetSelected) && action.Shape != RsrAoeShape.Circle;
+        var currentTargetId = services.TargetManager.Target?.GameObjectId ?? 0;
         GoalPlan? bestPlan = null;
         GoalPlan.CandidateScore bestScore = default;
         int bestCurrentHits = 0;
         ulong bestPrimaryId = 0;
+        GoalPlan? bestStationaryPlan = null;
+        int bestStationaryHits = 0;
+        int currentTargetHits = -1;
+        ulong bestStationaryPrimaryId = 0;
 
         foreach (var primary in primaryCandidates)
         {
@@ -295,11 +336,11 @@ internal sealed class AoePackPositioningController(
                 radius,
                 castRange,
                 action.HalfWidth,
-                Math.Max(action.AoeCount, 1),
-                config.AoePackPositioningMinimumExtraTargets);
+                minHits: 2);
 
             var currentHits = plan.ScoreHits(playerPos);
             var candidate = plan.FindBestCandidate(playerPos);
+            var primaryIsCurrentTarget = primary.InstanceId == currentTargetId;
 
             if (bestPlan == null || candidate.Hits > bestScore.Hits ||
                 (candidate.Hits == bestScore.Hits && currentHits > bestCurrentHits))
@@ -308,6 +349,21 @@ internal sealed class AoePackPositioningController(
                 bestScore = candidate;
                 bestCurrentHits = currentHits;
                 bestPrimaryId = primary.InstanceId;
+            }
+
+            if (primaryIsCurrentTarget)
+            {
+                currentTargetHits = currentHits;
+            }
+
+            if (targetPickingEnabled &&
+                (bestStationaryPlan == null ||
+                 currentHits > bestStationaryHits ||
+                 (currentHits == bestStationaryHits && primaryIsCurrentTarget)))
+            {
+                bestStationaryPlan = plan;
+                bestStationaryHits = currentHits;
+                bestStationaryPrimaryId = primary.InstanceId;
             }
         }
 
@@ -323,7 +379,34 @@ internal sealed class AoePackPositioningController(
         this.lastBestHits = bestScore.Hits;
         this.lastBestPrimaryId = bestPrimaryId;
 
-        if (this.lastCurrentHits >= 2 && this.lastBestHits - this.lastCurrentHits >= config.AoePackPositioningMinimumExtraTargets)
+        if (targetPickingEnabled &&
+            bestStationaryPlan != null &&
+            bestStationaryHits >= 2 &&
+            bestStationaryHits >= this.lastBestHits)
+        {
+            this.lastCurrentHits = bestStationaryHits;
+            this.lastBestHits = bestStationaryHits;
+            this.lastBestPrimaryId = bestStationaryPrimaryId;
+            this.lastSuggestion = null;
+            this.pendingCandidateSince = DateTime.MinValue;
+            this.lastInjectedGoalDelegate = null;
+            this.lastReason = bestStationaryPrimaryId == currentTargetId ? "AoE target already optimal" : "AoE target selected";
+            if (bestStationaryPrimaryId != currentTargetId)
+            {
+                this.ApplyRsrTargeting(
+                    bestStationaryPrimaryId,
+                    targets,
+                    forcePreferred: bestStationaryHits > currentTargetHits);
+            }
+            return;
+        }
+
+        if (targetPickingEnabled && bestStationaryHits > this.lastCurrentHits)
+        {
+            this.lastCurrentHits = bestStationaryHits;
+        }
+
+        if (this.lastCurrentHits >= 2 && this.lastBestHits > this.lastCurrentHits)
         {
             this.lastSuggestion = bestPlan.CreateOverlay(action, bestScore.Position, this.lastCurrentHits, this.lastBestHits, player.Position.Y);
         }
@@ -332,26 +415,26 @@ internal sealed class AoePackPositioningController(
             this.lastSuggestion = null;
         }
 
-        if (this.lastBestHits - this.lastCurrentHits < config.AoePackPositioningMinimumExtraTargets)
+        if (this.lastBestHits <= this.lastCurrentHits)
         {
             this.lastReason = "no meaningful AoE improvement";
             this.pendingCandidateSince = DateTime.MinValue;
-            if (config.AoePackPositioningAoeCombatControl && this.rsrHenchedActive)
+            if ((config.ManageTargetUptime || config.PickBetterAoeTarget || config.KeepTrashTargetSelected) && this.rsrHenchedActive)
             {
-                this.UpdateTarget(bestPrimaryId);
+                if (config.PickBetterAoeTarget || config.KeepTrashTargetSelected)
+                    this.UpdateTarget(bestPrimaryId, targets);
                 // Keep last injected delegate alive rather than dropping to centroid hold immediately —
                 // transient score drops (action cycling, mob movement) should not abort an active goal.
                 if (this.lastInjectedGoalDelegate != null)
                 {
-                    var staleZones = this.goalZonesField!.GetValue(hints) as IList;
-                    staleZones?.Add(this.lastInjectedGoalDelegate);
+                    contributions.Add(new(this.lastInjectedGoalDelegate, BossModGoalPriority.ImmediateAction, "AoE pack"));
                     this.lastInjected = true;
                     this.lastReason = "goal stable";
                 }
-                else
-                    this.InjectCentroidHold(hints, targets, action);
+                else if (config.ManageTargetUptime)
+                    this.InjectCentroidHold(hints, targets, action, inAoeSituation, contributions);
             }
-            else
+            else if (!config.KeepTrashTargetSelected && !config.PickBetterAoeTarget)
                 this.RestoreRsrIfNeeded();
             return;
         }
@@ -360,12 +443,14 @@ internal sealed class AoePackPositioningController(
         if (goalZones == null)
         {
             this.lastReason = "BMR goal zone list unavailable";
-            if (config.AoePackPositioningAoeCombatControl && this.rsrHenchedActive)
+            if ((config.ManageTargetUptime || config.PickBetterAoeTarget || config.KeepTrashTargetSelected) && this.rsrHenchedActive)
             {
-                this.UpdateTarget(bestPrimaryId);
-                this.InjectCentroidHold(hints, targets, action);
+                if (config.PickBetterAoeTarget || config.KeepTrashTargetSelected)
+                    this.UpdateTarget(bestPrimaryId, targets);
+                if (config.ManageTargetUptime)
+                    this.InjectCentroidHold(hints, targets, action, inAoeSituation, contributions);
             }
-            else
+            else if (!config.KeepTrashTargetSelected && !config.PickBetterAoeTarget)
                 this.RestoreRsrIfNeeded();
             return;
         }
@@ -386,7 +471,7 @@ internal sealed class AoePackPositioningController(
 
         if (candidateStable && candidateChanged)
         {
-            this.lastInjectedGoalDelegate = bestPlan.CreateGoalDelegate(this.resolvedWPosType!, this.wposXField!, this.wposZField!);
+            this.lastInjectedGoalDelegate = bestPlan.CreateGoalDelegate(this.resolvedWPosType!, this.wposXField!, this.wposZField!, this.lastCurrentHits);
             this.lastInjectedCandidate = this.pendingCandidate;
             this.lastInjectedHits = this.pendingCandidateHits;
             this.lastOverlay = bestPlan.CreateOverlay(action, bestScore.Position, this.lastCurrentHits, this.lastBestHits, player.Position.Y);
@@ -398,20 +483,19 @@ internal sealed class AoePackPositioningController(
             return;
         }
 
-        goalZones.Add(this.lastInjectedGoalDelegate);
+        contributions.Add(new(this.lastInjectedGoalDelegate, BossModGoalPriority.ImmediateAction, "AoE pack"));
         this.lastInjected = true;
         this.lastOverlay ??= bestPlan.CreateOverlay(action, bestScore.Position, this.lastCurrentHits, this.lastBestHits, player.Position.Y);
         this.lastReason = candidateStable && candidateChanged ? "goal injected" : "goal stable";
 
         // Reactive RSR targeting: Henched only after a goal is injected (improvement found).
-        if (!config.AoePackPositioningAoeCombatControl && config.AoePackPositioningControlRsrTarget)
+        if (config.PickBetterAoeTarget || config.KeepTrashTargetSelected)
         {
-            this.ApplyRsrTargeting(bestPrimaryId);
+            this.ApplyRsrTargeting(bestPrimaryId, targets);
         }
-        else if (this.rsrHenchedActive)
+        else if (this.rsrHenchedActive && (config.PickBetterAoeTarget || config.KeepTrashTargetSelected))
         {
-            // Proactive mode: update target to the new optimal primary.
-            this.UpdateTarget(bestPrimaryId);
+            this.UpdateTarget(bestPrimaryId, targets);
         }
     }
 
@@ -428,35 +512,141 @@ internal sealed class AoePackPositioningController(
         var distSq = System.Linq.Expressions.Expression.Add(
             System.Linq.Expressions.Expression.Multiply(dx, dx),
             System.Linq.Expressions.Expression.Multiply(dz, dz));
-        // Flat-top circle: score 1 within acceptRadius, 0 outside — no gradient so BMR stops moving once inside.
+        // Flat-top circle: no gradient so BMR stops moving once inside.
         var radiusSq = System.Linq.Expressions.Expression.Constant(acceptRadius * acceptRadius);
         var score = System.Linq.Expressions.Expression.Condition(
             System.Linq.Expressions.Expression.LessThanOrEqual(distSq, radiusSq),
-            System.Linq.Expressions.Expression.Constant(1f),
+            System.Linq.Expressions.Expression.Constant(GoalZoneScorePolicy.PackApproachPreference),
             System.Linq.Expressions.Expression.Constant(0f));
         var delegateType = typeof(Func<,>).MakeGenericType(wposType, typeof(float));
         return System.Linq.Expressions.Expression.Lambda(delegateType, score, parameter).Compile();
+    }
+
+    private bool TryInjectBossHitboxAvoidance(object hints, IReadOnlyList<TargetSnapshot> priorityTargets, ICollection<BossModGoalContribution> contributions)
+    {
+        if (!config.AvoidStandingInsideEnemies || !currentTargetHasBossModule())
+        {
+            return false;
+        }
+
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            this.lastReason = "local player unavailable";
+            return false;
+        }
+
+        var playerPosition = new Vector2(player.Position.X, player.Position.Z);
+        var targets = this.GetBossHitboxAvoidanceTargets(priorityTargets).ToArray();
+        if (targets.Length == 0 || !this.IsInsideEnemyCenterAvoidance(playerPosition, targets))
+        {
+            return false;
+        }
+
+        var goalZones = this.goalZonesField!.GetValue(hints) as IList;
+        if (goalZones == null)
+        {
+            this.lastReason = "BMR goal zone list unavailable";
+            return false;
+        }
+
+        var plan = new EnemyHitboxAvoidanceGoalPlan(targets);
+        contributions.Add(new(
+            plan.CreateGoalDelegate(this.resolvedWPosType!, this.wposXField!, this.wposZField!),
+            BossModGoalPriority.Convenience,
+            "Boss center avoidance"));
+
+        this.lastAction = null;
+        this.lastCurrentHits = 0;
+        this.lastBestHits = 0;
+        this.lastInjected = true;
+        this.lastReason = "avoiding boss center";
+        this.lastOverlay = new AoePackOverlaySnapshot(
+            0,
+            "Boss center",
+            RsrAoeShape.Circle.ToString(),
+            player.Position,
+            new Vector3(targets[0].Position.X, player.Position.Y, targets[0].Position.Y),
+            Math.Max(0.5f, player.HitboxRadius),
+            0f,
+            0,
+            0,
+            targets.Select(target => new AoePackOverlayTarget(
+                new Vector3(target.Position.X, player.Position.Y, target.Position.Y),
+                target.Radius,
+                false,
+                this.IsInsideEnemyCenterAvoidance(playerPosition, target),
+                "center")).ToArray());
+        return true;
+    }
+
+    private IEnumerable<TargetSnapshot> GetBossHitboxAvoidanceTargets(IReadOnlyList<TargetSnapshot> priorityTargets)
+    {
+        if (services.TargetManager.Target is IBattleChara target && !target.IsDead)
+        {
+            yield return new TargetSnapshot(
+                target.GameObjectId,
+                new Vector2(target.Position.X, target.Position.Z),
+                BossCenterAvoidanceRadius(target.HitboxRadius));
+        }
+
+        foreach (var priorityTarget in priorityTargets)
+        {
+            if (priorityTarget.Radius >= AvoidancePenaltyFreeRadius)
+            {
+                yield return priorityTarget with { Radius = BossCenterAvoidanceRadius(priorityTarget.Radius) };
+            }
+        }
+    }
+
+    private bool IsInsideEnemyCenterAvoidance(Vector2 position, IEnumerable<TargetSnapshot> targets)
+    {
+        return targets.Any(target => this.IsInsideEnemyCenterAvoidance(position, target));
+    }
+
+    private bool IsInsideEnemyCenterAvoidance(Vector2 position, TargetSnapshot target)
+    {
+        return Vector2.DistanceSquared(position, target.Position) < target.Radius * target.Radius;
+    }
+
+    private static float BossCenterAvoidanceRadius(float hitboxRadius)
+    {
+        return Math.Clamp(hitboxRadius * 0.2f, 1.25f, 3f);
     }
 
     private void ApplyRsrHenched()
     {
         if (this.rsrHenchedActive) return;
         var snapshot = rotationSolverIpc.TryGetCurrentState(services.Log);
-        if (snapshot == null) return;
-        // Never restore to Henched — if RSR was already Henched, restore to Auto.
-        this.rsrSnapshotMode = snapshot.Value == StateCommandType.Henched ? StateCommandType.Auto : snapshot.Value;
+        if (snapshot == null)
+        {
+            this.rsrRestoreStatus = "snapshot unavailable";
+            this.rsrLastRestoreStatus = "snapshot unavailable";
+            return;
+        }
+
+        // Never restore to Henched or Off — both indicate an unreliable snapshot; default to Auto.
+        this.rsrSnapshotMode = (snapshot.Value == StateCommandType.Henched || snapshot.Value == StateCommandType.Off)
+            ? StateCommandType.Auto
+            : snapshot.Value;
+        this.rsrRestoreStatus = $"snapshot {snapshot.Value} -> restore {this.rsrSnapshotMode}";
         rotationSolverIpc.SetHenched();
         this.rsrHenchedActive = true;
     }
 
-    private void ApplyRsrTargeting(ulong primaryId)
+    private void ApplyRsrTargeting(ulong primaryId, IReadOnlyCollection<TargetSnapshot>? priorityTargets = null, bool forcePreferred = false)
     {
         this.ApplyRsrHenched();
-        this.UpdateTarget(primaryId);
+        this.UpdateTarget(primaryId, priorityTargets, forcePreferred);
     }
 
-    private void UpdateTarget(ulong preferredId)
+    private void UpdateTarget(ulong preferredId, IReadOnlyCollection<TargetSnapshot>? priorityTargets = null, bool forcePreferred = false)
     {
+        if (!forcePreferred && this.TryKeepCurrentPriorityTarget(preferredId, priorityTargets))
+        {
+            return;
+        }
+
         // Try preferred target first.
         if (preferredId != 0)
         {
@@ -464,7 +654,10 @@ internal sealed class AoePackPositioningController(
             if (preferred != null && !preferred.IsDead && preferred.CurrentHp > 0 && preferred.IsHostile())
             {
                 if (services.TargetManager.Target?.GameObjectId != preferredId)
+                {
                     services.TargetManager.Target = preferred;
+                    this.lastTargetSwitchAt = DateTime.UtcNow;
+                }
                 return;
             }
         }
@@ -497,30 +690,267 @@ internal sealed class AoePackPositioningController(
         }
 
         if (best != null)
+        {
             services.TargetManager.Target = best;
+            this.lastTargetSwitchAt = DateTime.UtcNow;
+        }
+    }
+
+    private bool TryKeepCurrentPriorityTarget(ulong preferredId, IReadOnlyCollection<TargetSnapshot>? priorityTargets)
+    {
+        if (priorityTargets == null || priorityTargets.Count == 0)
+        {
+            return false;
+        }
+
+        var currentTarget = services.TargetManager.Target as IBattleNpc;
+        if (currentTarget == null ||
+            !currentTarget.StatusFlags.HasFlag(StatusFlags.InCombat) ||
+            currentTarget.IsDead ||
+            currentTarget.CurrentHp == 0 ||
+            !currentTarget.IsHostile())
+        {
+            return false;
+        }
+
+        var currentId = currentTarget.GameObjectId;
+        if (!priorityTargets.Any(target => target.InstanceId == currentId))
+        {
+            return false;
+        }
+
+        if (preferredId == 0 || preferredId == currentId)
+        {
+            return true;
+        }
+
+        return DateTime.UtcNow - this.lastTargetSwitchAt < TargetSwitchCooldown;
     }
 
 
-    private void InjectCentroidHold(object hints, List<TargetSnapshot> targets, RsrAoeActionSnapshot? action)
+    private void InjectCentroidHold(object hints, List<TargetSnapshot> targets, RsrAoeActionSnapshot? action, bool inAoeSituation, ICollection<BossModGoalContribution> contributions)
     {
-        if (targets.Count < 2) return;
-        var goalZones = this.goalZonesField!.GetValue(hints) as IList;
-        if (goalZones == null) return;
-        var centroid = targets.Aggregate(Vector2.Zero, (acc, t) => acc + t.Position) / targets.Count;
-        var acceptRadius = Math.Max(action?.EffectRange ?? 0f, 3f);
-        if (this.lastCentroidGoalDelegate == null ||
-            Vector2.Distance(centroid, this.lastInjectedCentroid) > CentroidMovementThreshold)
+        var aoeRange = action is { Range: <= 1f, IsTargetArea: false } ? action.EffectRange : (float?)null;
+        if (!this.TryInjectPackCenterMovement(hints, targets, "holding near pack", aoeRange, inAoeSituation, contributions))
+            this.lastReason = "holding near pack";
+    }
+
+    private bool IsPackCenterMovementEnabled() => config.ManageTargetUptime;
+
+    private ulong SelectPackPrimaryTarget(IReadOnlyList<TargetSnapshot> targets)
+    {
+        if (targets.Count == 0)
         {
-            this.lastCentroidGoalDelegate = this.CreateCentroidGoalDelegate(centroid, acceptRadius);
-            this.lastInjectedCentroid = centroid;
+            return 0;
         }
-        goalZones.Add(this.lastCentroidGoalDelegate);
-        this.lastReason = "holding near pack";
+
+        if (services.TargetManager.Target is IBattleNpc currentTarget &&
+            currentTarget.StatusFlags.HasFlag(StatusFlags.InCombat) &&
+            !currentTarget.IsDead &&
+            currentTarget.CurrentHp > 0 &&
+            currentTarget.IsHostile() &&
+            targets.Any(target => target.InstanceId == currentTarget.GameObjectId))
+        {
+            return currentTarget.GameObjectId;
+        }
+
+        var center = targets.Aggregate(Vector2.Zero, (acc, target) => acc + target.Position) / targets.Count;
+        TargetSnapshot best = targets[0];
+        var bestNeighborCount = -1;
+        var bestDistanceSq = float.MaxValue;
+        foreach (var target in targets)
+        {
+            var neighborCount = 0;
+            foreach (var other in targets)
+            {
+                if (Vector2.DistanceSquared(target.Position, other.Position) <= 100f)
+                {
+                    neighborCount++;
+                }
+            }
+
+            var distanceSq = Vector2.DistanceSquared(target.Position, center);
+            if (neighborCount > bestNeighborCount ||
+                (neighborCount == bestNeighborCount && distanceSq < bestDistanceSq))
+            {
+                best = target;
+                bestNeighborCount = neighborCount;
+                bestDistanceSq = distanceSq;
+            }
+        }
+
+        return best.InstanceId;
+    }
+
+    private bool TrySelectBestAoePrimaryForCurrentPosition(RsrAoeActionSnapshot action, IReadOnlyList<TargetSnapshot> targets, IBattleChara player, out ulong primaryId)
+    {
+        primaryId = 0;
+        if (targets.Count < 2 || action.Shape == RsrAoeShape.Circle && action.Range > action.EffectRange + 3f)
+        {
+            return false;
+        }
+
+        if (action.Range > 1f || action.IsTargetArea)
+        {
+            return false;
+        }
+
+        var radius = Math.Max(1f, action.EffectRange);
+        var castRange = Math.Min(Math.Max(action.Range, radius), 30f);
+        var playerPos = new Vector2(player.Position.X, player.Position.Z);
+        var primaryCandidates = action.Shape == RsrAoeShape.Circle
+            ? [this.ResolvePrimaryTarget(action, targets) ?? targets[0]]
+            : targets.ToArray();
+
+        var bestHits = -1;
+        foreach (var primary in primaryCandidates)
+        {
+            var plan = new GoalPlan(
+                action.Shape,
+                targets.ToArray(),
+                primary,
+                radius,
+                castRange,
+                action.HalfWidth,
+                minHits: 2);
+            var hits = plan.ScoreHits(playerPos);
+            if (hits > bestHits)
+            {
+                primaryId = primary.InstanceId;
+                bestHits = hits;
+            }
+        }
+
+        return primaryId != 0 && bestHits >= 2;
+    }
+
+    private bool TryInjectPackCenterMovement(object hints, List<TargetSnapshot> targets, string reason, float? aoeRange, bool inAoeSituation, ICollection<BossModGoalContribution> contributions)
+    {
+        if (targets.Count < 2)
+            return false;
+
+        var goalZones = this.goalZonesField!.GetValue(hints) as IList;
+        if (goalZones == null)
+        {
+            this.lastReason = "BMR goal zone list unavailable";
+            return false;
+        }
+
+        if (services.TargetManager.Target == null)
+            this.UpdateTarget(0, targets);
+
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            this.lastReason = "local player unavailable";
+            return false;
+        }
+
+        var engagementRange = aoeRange ?? (inAoeSituation ? jobRangeProvider.PackAoeRange : jobRangeProvider.EngagementRange);
+        var playerPos = new Vector2(player.Position.X, player.Position.Z);
+        var primary = targets[0];
+
+        var inRangeCount = 0;
+        foreach (var t in targets)
+        {
+            var d = Vector2.Distance(playerPos, t.Position) - t.Radius;
+            if (d <= engagementRange) inRangeCount++;
+        }
+        if (inRangeCount >= 2)
+        {
+            this.lastReason = "already in engagement range of pack";
+            return false;
+        }
+
+        var plan = new GoalPlan(
+            RsrAoeShape.Circle,
+            targets.ToArray(),
+            primary,
+            radius: engagementRange,
+            range: engagementRange,
+            halfWidth: 0f,
+            minHits: 1);
+
+        var candidate = plan.FindBestCandidate(playerPos);
+
+        if (this.lastCentroidGoalDelegate == null ||
+            Vector2.Distance(candidate.Position, this.lastInjectedCentroid) > CentroidMovementThreshold)
+        {
+            this.lastCentroidGoalDelegate = plan.CreateGoalDelegate(this.resolvedWPosType!, this.wposXField!, this.wposZField!, 0);
+            this.lastInjectedCentroid = candidate.Position;
+        }
+
+        contributions.Add(new(this.lastCentroidGoalDelegate, BossModGoalPriority.Uptime, "Pack engagement"));
+        this.lastAction = null;
+        this.lastCurrentHits = 0;
+        this.lastBestHits = candidate.Hits;
+        this.lastInjected = true;
+        this.lastReason = reason;
+        var y = player.Position.Y;
+        var centroid2d = targets.Aggregate(Vector2.Zero, (acc, t) => acc + t.Position) / targets.Count;
+        this.lastOverlay = new AoePackOverlaySnapshot(
+            0,
+            "Pack engagement",
+            RsrAoeShape.Circle.ToString(),
+            new Vector3(candidate.Position.X, y, candidate.Position.Y),
+            new Vector3(centroid2d.X, y, centroid2d.Y),
+            engagementRange,
+            0f,
+            0,
+            candidate.Hits,
+            this.CreateOverlayTargets(targets, y, candidate.Position, hit: false));
+        return true;
+    }
+
+    private AoePackOverlayTarget[] CreateOverlayTargets(IEnumerable<TargetSnapshot> targets, float y, Vector2 candidate, bool hit)
+    {
+        return targets.Select(target => new AoePackOverlayTarget(
+            new Vector3(target.Position.X, y, target.Position.Y),
+            target.Radius,
+            hit,
+            false)).ToArray();
+    }
+
+    private sealed class EnemyHitboxAvoidanceGoalPlan(TargetSnapshot[] targets)
+    {
+        private static readonly MethodInfo ScoreFromWPosMethod = typeof(EnemyHitboxAvoidanceGoalPlan).GetMethod(nameof(ScoreFromWPos), BindingFlags.Instance | BindingFlags.NonPublic)!;
+        private readonly TargetSnapshot[] targets = targets;
+
+        public Delegate CreateGoalDelegate(Type wposType, FieldInfo xField, FieldInfo zField)
+        {
+            var parameter = Expression.Parameter(wposType, "p");
+            var call = Expression.Call(
+                Expression.Constant(this),
+                ScoreFromWPosMethod,
+                Expression.Convert(Expression.Field(parameter, xField), typeof(float)),
+                Expression.Convert(Expression.Field(parameter, zField), typeof(float)));
+            var delegateType = typeof(Func<,>).MakeGenericType(wposType, typeof(float));
+            return Expression.Lambda(delegateType, call, parameter).Compile();
+        }
+
+        private float ScoreFromWPos(float x, float z)
+        {
+            var position = new Vector2(x, z);
+            var score = GoalZoneScorePolicy.WeakPreference;
+            foreach (var target in this.targets)
+            {
+                var radius = Math.Max(0.1f, target.Radius);
+                var distance = Vector2.Distance(position, target.Position);
+                if (distance < radius)
+                {
+                    score = Math.Min(score, GoalZoneScorePolicy.WeakPreference * distance / radius);
+                }
+            }
+
+            return score;
+        }
     }
 
     private void RestoreRsrIfNeeded()
     {
         if (!this.rsrHenchedActive) return;
+        this.rsrRestoreStatus = $"restored {this.rsrSnapshotMode}";
+        this.rsrLastRestoreStatus = $"snapshot {this.rsrSnapshotMode} restored";
         rotationSolverIpc.RestoreMode(this.rsrSnapshotMode);
         this.rsrHenchedActive = false;
     }
@@ -554,7 +984,17 @@ internal sealed class AoePackPositioningController(
         var zField = wposType?.GetField("Z", InstanceFlags);
         if (goalZones == null || priorityTargets == null || wposType == null || actorField == null || positionField == null || hitboxField == null || instanceField == null || xField == null || zField == null)
         {
-            this.lastReason = "BMR AoE goal reflection members unavailable";
+            this.lastReason = $"BMR AoE goal reflection members unavailable: {FormatMissing(
+                (goalZones == null, "AIHints.GoalZones"),
+                (priorityTargets == null, "AIHints.PriorityTargets"),
+                (wposType == null, "BossMod.WPos"),
+                (enemyType == null, "AIHints.Enemy"),
+                (actorField == null, "AIHints.Enemy.Actor"),
+                (positionField == null, "Enemy.Actor.Position"),
+                (hitboxField == null, "Enemy.Actor.HitboxRadius"),
+                (instanceField == null, "Enemy.Actor.InstanceID"),
+                (xField == null, "BossMod.WPos.X"),
+                (zField == null, "BossMod.WPos.Z"))}";
             return false;
         }
 
@@ -577,6 +1017,20 @@ internal sealed class AoePackPositioningController(
         PropertyInfo p => p.GetValue(obj),
         _              => null
     };
+
+    private static string FormatMissing(params (bool Missing, string Name)[] members)
+    {
+        var missing = new List<string>();
+        foreach (var member in members)
+        {
+            if (member.Missing)
+            {
+                missing.Add(member.Name);
+            }
+        }
+
+        return string.Join(", ", missing);
+    }
 
     private List<TargetSnapshot> ReadPriorityTargets(object hints)
     {
@@ -645,270 +1099,4 @@ internal sealed class AoePackPositioningController(
     }
 
 
-    private readonly record struct TargetSnapshot(ulong InstanceId, Vector2 Position, float Radius);
-
-    private sealed class GoalPlan(
-        RsrAoeShape shape,
-        TargetSnapshot[] targets,
-        TargetSnapshot primaryTarget,
-        float radius,
-        float range,
-        float halfWidth,
-        int aoeCount,
-        int minimumExtraTargets)
-    {
-        private static readonly MethodInfo ScoreFromWPosMethod = typeof(GoalPlan).GetMethod(nameof(ScoreFromWPos), BindingFlags.Instance | BindingFlags.NonPublic)!;
-        private static readonly Vector2[] Directions =
-        [
-            new(1f, 0f),
-            new(0.9238795f, 0.3826834f),
-            new(0.7071068f, 0.7071068f),
-            new(0.3826834f, 0.9238795f),
-            new(0f, 1f),
-            new(-0.3826834f, 0.9238795f),
-            new(-0.7071068f, 0.7071068f),
-            new(-0.9238795f, 0.3826834f),
-            new(-1f, 0f),
-            new(-0.9238795f, -0.3826834f),
-            new(-0.7071068f, -0.7071068f),
-            new(-0.3826834f, -0.9238795f),
-            new(0f, -1f),
-            new(0.3826834f, -0.9238795f),
-            new(0.7071068f, -0.7071068f),
-            new(0.9238795f, -0.3826834f)
-        ];
-
-        public Delegate CreateGoalDelegate(Type wposType, FieldInfo xField, FieldInfo zField)
-        {
-            var parameter = Expression.Parameter(wposType, "p");
-            var call = Expression.Call(
-                Expression.Constant(this),
-                ScoreFromWPosMethod,
-                Expression.Field(parameter, xField),
-                Expression.Field(parameter, zField));
-            var delegateType = typeof(Func<,>).MakeGenericType(wposType, typeof(float));
-            return Expression.Lambda(delegateType, call, parameter).Compile();
-        }
-
-        public int ScoreHits(Vector2 origin)
-        {
-            return shape switch
-            {
-                RsrAoeShape.Circle       => this.ScoreCircle(origin),
-                RsrAoeShape.Cone         => this.ScoreCone(origin),
-                RsrAoeShape.StraightLine => this.ScoreLine(origin),
-                _                        => 0
-            };
-        }
-
-        public CandidateScore FindBestCandidate(Vector2 playerPosition)
-        {
-            var best = this.ScoreHits(playerPosition);
-            var bestPosition = playerPosition;
-            foreach (var candidate in this.GenerateCandidates(playerPosition))
-            {
-                var hits = this.ScoreHits(candidate);
-                if (hits > best)
-                {
-                    best = hits;
-                    bestPosition = candidate;
-                }
-            }
-
-            return new(bestPosition, best);
-        }
-
-        public AoePackOverlaySnapshot CreateOverlay(RsrAoeActionSnapshot action, Vector2 candidate, int currentHits, int bestHits, float y)
-        {
-            var targetMarkers = new List<AoePackOverlayTarget>(targets.Length);
-            foreach (var target in targets)
-            {
-                targetMarkers.Add(new(
-                    new Vector3(target.Position.X, y, target.Position.Y),
-                    target.Radius,
-                    this.TargetHit(target, candidate)));
-            }
-
-            return new(
-                action.AdjustedActionId,
-                action.ActionName,
-                action.Shape.ToString(),
-                new Vector3(candidate.X, y, candidate.Y),
-                new Vector3(primaryTarget.Position.X, y, primaryTarget.Position.Y),
-                radius,
-                halfWidth,
-                currentHits,
-                bestHits,
-                targetMarkers);
-        }
-
-        private float ScoreFromWPos(float x, float z)
-        {
-            var hits = this.ScoreHits(new Vector2(x, z));
-            var threshold = Math.Max(aoeCount, minimumExtraTargets + 1);
-            return hits >= threshold ? hits * hits : 0f;
-        }
-
-        private IEnumerable<Vector2> GenerateCandidates(Vector2 playerPosition)
-        {
-            yield return playerPosition;
-            yield return this.AverageTargets();
-            foreach (var target in targets)
-            {
-                yield return target.Position;
-            }
-
-            var distances = new[] { Math.Min(3f, range), Math.Min(6f, range), Math.Min(radius, range), range };
-            foreach (var anchor in new[] { primaryTarget.Position, this.AverageTargets() })
-            {
-                foreach (var distance in distances)
-                {
-                    if (distance <= 0.1f)
-                    {
-                        continue;
-                    }
-
-                    foreach (var direction in Directions)
-                    {
-                        yield return anchor - direction * distance;
-                    }
-                }
-            }
-        }
-
-        private Vector2 AverageTargets()
-        {
-            var total = Vector2.Zero;
-            foreach (var target in targets)
-            {
-                total += target.Position;
-            }
-
-            return targets.Length == 0 ? primaryTarget.Position : total / targets.Length;
-        }
-
-        private int ScoreCircle(Vector2 origin)
-        {
-            var count = 0;
-            foreach (var target in targets)
-            {
-                if (this.TargetHit(target, origin))
-                {
-                    ++count;
-                }
-            }
-
-            return count;
-        }
-
-        private int ScoreCone(Vector2 origin)
-        {
-            var toPrimary = primaryTarget.Position - origin;
-            var primaryDistanceSq = toPrimary.LengthSquared();
-            var effectiveRange = radius + primaryTarget.Radius;
-            if (primaryDistanceSq <= 0.01f || primaryDistanceSq > effectiveRange * effectiveRange)
-            {
-                return 0;
-            }
-
-            var direction = Vector2.Normalize(toPrimary);
-            const float CosHalfAngle = 0.5f; // RSR treats cones as 60-degree half-angle.
-            var count = 0;
-            foreach (var target in targets)
-            {
-                var toTarget = target.Position - origin;
-                if (this.TargetHitInCone(target, origin, direction, CosHalfAngle, toTarget))
-                {
-                    ++count;
-                }
-            }
-
-            return count;
-        }
-
-        private int ScoreLine(Vector2 origin)
-        {
-            var toPrimary = primaryTarget.Position - origin;
-            var primaryDistanceSq = toPrimary.LengthSquared();
-            var effectiveRange = radius + primaryTarget.Radius;
-            if (primaryDistanceSq <= 0.01f || primaryDistanceSq > effectiveRange * effectiveRange)
-            {
-                return 0;
-            }
-
-            var direction = Vector2.Normalize(toPrimary);
-            var count = 0;
-            foreach (var target in targets)
-            {
-                if (this.TargetHitInLine(target, origin, direction))
-                {
-                    ++count;
-                }
-            }
-
-            return count;
-        }
-
-        private bool TargetHit(TargetSnapshot target, Vector2 origin)
-        {
-            return shape switch
-            {
-                RsrAoeShape.Circle       => this.TargetHitInCircle(target, origin),
-                RsrAoeShape.Cone         => this.TargetHitInCone(target, origin),
-                RsrAoeShape.StraightLine => this.TargetHitInLine(target, origin),
-                _                        => false
-            };
-        }
-
-        private bool TargetHitInCircle(TargetSnapshot target, Vector2 origin)
-        {
-            var effective = radius + target.Radius;
-            return Vector2.DistanceSquared(target.Position, origin) <= effective * effective;
-        }
-
-        private bool TargetHitInCone(TargetSnapshot target, Vector2 origin)
-        {
-            var toPrimary = primaryTarget.Position - origin;
-            var primaryDistanceSq = toPrimary.LengthSquared();
-            var effectiveRange = radius + primaryTarget.Radius;
-            if (primaryDistanceSq <= 0.01f || primaryDistanceSq > effectiveRange * effectiveRange)
-            {
-                return false;
-            }
-
-            return this.TargetHitInCone(target, origin, Vector2.Normalize(toPrimary), 0.5f, target.Position - origin);
-        }
-
-        private bool TargetHitInCone(TargetSnapshot target, Vector2 origin, Vector2 direction, float cosHalfAngle, Vector2 toTarget)
-        {
-            var effective = radius + target.Radius;
-            if (toTarget.LengthSquared() > effective * effective)
-            {
-                return false;
-            }
-
-            var length = toTarget.Length();
-            return length > 0.01f && Vector2.Dot(toTarget / length, direction) >= cosHalfAngle;
-        }
-
-        private bool TargetHitInLine(TargetSnapshot target, Vector2 origin)
-        {
-            var toPrimary = primaryTarget.Position - origin;
-            var primaryDistanceSq = toPrimary.LengthSquared();
-            var effectiveRange = radius + primaryTarget.Radius;
-            return primaryDistanceSq > 0.01f &&
-                   primaryDistanceSq <= effectiveRange * effectiveRange &&
-                   this.TargetHitInLine(target, origin, Vector2.Normalize(toPrimary));
-        }
-
-        private bool TargetHitInLine(TargetSnapshot target, Vector2 origin, Vector2 direction)
-        {
-            var delta = target.Position - origin;
-            var front = Vector2.Dot(delta, direction);
-            var side = Math.Abs(delta.X * direction.Y - delta.Y * direction.X);
-            return front >= 0f && front <= radius + target.Radius && side <= halfWidth + target.Radius;
-        }
-
-        public readonly record struct CandidateScore(Vector2 Position, int Hits);
-    }
 }

@@ -31,13 +31,19 @@ internal sealed class RotationSolverIpc
     [EzIPC("ChangeOperatingMode")]
     private readonly Action<StateCommandType> changeOperatingMode = null!;
 
+    private readonly IDalamudPluginInterface pluginInterface;
+
     private Type? dataCenterType;
     private PropertyInfo? stateProp;
     private PropertyInfo? isManualProp;
+    private PropertyInfo? isAutoDutyProp;
     private PropertyInfo? isHenchedProp;
+    private PropertyInfo? isTargetOnlyProp;
+    private PropertyInfo? isPvpStateEnabledProp;
 
-    public RotationSolverIpc()
+    public RotationSolverIpc(IDalamudPluginInterface pluginInterface)
     {
+        this.pluginInterface = pluginInterface;
         EzIPC.Init(this, IpcPrefix);
     }
 
@@ -76,6 +82,15 @@ internal sealed class RotationSolverIpc
             var isHenched = this.isHenchedProp!.GetValue(null) as bool? ?? false;
             if (isHenched) return StateCommandType.Henched;
 
+            var isAutoDuty = this.isAutoDutyProp?.GetValue(null) as bool? ?? false;
+            if (isAutoDuty) return StateCommandType.AutoDuty;
+
+            var isPvp = this.isPvpStateEnabledProp?.GetValue(null) as bool? ?? false;
+            if (isPvp) return StateCommandType.PvP;
+
+            var isTargetOnly = this.isTargetOnlyProp?.GetValue(null) as bool? ?? false;
+            if (isTargetOnly) return StateCommandType.TargetOnly;
+
             var isManual = this.isManualProp!.GetValue(null) as bool? ?? false;
             if (isManual) return StateCommandType.Manual;
 
@@ -98,29 +113,62 @@ internal sealed class RotationSolverIpc
             return true;
         }
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        // Resolve DataCenter through the live RSR plugin instance to avoid picking up
+        // stale types from a previous plugin load still lingering in the AppDomain.
+        // DataCenter lives in RotationSolver.Basic.dll (a separate assembly from the
+        // main RotationSolver.dll). We find the main plugin, then locate the Basic
+        // assembly it references by name to guarantee we get the live version.
+        var plugin = ReflectionObjectSearch.FindLoadedPlugin(
+            this.pluginInterface,
+            "RotationSolver.RotationSolverPlugin",
+            maxDepth: 2,
+            "RotationSolver",
+            "Rotation Solver Reborn");
+        if (plugin == null)
+            return false;
+
+        var pluginAssembly = plugin.GetType().Assembly;
+        System.Reflection.Assembly? basicAssembly = null;
+        foreach (var refName in pluginAssembly.GetReferencedAssemblies())
         {
-            Type? type;
-            try { type = assembly.GetType(DataCenterTypeName, throwOnError: false); }
-            catch { continue; }
-
-            if (type == null) continue;
-
-            const BindingFlags StaticFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-            var state    = type.GetProperty("State",     StaticFlags);
-            var isManual = type.GetProperty("IsManual",  StaticFlags);
-            var isHenched = type.GetProperty("IsHenched", StaticFlags);
-
-            if (state == null || isManual == null || isHenched == null) continue;
-
-            this.dataCenterType  = type;
-            this.stateProp       = state;
-            this.isManualProp    = isManual;
-            this.isHenchedProp   = isHenched;
-            return true;
+            if (!string.Equals(refName.Name, "RotationSolver.Basic", StringComparison.Ordinal))
+                continue;
+            foreach (var loaded in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (loaded.GetName().Name == refName.Name && loaded.GetName().Version == refName.Version)
+                {
+                    basicAssembly = loaded;
+                    break;
+                }
+            }
+            break;
         }
+        if (basicAssembly == null)
+            return false;
 
-        return false;
+        Type? type;
+        try { type = basicAssembly.GetType(DataCenterTypeName, throwOnError: false); }
+        catch { return false; }
+        if (type == null) return false;
+
+        const BindingFlags StaticFlags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        var state    = type.GetProperty("State",     StaticFlags);
+        var isManual = type.GetProperty("IsManual",  StaticFlags);
+        var isAutoDuty = type.GetProperty("IsAutoDuty", StaticFlags);
+        var isHenched = type.GetProperty("IsHenched", StaticFlags);
+        var isTargetOnly = type.GetProperty("IsTargetOnly", StaticFlags);
+        var isPvpStateEnabled = type.GetProperty("IsPvPStateEnabled", StaticFlags);
+
+        if (state == null || isManual == null || isHenched == null) return false;
+
+        this.dataCenterType        = type;
+        this.stateProp             = state;
+        this.isManualProp          = isManual;
+        this.isAutoDutyProp        = isAutoDuty;
+        this.isHenchedProp         = isHenched;
+        this.isTargetOnlyProp      = isTargetOnly;
+        this.isPvpStateEnabledProp = isPvpStateEnabled;
+        return true;
     }
 
     private enum OtherCommandType : byte

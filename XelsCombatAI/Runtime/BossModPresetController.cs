@@ -7,20 +7,19 @@ internal sealed class BossModPresetController(
     DalamudServices services,
     BossModIpc bossMod,
     BossModReflectionSafety bossModSafety,
-    RangePlanner rangePlanner,
+    TargetUptimePlanner targetUptimePlanner,
     PositionalsController positionalsController,
     GapCloserController gapCloserController,
     EscapeGapCloserController escapeGapCloserController)
 {
     public Positional LastPositional { get; private set; } = Positional.Any;
-    public float LastRange { get; private set; } = -1f;
+    public float LastTargetUptimeRange { get; private set; } = -1f;
     public bool? LastMovement { get; private set; }
     public string? LastMovementRangeStrategy { get; private set; }
     public string? LastForbiddenZoneCushion { get; private set; }
     public bool? LastLeylinesBetweenTheLines { get; private set; }
     public bool? LastLeylinesRetrace { get; private set; }
     public bool? LastLeylinesGoal { get; private set; }
-    public bool? LastHealerStayNearParty { get; private set; }
     public bool? LastHealerHeal { get; private set; }
     public bool? LastHealerEsuna { get; private set; }
     public bool? LastHealerOutOfCombat { get; private set; }
@@ -63,7 +62,6 @@ internal sealed class BossModPresetController(
             bossMod.SetLeylinesBetweenTheLines(presetName, false);
             bossMod.SetLeylinesRetrace(presetName, false);
             bossMod.SetLeylinesGoal(presetName, false);
-            bossMod.SetHealerStayNearParty(presetName, false);
             bossMod.SetHealerHeal(presetName, false);
             bossMod.SetHealerEsuna(presetName, false);
             bossMod.SetHealerOutOfCombat(presetName, false);
@@ -84,20 +82,11 @@ internal sealed class BossModPresetController(
     {
         try
         {
-            if (config.ManageRange)
+            if (services.TargetManager.Target != null)
             {
-                var suppressAoeRange = config.AoePackPositioningAoeCombatControl &&
-                                       !rangePlanner.CurrentTargetHasBossModule() &&
-                                       rangePlanner.IsAoEMultiTargetActive();
-                if (!suppressAoeRange)
-                {
-                    if (config.HealerPartyCoverage &&
-                        rangePlanner.GetCurrentRangeRole() == RangeRole.Healer &&
-                        rangePlanner.CurrentTargetHasBossModule())
-                        this.SetRange(rangePlanner.CalculateHealerCoverageRange());
-                    else
-                        this.SetRange(rangePlanner.CalculateDesiredRange());
-                }
+                this.SetTargetUptimeRange(config.ManageTargetUptime
+                    ? targetUptimePlanner.CalculateTargetUptimeRange()
+                    : Configuration.InternalDisabledUptimeRange);
             }
 
             if (config.ManageForbiddenZoneDistance)
@@ -117,7 +106,6 @@ internal sealed class BossModPresetController(
                 config.ManageLeylines && !suppressAutomatedMovement && config.UseRetrace,
                 config.ManageLeylines && !suppressAutomatedMovement && config.ReturnToLeylines);
 
-            this.SetHealerAi(suppressAutomatedMovement);
             this.SetGapClosers(suppressAutomatedMovement);
         }
         catch (Exception ex)
@@ -131,14 +119,13 @@ internal sealed class BossModPresetController(
     {
         this.InitializedPreset = false;
         this.LastPositional = Positional.Any;
-        this.LastRange = -1f;
+        this.LastTargetUptimeRange = -1f;
         this.LastMovement = null;
         this.LastMovementRangeStrategy = null;
         this.LastForbiddenZoneCushion = null;
         this.LastLeylinesBetweenTheLines = null;
         this.LastLeylinesRetrace = null;
         this.LastLeylinesGoal = null;
-        this.LastHealerStayNearParty = null;
         this.LastHealerHeal = null;
         this.LastHealerEsuna = null;
         this.LastHealerOutOfCombat = null;
@@ -167,16 +154,16 @@ internal sealed class BossModPresetController(
         }
     }
 
-    private void SetRange(float range)
+    private void SetTargetUptimeRange(float range)
     {
-        if (Math.Abs(this.LastRange - range) <= 0.01f)
+        if (Math.Abs(this.LastTargetUptimeRange - range) <= 0.01f)
         {
             return;
         }
 
         if (bossMod.SetRange(BossModIpc.DefaultPresetName, range))
         {
-            this.LastRange = range;
+            this.LastTargetUptimeRange = range;
         }
     }
 
@@ -260,41 +247,6 @@ internal sealed class BossModPresetController(
             bossMod.SetLeylinesGoal(BossModIpc.DefaultPresetName, returnToLeylines))
         {
             this.LastLeylinesGoal = returnToLeylines;
-        }
-    }
-
-    private void SetHealerAi(bool suppressAutomatedMovement)
-    {
-        var presetName = BossModIpc.DefaultPresetName;
-        var stayNearParty = !suppressAutomatedMovement &&
-                            config.HealerPartyCoverage &&
-                            rangePlanner.GetCurrentRangeRole() == RangeRole.Healer &&
-                            rangePlanner.CurrentTargetHasBossModule();
-
-        if (this.LastHealerRaise != "None" && bossMod.SetHealerRaise(presetName, "None"))
-        {
-            this.LastHealerRaise = "None";
-        }
-
-        if (this.LastHealerHeal != false && bossMod.SetHealerHeal(presetName, false))
-        {
-            this.LastHealerHeal = false;
-        }
-
-        if (this.LastHealerEsuna != false && bossMod.SetHealerEsuna(presetName, false))
-        {
-            this.LastHealerEsuna = false;
-        }
-
-        if (this.LastHealerOutOfCombat != false && bossMod.SetHealerOutOfCombat(presetName, false))
-        {
-            this.LastHealerOutOfCombat = false;
-        }
-
-        if (this.LastHealerStayNearParty != stayNearParty &&
-            bossMod.SetHealerStayNearParty(presetName, stayNearParty))
-        {
-            this.LastHealerStayNearParty = stayNearParty;
         }
     }
 
