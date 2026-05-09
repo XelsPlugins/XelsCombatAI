@@ -1,3 +1,4 @@
+using System.Numerics;
 using XelsCombatAI.Game;
 
 namespace XelsCombatAI.Runtime;
@@ -7,8 +8,13 @@ internal sealed record CombatHistoryFrame(
     bool InCombat,
     bool IsDead,
     uint PlayerClassJobId,
+    Vector3? PlayerPosition,
+    float PlayerRotation,
     uint TargetBaseId,
     ulong TargetObjectId,
+    Vector3? TargetPosition,
+    float TargetRotation,
+    float TargetRadius,
     // Movement
     bool? Movement,
     bool AutomatedMovementSuppressed,
@@ -36,19 +42,40 @@ internal sealed record CombatHistoryFrame(
     bool Injected,
     string ActionName,
     string Shape,
+    Vector3? AoeCandidate,
+    Vector3? AoePrimaryTarget,
+    bool AoeCandidateInjected,
     // Survivability zone
     string SurvZoneReason,
     bool SurvZoneInjected,
     string SurvZoneName,
     float SurvZoneDistance,
+    Vector3? SurvZoneCenter,
+    Vector3? SurvZoneCaster,
     // Passage of arms
     string PassageReason,
     bool PassageInjected,
     float PassageDistance,
     bool PassageInCone,
+    Vector3? PassagePaladin,
+    Vector3? PassagePreferred,
+    // Healer coverage
+    Vector3? HealerCoverageCenter,
     // Aggro safety
     string AggroReason,
     bool AggroInjected,
     float AggroSeconds,
-    // Boss frontal cone
-    string BossFrontalReason);
+    string ArenaEdgeReason,
+    // BossMod goal hook
+    string GoalPriority,
+    string GoalSources,
+    string BossModActiveModule,
+    string BossModActiveZoneModule,
+    string BossModNavigationDestination,
+    string BossModNavigationNextWaypoint,
+    string BossModNavigationStats,
+    string BossModControllerTarget,
+    string BossModMovementOverride,
+    string BossModHintSummary,
+    BossModMovementDiagnostics BossModMovement,
+    string ManualMovementInput);

@@ -1,14 +1,121 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Numerics;
 using System.Reflection;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 
 namespace XelsCombatAI.Integrations;
+
+internal sealed record BossModMovementDiagnostics(
+    string ActiveModule,
+    string ActiveZoneModule,
+    string NavigationDestination,
+    string NavigationNextWaypoint,
+    string NavigationStats,
+    string ControllerTarget,
+    string MovementOverride,
+    string HintSummary,
+    Vector2? NavigationDestinationPosition,
+    Vector2? NavigationNextWaypointPosition,
+    BossModNavigationDiagnostics NavigationDetails,
+    BossModControllerDiagnostics ControllerDetails,
+    BossModMovementOverrideDiagnostics MovementDetails,
+    BossModHintDiagnostics HintDetails)
+{
+    public static BossModMovementDiagnostics Empty { get; } = new(
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        "<none>",
+        null,
+        null,
+        BossModNavigationDiagnostics.Empty,
+        BossModControllerDiagnostics.Empty,
+        BossModMovementOverrideDiagnostics.Empty,
+        BossModHintDiagnostics.Empty);
+}
+
+internal sealed record BossModNavigationDiagnostics(
+    float? LeewaySeconds,
+    float? TimeToGoal,
+    double? PathfindMilliseconds,
+    double? RasterizeMilliseconds,
+    float? ForceMovementIn)
+{
+    public static BossModNavigationDiagnostics Empty { get; } = new(null, null, null, null, null);
+}
+
+internal sealed record BossModControllerDiagnostics(
+    Vector2? NavigationTarget,
+    bool? AllowInterruptingCastByMovement,
+    bool? ForceCancelCast)
+{
+    public static BossModControllerDiagnostics Empty { get; } = new(null, null, null);
+}
+
+internal sealed record BossModMovementOverrideDiagnostics(
+    Vector3? DesiredDirection,
+    Vector2? UserMove,
+    Vector2? ActualMove,
+    bool? MovementBlocked)
+{
+    public static BossModMovementOverrideDiagnostics Empty { get; } = new(null, null, null, null);
+}
+
+internal sealed record BossModHintDiagnostics(
+    int? GoalZones,
+    int? ForbiddenZones,
+    int? TemporaryObstacles,
+    int? Teleporters,
+    int? ForbiddenDirections,
+    int? PredictedDamage,
+    int? PotentialTargets,
+    string ImminentSpecialMode,
+    Vector3? ForcedMovement,
+    float? MaxCastTime,
+    bool? ForceCancelCast,
+    BossModBoundsDiagnostics PathfindMapBounds,
+    Vector2? PathfindMapCenter)
+{
+    public static BossModHintDiagnostics Empty { get; } = new(
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "<none>",
+        null,
+        null,
+        null,
+        BossModBoundsDiagnostics.Empty,
+        null);
+}
+
+internal sealed record BossModBoundsDiagnostics(
+    string Type,
+    string Text,
+    float? Radius,
+    float? HalfWidth,
+    float? HalfHeight,
+    float? MapResolution,
+    float? PathfindingOffset,
+    int? Vertices,
+    float? ScaleFactor)
+{
+    public static BossModBoundsDiagnostics Empty { get; } = new("<none>", "<none>", null, null, null, null, null, null, null);
+}
 
 internal sealed class BossModGoalZoneHook : IDisposable
 {
@@ -35,6 +142,9 @@ internal sealed class BossModGoalZoneHook : IDisposable
     }
 
     public string Status => this.status;
+    public string LastGoalPriority => this.draw?.LastGoalPriority ?? "None";
+    public string LastGoalSources => this.draw?.LastGoalSources ?? "<none>";
+    public BossModMovementDiagnostics MovementDiagnostics => this.draw?.MovementDiagnostics ?? BossModMovementDiagnostics.Empty;
     public string Diagnostics => string.Join(
         "; ",
         $"Status={this.status}",
@@ -209,6 +319,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly MethodInfo? windowSystemDrawMethod;
         private string lastGoalPriority = "None";
         private string lastGoalSources = "<none>";
+        private BossModMovementDiagnostics movementDiagnostics = BossModMovementDiagnostics.Empty;
 
         private ReflectedDraw(
             object plugin,
@@ -269,6 +380,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
         public string LastGoalPriority => this.lastGoalPriority;
         public string LastGoalSources => this.lastGoalSources;
+        public BossModMovementDiagnostics MovementDiagnostics => this.movementDiagnostics;
 
         public static ReflectedDraw? TryCreate(object plugin, IReadOnlyList<IBossModGoalZoneContributor> contributors, DalamudServices services, IPluginLog log, out string reason)
         {
@@ -411,6 +523,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.queueManualActionsMethod.Invoke(this.actionManager, []);
             this.rotationUpdateMethod.Invoke(this.rotation, [this.animationLockDelayEstimateProperty.GetValue(this.actionManager), (bool)this.isMovingMethod.Invoke(this.movementOverride, [])!, this.services.Condition[ConditionFlag.DutyRecorderPlayback]]);
             this.aiUpdateMethod.Invoke(this.ai, []);
+            this.CaptureMovementDiagnostics(activeModule);
             this.broadcastUpdateMethod.Invoke(this.broadcast, []);
             this.finishActionGatherMethod.Invoke(this.actionManager, []);
 
@@ -452,6 +565,328 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.lastGoalPriority = highestPriority.ToString();
             this.lastGoalSources = string.Join(", ", contributions.Select(c => c.Label).Distinct(StringComparer.Ordinal));
             goalZones.Add(CreateAdvisoryGoalDelegate(contributions));
+        }
+
+        private void CaptureMovementDiagnostics(object? activeModule)
+        {
+            try
+            {
+                var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                var aiType = this.ai.GetType();
+                var beh = aiType.GetField("Beh", flags)?.GetValue(this.ai);
+                var controller = aiType.GetField("Controller", flags)?.GetValue(this.ai);
+                var naviDecision = beh?.GetType().GetField("_naviDecision", flags)?.GetValue(beh);
+                var forceMovementIn = beh?.GetType().GetField("ForceMovementIn", flags)?.GetValue(beh);
+
+                var destination = ReadField(naviDecision, "Destination", flags);
+                var nextWaypoint = ReadField(naviDecision, "NextWaypoint", flags);
+                var leeway = ReadField(naviDecision, "LeewaySeconds", flags);
+                var timeToGoal = ReadField(naviDecision, "TimeToGoal", flags);
+                var pathfindTime = ReadField(naviDecision, "PathfindTime", flags);
+                var rasterizeTime = ReadField(naviDecision, "RasterizeTime", flags);
+
+                var naviTarget = ReadField(controller, "NaviTargetPos", flags);
+                var allowCastMove = ReadField(controller, "AllowInterruptingCastByMovement", flags);
+                var forceCancelCast = ReadField(controller, "ForceCancelCast", flags);
+                var desiredDirection = ReadField(this.movementOverride, "DesiredDirection", flags);
+                var userMove = ReadField(this.movementOverride, "UserMove", flags);
+                var actualMove = ReadField(this.movementOverride, "ActualMove", flags);
+                var movementBlocked = this.movementOverride.GetType().GetProperty("MovementBlocked", flags)?.GetValue(this.movementOverride);
+                var hintDetails = this.BuildHintDetails(flags);
+
+                this.movementDiagnostics = new(
+                    FormatTypeName(activeModule),
+                    FormatTypeName(this.activeZoneModuleField.GetValue(this.zoneModuleManager)),
+                    FormatWPos(destination),
+                    FormatWPos(nextWaypoint),
+                    string.Join(
+                        ",",
+                        $"Leeway={FormatNumber(leeway)}",
+                        $"TTG={FormatNumber(timeToGoal)}",
+                        $"PathMs={FormatTimeMs(pathfindTime)}",
+                        $"RasterMs={FormatTimeMs(rasterizeTime)}",
+                        $"ForceMoveIn={FormatNumber(forceMovementIn)}"),
+                    string.Join(
+                        ",",
+                        $"Navi={FormatWPos(naviTarget)}",
+                        $"AllowCastMove={allowCastMove ?? "<none>"}",
+                        $"ForceCancelCast={forceCancelCast ?? "<none>"}"),
+                    string.Join(
+                        ",",
+                        $"Desired={FormatVector(desiredDirection)}",
+                        $"User={FormatWDir(userMove)}",
+                        $"Actual={FormatWDir(actualMove)}",
+                        $"Blocked={movementBlocked ?? "<none>"}"),
+                    BuildHintSummary(hintDetails),
+                    ReadWPos(destination),
+                    ReadWPos(nextWaypoint),
+                    new BossModNavigationDiagnostics(
+                        ReadFloat(leeway),
+                        ReadFloat(timeToGoal),
+                        ReadTimeMilliseconds(pathfindTime),
+                        ReadTimeMilliseconds(rasterizeTime),
+                        ReadFloat(forceMovementIn)),
+                    new BossModControllerDiagnostics(
+                        ReadWPos(naviTarget),
+                        ReadBool(allowCastMove),
+                        ReadBool(forceCancelCast)),
+                    new BossModMovementOverrideDiagnostics(
+                        ReadVector3(desiredDirection),
+                        ReadWDir(userMove),
+                        ReadWDir(actualMove),
+                        ReadBool(movementBlocked)),
+                    hintDetails);
+            }
+            catch (Exception ex)
+            {
+                this.movementDiagnostics = BossModMovementDiagnostics.Empty with { NavigationStats = $"diagnostics failed: {ex.Message}" };
+            }
+        }
+
+        private BossModHintDiagnostics BuildHintDetails(BindingFlags flags)
+        {
+            var bounds = ReadField(this.hints, "PathfindMapBounds", flags);
+            return new BossModHintDiagnostics(
+                CountField(this.hints, "GoalZones", flags),
+                CountField(this.hints, "ForbiddenZones", flags),
+                CountField(this.hints, "TemporaryObstacles", flags),
+                CountField(this.hints, "Teleporters", flags),
+                CountField(this.hints, "ForbiddenDirections", flags),
+                CountField(this.hints, "PredictedDamage", flags),
+                CountField(this.hints, "PotentialTargets", flags),
+                ReadField(this.hints, "ImminentSpecialMode", flags)?.ToString() ?? "<none>",
+                ReadVector3(ReadField(this.hints, "ForcedMovement", flags)),
+                ReadFloat(ReadField(this.hints, "MaxCastTime", flags)),
+                ReadBool(ReadField(this.hints, "ForceCancelCast", flags)),
+                BuildBoundsDiagnostics(bounds, flags),
+                ReadWPos(ReadField(this.hints, "PathfindMapCenter", flags)));
+        }
+
+        private static string BuildHintSummary(BossModHintDiagnostics details)
+        {
+            return string.Join(
+                ",",
+                $"Goals={details.GoalZones?.ToString(CultureInfo.InvariantCulture) ?? "-1"}",
+                $"Forbidden={details.ForbiddenZones?.ToString(CultureInfo.InvariantCulture) ?? "-1"}",
+                $"TempObs={details.TemporaryObstacles?.ToString(CultureInfo.InvariantCulture) ?? "-1"}",
+                $"Teleporters={details.Teleporters?.ToString(CultureInfo.InvariantCulture) ?? "-1"}",
+                $"Directions={details.ForbiddenDirections?.ToString(CultureInfo.InvariantCulture) ?? "-1"}",
+                $"Damage={details.PredictedDamage?.ToString(CultureInfo.InvariantCulture) ?? "-1"}",
+                $"Potential={details.PotentialTargets?.ToString(CultureInfo.InvariantCulture) ?? "-1"}",
+                $"Special={details.ImminentSpecialMode}",
+                $"ForcedMovement={FormatNullableVector(details.ForcedMovement)}",
+                $"MaxCast={FormatNumber(details.MaxCastTime)}",
+                $"ForceCancel={details.ForceCancelCast?.ToString() ?? "<none>"}",
+                $"Bounds={details.PathfindMapBounds.Text}",
+                $"Center={FormatNullableVector(details.PathfindMapCenter)}");
+        }
+
+        private static object? ReadField(object? instance, string name, BindingFlags flags)
+        {
+            return instance?.GetType().GetField(name, flags)?.GetValue(instance);
+        }
+
+        private static int CountField(object instance, string name, BindingFlags flags)
+        {
+            return ReadField(instance, name, flags) is ICollection collection ? collection.Count : -1;
+        }
+
+        private static BossModBoundsDiagnostics BuildBoundsDiagnostics(object? value, BindingFlags flags)
+        {
+            if (value == null)
+            {
+                return BossModBoundsDiagnostics.Empty;
+            }
+
+            return new BossModBoundsDiagnostics(
+                value.GetType().Name,
+                value.ToString() ?? "<none>",
+                ReadFloat(ReadMember(value, "Radius", flags)),
+                ReadFloat(ReadMember(value, "HalfWidth", flags)),
+                ReadFloat(ReadMember(value, "HalfHeight", flags)),
+                ReadFloat(ReadMember(value, "MapResolution", flags)),
+                ReadFloat(ReadMember(value, "PathfindingOffset", flags) ?? ReadMember(value, "Pathfinding offset", flags)),
+                ReadInt(ReadMember(value, "Vertices", flags)),
+                ReadFloat(ReadMember(value, "ScaleFactor", flags)));
+        }
+
+        private static object? ReadMember(object? instance, string name, BindingFlags flags)
+        {
+            if (instance == null)
+            {
+                return null;
+            }
+
+            var type = instance.GetType();
+            return type.GetField(name, flags)?.GetValue(instance) ??
+                   type.GetProperty(name, flags)?.GetValue(instance);
+        }
+
+        private static string FormatTypeName(object? instance)
+        {
+            return instance?.GetType().Name ?? "<none>";
+        }
+
+        private static string FormatWPos(object? value)
+        {
+            if (value == null)
+            {
+                return "<none>";
+            }
+
+            var type = value.GetType();
+            var x = ReadFloatField(value, type, "X");
+            var z = ReadFloatField(value, type, "Z");
+            return x.HasValue && z.HasValue
+                ? string.Create(CultureInfo.InvariantCulture, $"({x.Value:0.00},{z.Value:0.00})")
+                : value.ToString() ?? "<none>";
+        }
+
+        private static Vector2? ReadWPos(object? value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            var type = value.GetType();
+            var x = ReadFloatField(value, type, "X");
+            var z = ReadFloatField(value, type, "Z");
+            return x.HasValue && z.HasValue ? new Vector2(x.Value, z.Value) : null;
+        }
+
+        private static string FormatWDir(object? value)
+        {
+            if (value == null)
+            {
+                return "<none>";
+            }
+
+            var type = value.GetType();
+            var x = ReadFloatField(value, type, "X");
+            var z = ReadFloatField(value, type, "Z");
+            return x.HasValue && z.HasValue
+                ? string.Create(CultureInfo.InvariantCulture, $"({x.Value:0.00},{z.Value:0.00})")
+                : value.ToString() ?? "<none>";
+        }
+
+        private static Vector2? ReadWDir(object? value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            var type = value.GetType();
+            var x = ReadFloatField(value, type, "X");
+            var z = ReadFloatField(value, type, "Z");
+            return x.HasValue && z.HasValue ? new Vector2(x.Value, z.Value) : null;
+        }
+
+        private static string FormatVector(object? value)
+        {
+            return value switch
+            {
+                null => "<none>",
+                Vector3 vector => string.Create(CultureInfo.InvariantCulture, $"({vector.X:0.00},{vector.Y:0.00},{vector.Z:0.00})"),
+                _ => value.ToString() ?? "<none>"
+            };
+        }
+
+        private static string FormatNullableVector(Vector2? value)
+        {
+            return value.HasValue
+                ? string.Create(CultureInfo.InvariantCulture, $"({value.Value.X:0.00},{value.Value.Y:0.00})")
+                : "<none>";
+        }
+
+        private static string FormatNullableVector(Vector3? value)
+        {
+            return value.HasValue
+                ? string.Create(CultureInfo.InvariantCulture, $"({value.Value.X:0.00},{value.Value.Y:0.00},{value.Value.Z:0.00})")
+                : "<none>";
+        }
+
+        private static Vector3? ReadVector3(object? value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            if (value is Vector3 vector)
+            {
+                return vector;
+            }
+
+            var type = value.GetType();
+            var x = ReadFloatField(value, type, "X");
+            var y = ReadFloatField(value, type, "Y");
+            var z = ReadFloatField(value, type, "Z");
+            return x.HasValue && y.HasValue && z.HasValue ? new Vector3(x.Value, y.Value, z.Value) : null;
+        }
+
+        private static string FormatNumber(object? value)
+        {
+            return value switch
+            {
+                null => "<none>",
+                float f => f.ToString("0.00", CultureInfo.InvariantCulture),
+                double d => d.ToString("0.00", CultureInfo.InvariantCulture),
+                _ => value.ToString() ?? "<none>"
+            };
+        }
+
+        private static float? ReadFloat(object? value)
+        {
+            return value switch
+            {
+                float f when float.IsFinite(f) => f,
+                double d when double.IsFinite(d) => (float)d,
+                int i => i,
+                uint u => u,
+                _ => null
+            };
+        }
+
+        private static int? ReadInt(object? value)
+        {
+            return value switch
+            {
+                int i => i,
+                uint u when u <= int.MaxValue => (int)u,
+                long l when l is >= int.MinValue and <= int.MaxValue => (int)l,
+                _ => null
+            };
+        }
+
+        private static bool? ReadBool(object? value)
+        {
+            return value is bool b ? b : null;
+        }
+
+        private static double? ReadTimeMilliseconds(object? value)
+        {
+            return value is TimeSpan timeSpan && double.IsFinite(timeSpan.TotalMilliseconds)
+                ? timeSpan.TotalMilliseconds
+                : null;
+        }
+
+        private static string FormatTimeMs(object? value)
+        {
+            return value is TimeSpan timeSpan
+                ? timeSpan.TotalMilliseconds.ToString("0.00", CultureInfo.InvariantCulture)
+                : "<none>";
+        }
+
+        private static float? ReadFloatField(object value, Type type, string name)
+        {
+            return type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(value) switch
+            {
+                float f => f,
+                double d => (float)d,
+                _ => null
+            };
         }
 
         private static Delegate CreateAdvisoryGoalDelegate(IReadOnlyList<BossModGoalContribution> contributions)

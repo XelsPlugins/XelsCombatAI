@@ -1,5 +1,9 @@
 using System;
+using System.Globalization;
+using System.Numerics;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using XelsCombatAI.Combat;
 using XelsCombatAI.Game;
 using XelsCombatAI.Integrations;
@@ -8,8 +12,18 @@ namespace XelsCombatAI.Runtime;
 
 internal sealed class CombatHistory
 {
-    private const int MaxFrames = 1200;
+    // One hour at the current 250 ms sample rate; fights should fit without dropping early context.
+    private const int MaxFrames = 14400;
     private static readonly TimeSpan RecordInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        IncludeFields = true
+    };
+
+    static CombatHistory()
+    {
+        JsonOptions.Converters.Add(new JsonStringEnumConverter());
+    }
 
     private readonly CombatHistoryFrame?[] frames = new CombatHistoryFrame?[MaxFrames];
     private int head;
@@ -17,6 +31,11 @@ internal sealed class CombatHistory
     private DateTime combatStart = DateTime.MinValue;
     private DateTime lastRecordedAt = DateTime.MinValue;
     private StateCommandType lastSeenRsrSnapshotMode;
+
+    public bool HasFrames => this.count > 0;
+    public DateTime CombatStartUtc => this.combatStart;
+    public CombatHistoryFrame? FirstFrame => this.count == 0 ? null : this.frames[this.head];
+    public CombatHistoryFrame? LastFrame => this.count == 0 ? null : this.frames[(this.head + this.count - 1) % MaxFrames];
 
     public void Reset()
     {
@@ -46,8 +65,13 @@ internal sealed class CombatHistory
             InCombat: status.InCombat,
             IsDead: status.IsDead,
             PlayerClassJobId: status.PlayerClassJobId,
+            PlayerPosition: status.PlayerPosition,
+            PlayerRotation: status.PlayerRotation,
             TargetBaseId: status.TargetBaseId,
             TargetObjectId: status.TargetObjectId,
+            TargetPosition: status.TargetPosition,
+            TargetRotation: status.TargetRotation,
+            TargetRadius: status.TargetRadius,
             Movement: status.LastMovement,
             AutomatedMovementSuppressed: status.AutomatedMovementSuppressed,
             MovementRangeStrategy: status.LastMovementRangeStrategy,
@@ -70,18 +94,38 @@ internal sealed class CombatHistory
             Injected: aoe.Injected,
             ActionName: aoe.ActionName,
             Shape: aoe.Shape,
+            AoeCandidate: aoe.Candidate,
+            AoePrimaryTarget: aoe.PrimaryTarget,
+            AoeCandidateInjected: aoe.CandidateInjected,
             SurvZoneReason: status.SurvivabilityZonePositioning.LastReason,
             SurvZoneInjected: status.SurvivabilityZonePositioning.Injected,
             SurvZoneName: status.SurvivabilityZonePositioning.ZoneName,
             SurvZoneDistance: status.SurvivabilityZonePositioning.DistanceToCenter,
+            SurvZoneCenter: status.SurvivabilityZonePositioning.ZoneCenter,
+            SurvZoneCaster: status.SurvivabilityZonePositioning.CasterPosition,
             PassageReason: status.PassageOfArmsPositioning.LastReason,
             PassageInjected: status.PassageOfArmsPositioning.Injected,
             PassageDistance: status.PassageOfArmsPositioning.DistanceToPreferred,
             PassageInCone: status.PassageOfArmsPositioning.PlayerInCone,
+            PassagePaladin: status.PassageOfArmsPositioning.PaladinPosition,
+            PassagePreferred: status.PassageOfArmsPositioning.PreferredPosition,
+            HealerCoverageCenter: status.HealerCoveragePositioning.Center,
             AggroReason: status.AggroSafety.LastReason,
             AggroInjected: status.AggroSafety.Injected,
             AggroSeconds: status.AggroSafety.AggroSeconds,
-            BossFrontalReason: status.BossFrontalConeReason);
+            ArenaEdgeReason: status.ArenaEdgeReason,
+            GoalPriority: status.AoeGoalPriority,
+            GoalSources: status.AoeGoalSources,
+            BossModActiveModule: status.BossModMovement.ActiveModule,
+            BossModActiveZoneModule: status.BossModMovement.ActiveZoneModule,
+            BossModNavigationDestination: status.BossModMovement.NavigationDestination,
+            BossModNavigationNextWaypoint: status.BossModMovement.NavigationNextWaypoint,
+            BossModNavigationStats: status.BossModMovement.NavigationStats,
+            BossModControllerTarget: status.BossModMovement.ControllerTarget,
+            BossModMovementOverride: status.BossModMovement.MovementOverride,
+            BossModHintSummary: status.BossModMovement.HintSummary,
+            BossModMovement: status.BossModMovement,
+            ManualMovementInput: status.ManualMovementInput);
 
         var index = (this.head + this.count) % MaxFrames;
         this.frames[index] = frame;
@@ -120,11 +164,27 @@ internal sealed class CombatHistory
             // Always show state changes relevant to debugging
             AppendIfChanged(sb, "InCombat", frame.InCombat, prev?.InCombat);
             AppendIfChanged(sb, "Dead", frame.IsDead, prev?.IsDead);
+            AppendIfChanged(sb, "PlayerPos", FormatVector(frame.PlayerPosition), prev == null ? null : FormatVector(prev.PlayerPosition));
+            AppendIfChanged(sb, "PlayerRot", FormatFloat(frame.PlayerRotation), prev == null ? null : FormatFloat(prev.PlayerRotation));
             AppendIfChanged(sb, "Target", frame.TargetBaseId, prev?.TargetBaseId);
             AppendIfChanged(sb, "TargetObj", frame.TargetObjectId, prev?.TargetObjectId);
+            AppendIfChanged(sb, "TargetPos", FormatVector(frame.TargetPosition), prev == null ? null : FormatVector(prev.TargetPosition));
+            AppendIfChanged(sb, "TargetRot", FormatFloat(frame.TargetRotation), prev == null ? null : FormatFloat(prev.TargetRotation));
+            AppendIfChanged(sb, "TargetRadius", FormatFloat(frame.TargetRadius), prev == null ? null : FormatFloat(prev.TargetRadius));
             AppendIfChanged(sb, "Move", frame.Movement, prev?.Movement);
             AppendIfChanged(sb, "Suppressed", frame.AutomatedMovementSuppressed, prev?.AutomatedMovementSuppressed);
+            AppendIfChanged(sb, "ManualInput", frame.ManualMovementInput, prev?.ManualMovementInput);
             AppendIfChanged(sb, "Strategy", frame.MovementRangeStrategy, prev?.MovementRangeStrategy);
+            AppendIfChanged(sb, "GoalSources", frame.GoalSources, prev?.GoalSources);
+            AppendIfChanged(sb, "GoalState", frame.GoalPriority, prev?.GoalPriority);
+            AppendIfChanged(sb, "BMRModule", frame.BossModActiveModule, prev?.BossModActiveModule);
+            AppendIfChanged(sb, "BMRZoneModule", frame.BossModActiveZoneModule, prev?.BossModActiveZoneModule);
+            AppendIfChanged(sb, "BMRDest", frame.BossModNavigationDestination, prev?.BossModNavigationDestination);
+            AppendIfChanged(sb, "BMRNext", frame.BossModNavigationNextWaypoint, prev?.BossModNavigationNextWaypoint);
+            AppendIfChanged(sb, "BMRNav", frame.BossModNavigationStats, prev?.BossModNavigationStats);
+            AppendIfChanged(sb, "BMRController", frame.BossModControllerTarget, prev?.BossModControllerTarget);
+            AppendIfChanged(sb, "BMRMove", frame.BossModMovementOverride, prev?.BossModMovementOverride);
+            AppendIfChanged(sb, "BMRHints", frame.BossModHintSummary, prev?.BossModHintSummary);
             AppendIfChanged(sb, "SafetyBuffer", frame.SafetyBuffer, prev?.SafetyBuffer);
             AppendIfChanged(sb, "TargetUptime", $"{frame.TargetUptimeRange:0.0}", prev == null ? null : $"{prev.TargetUptimeRange:0.0}");
             AppendIfChanged(sb, "Positional", frame.LastPositional, prev?.LastPositional);
@@ -146,6 +206,9 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "Injected", frame.Injected, prev?.Injected);
             if (frame.ActionName != "<none>")
                 AppendIfChanged(sb, "Action", $"{frame.ActionName}({frame.Shape})", prev == null ? null : $"{prev.ActionName}({prev.Shape})");
+            AppendIfChanged(sb, "AoeCandidate", FormatVector(frame.AoeCandidate), prev == null ? null : FormatVector(prev.AoeCandidate));
+            AppendIfChanged(sb, "AoePrimary", FormatVector(frame.AoePrimaryTarget), prev == null ? null : FormatVector(prev.AoePrimaryTarget));
+            AppendIfChanged(sb, "AoeCandidateInjected", frame.AoeCandidateInjected, prev?.AoeCandidateInjected);
 
             // Survivability zone — only print when active or just cleared
             if (frame.SurvZoneInjected || prev?.SurvZoneInjected == true)
@@ -154,6 +217,8 @@ internal sealed class CombatHistory
                 AppendIfChanged(sb, "SurvZoneInjected", frame.SurvZoneInjected, prev?.SurvZoneInjected);
                 if (frame.SurvZoneName != "<none>") AppendIfChanged(sb, "SurvZoneName", frame.SurvZoneName, prev?.SurvZoneName);
                 AppendIfChanged(sb, "SurvZoneDist", $"{frame.SurvZoneDistance:0.0}", prev == null ? null : $"{prev.SurvZoneDistance:0.0}");
+                AppendIfChanged(sb, "SurvZoneCenter", FormatVector(frame.SurvZoneCenter), prev == null ? null : FormatVector(prev.SurvZoneCenter));
+                AppendIfChanged(sb, "SurvZoneCaster", FormatVector(frame.SurvZoneCaster), prev == null ? null : FormatVector(prev.SurvZoneCaster));
             }
             else
             {
@@ -167,6 +232,8 @@ internal sealed class CombatHistory
                 AppendIfChanged(sb, "PassageInjected", frame.PassageInjected, prev?.PassageInjected);
                 AppendIfChanged(sb, "PassageDist", $"{frame.PassageDistance:0.0}", prev == null ? null : $"{prev.PassageDistance:0.0}");
                 AppendIfChanged(sb, "PassageInCone", frame.PassageInCone, prev?.PassageInCone);
+                AppendIfChanged(sb, "PassagePaladin", FormatVector(frame.PassagePaladin), prev == null ? null : FormatVector(prev.PassagePaladin));
+                AppendIfChanged(sb, "PassagePreferred", FormatVector(frame.PassagePreferred), prev == null ? null : FormatVector(prev.PassagePreferred));
             }
             else
             {
@@ -185,10 +252,58 @@ internal sealed class CombatHistory
                 AppendIfChanged(sb, "Aggro", frame.AggroReason, prev?.AggroReason);
             }
 
-            AppendIfChanged(sb, "BossFrontal", frame.BossFrontalReason, prev?.BossFrontalReason);
+            AppendIfChanged(sb, "ArenaEdge", frame.ArenaEdgeReason, prev?.ArenaEdgeReason);
+            AppendIfChanged(sb, "HCCenter", FormatVector(frame.HealerCoverageCenter), prev == null ? null : FormatVector(prev.HealerCoverageCenter));
 
             sb.AppendLine();
             prev = frame;
+        }
+
+        return sb.ToString();
+    }
+
+    public string BuildJsonLines(Configuration config)
+    {
+        var sb = new StringBuilder();
+
+        if (this.count == 0)
+        {
+            sb.AppendLine(JsonSerializer.Serialize(
+                new CombatHistoryJsonHeader(
+                    Type: "header",
+                    SchemaVersion: 1,
+                    CombatStartUtc: this.combatStart,
+                    DurationSeconds: 0,
+                    FrameCount: 0,
+                    Config: CombatHistoryConfigSnapshot.From(config),
+                    RsrSnapshotMode: this.lastSeenRsrSnapshotMode.ToString()),
+                JsonOptions));
+            return sb.ToString();
+        }
+
+        var last = this.frames[(this.head + this.count - 1) % MaxFrames]!;
+        sb.AppendLine(JsonSerializer.Serialize(
+            new CombatHistoryJsonHeader(
+                Type: "header",
+                SchemaVersion: 1,
+                CombatStartUtc: this.combatStart,
+                DurationSeconds: last.T,
+                FrameCount: this.count,
+                Config: CombatHistoryConfigSnapshot.From(config),
+                RsrSnapshotMode: this.lastSeenRsrSnapshotMode.ToString()),
+            JsonOptions));
+
+        CombatHistoryFrame? previous = null;
+        for (var i = 0; i < this.count; i++)
+        {
+            var frame = this.frames[(this.head + i) % MaxFrames]!;
+            sb.AppendLine(JsonSerializer.Serialize(
+                new CombatHistoryJsonFrame(
+                    Type: "frame",
+                    Frame: frame,
+                    Motion: CombatHistoryMotionSnapshot.From(frame, previous)),
+                JsonOptions));
+            previous = frame;
         }
 
         return sb.ToString();
@@ -210,5 +325,115 @@ internal sealed class CombatHistory
     {
         if (current != previous)
             sb.Append($"  {label}={current}");
+    }
+
+    private static string FormatVector(Vector3? value)
+    {
+        if (value == null)
+        {
+            return "<none>";
+        }
+
+        var v = value.Value;
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"({v.X:0.00},{v.Y:0.00},{v.Z:0.00})");
+    }
+
+    private static string FormatFloat(float value)
+    {
+        return value.ToString("0.00", CultureInfo.InvariantCulture);
+    }
+
+    private sealed record CombatHistoryJsonHeader(
+        string Type,
+        int SchemaVersion,
+        DateTime CombatStartUtc,
+        float DurationSeconds,
+        int FrameCount,
+        CombatHistoryConfigSnapshot Config,
+        string RsrSnapshotMode);
+
+    private sealed record CombatHistoryConfigSnapshot(
+        bool TargetUptime,
+        bool PickAoeTarget,
+        bool KeepTrashTarget,
+        bool ManagePositionals,
+        bool ManageTrueNorth,
+        string CombatStyle)
+    {
+        public static CombatHistoryConfigSnapshot From(Configuration config)
+        {
+            return new CombatHistoryConfigSnapshot(
+                config.ManageTargetUptime,
+                config.PickBetterAoeTarget,
+                config.KeepTrashTargetSelected,
+                config.ManagePositionals,
+                config.ManageTrueNorth,
+                config.CombatStyle.ToString());
+        }
+    }
+
+    private sealed record CombatHistoryJsonFrame(
+        string Type,
+        CombatHistoryFrame Frame,
+        CombatHistoryMotionSnapshot Motion);
+
+    private sealed record CombatHistoryMotionSnapshot(
+        Vector3? PlayerDelta,
+        float? PlayerStepDistance,
+        float? PlayerSpeed,
+        float? PlayerTurnRadians,
+        float? TargetDistance,
+        float? TargetSurfaceDistance)
+    {
+        public static CombatHistoryMotionSnapshot From(CombatHistoryFrame frame, CombatHistoryFrame? previous)
+        {
+            var playerDelta = frame.PlayerPosition.HasValue && previous?.PlayerPosition.HasValue == true
+                ? frame.PlayerPosition.Value - previous.PlayerPosition.Value
+                : (Vector3?)null;
+            var step = playerDelta?.Length();
+            var elapsed = previous == null ? 0 : frame.T - previous.T;
+            var speed = step.HasValue && elapsed > 0
+                ? step.Value / elapsed
+                : (float?)null;
+            var turn = previous == null
+                ? (float?)null
+                : NormalizeRadians(frame.PlayerRotation - previous.PlayerRotation);
+            var targetDistance = frame.PlayerPosition.HasValue && frame.TargetPosition.HasValue
+                ? Vector3.Distance(frame.PlayerPosition.Value, frame.TargetPosition.Value)
+                : (float?)null;
+            var targetSurfaceDistance = targetDistance.HasValue
+                ? MathF.Max(0, targetDistance.Value - frame.TargetRadius)
+                : (float?)null;
+
+            return new CombatHistoryMotionSnapshot(
+                playerDelta,
+                FiniteOrNull(step),
+                FiniteOrNull(speed),
+                FiniteOrNull(turn),
+                FiniteOrNull(targetDistance),
+                FiniteOrNull(targetSurfaceDistance));
+        }
+
+        private static float? FiniteOrNull(float? value)
+        {
+            return value.HasValue && float.IsFinite(value.Value) ? value.Value : null;
+        }
+
+        private static float NormalizeRadians(float value)
+        {
+            while (value > MathF.PI)
+            {
+                value -= MathF.Tau;
+            }
+
+            while (value < -MathF.PI)
+            {
+                value += MathF.Tau;
+            }
+
+            return value;
+        }
     }
 }
