@@ -133,13 +133,14 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             var name = GetPropertyValue(actionRow, actionRow.GetType(), "Name")?.ToString() ?? adjustedId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
             // CastType=1 (Targeted) in the Lumina sheet describes targeting UI, not AoE geometry.
-            // Some actions (e.g. Chain Saw) have CastType=1 but fire a multi-hit line or circle AoE.
+            // Some actions (e.g. Chain Saw) have CastType=1 but fire a multi-hit line AoE.
             // RSR's GetCanTarget/GetAffectsTarget skips geometry for CastType=1 so affectedCount is
             // always 0 or 1 — we can't rely on it. Instead infer shape from the action sheet geometry:
-            //   XAxisModifier > 0 && EffectRange > 0 → StraightLine beam (beam half-width from XAxisModifier)
-            //   XAxisModifier == 0 && EffectRange > 0 && Range >> EffectRange → targeted Circle AoE
-            // For inferred shapes, override Range to 0 so the self-origin repositioning path is taken —
-            // the beam fires from the player regardless of the selection range.
+            //   XAxisModifier > 0 && EffectRange > 0 -> StraightLine beam (beam half-width from XAxisModifier)
+            //   XAxisModifier == 0 && EffectRange > 0 && Range >> EffectRange -> targeted Circle AoE
+            // For inferred beams, override Range to 0 so the self-origin repositioning path is taken.
+            // For targeted circles, preserve action range so the pack-positioning controller can skip
+            // body repositioning and avoid tiny correction steps for jobs like AST.
             int resolvedCastType;
             float resolvedRange;
             if (castType is 2 or 3 or 4)
@@ -152,7 +153,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
                 // XAxisModifier > 0 indicates a beam width — treat as StraightLine.
                 // Otherwise it's a radial AoE around the target — treat as Circle.
                 resolvedCastType = xAxisModifier > 0f ? 4 : 2;
-                resolvedRange = 0f;
+                resolvedRange = xAxisModifier > 0f ? 0f : range;
             }
             else if (castType == 1 && effectRange > 0f && isFriendly)
             {

@@ -23,7 +23,9 @@ internal sealed record SurvivabilityZonePositioningStatus(
     string ZoneName,
     string CasterName,
     float DistanceToCenter,
-    string Diagnostics);
+    string Diagnostics,
+    Vector3? ZoneCenter,
+    Vector3? CasterPosition);
 
 internal sealed record SurvivabilityZoneOverlaySnapshot(
     Vector3 ZoneCenter,
@@ -46,7 +48,7 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
     private static readonly ZoneDefinition[] ZoneDefinitions =
     [
         new("Asylum",                 StatusIds: [739, 1911, 1912], DataId: 0x659u, Radius: 15f, ActionId: 3569, Duration: TimeSpanDefaults.Asylum),
-        new("Earthly Star",           StatusIds: [1224, 1248], DataId: 0x5B9u, Radius: 8f, ActionId: 7439, Duration: TimeSpanDefaults.EarthlyStar),
+        new("Earthly Star",           StatusIds: [1224, 1248], DataId: 0x5B9u, Radius: 20f, ActionId: 7439, Duration: TimeSpanDefaults.EarthlyStar),
         new("Collective Unconscious", StatusIds: [847, 848],   DataId: 0u,     Radius: 8f, Mode: ZoneDetectionMode.CasterAura),
         new("Sacred Soil",            StatusIds: [298, 299, 1944, 2637, 2638], DataId: 0x5D8u, Radius: 15f, ActionId: 188, Duration: TimeSpanDefaults.SacredSoil),
     ];
@@ -89,7 +91,9 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
         this.lastZoneName,
         this.lastCasterName,
         this.lastDistanceToCenter,
-        this.lastDiagnostics);
+        this.lastDiagnostics,
+        this.lastOverlay?.ZoneCenter,
+        this.lastOverlay?.CasterPosition);
 
     public SurvivabilityZoneOverlaySnapshot? Overlay => this.lastOverlay;
 

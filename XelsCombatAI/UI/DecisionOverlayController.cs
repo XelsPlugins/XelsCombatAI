@@ -18,8 +18,7 @@ internal sealed class DecisionOverlayController(
     BossModReflectionSafety bossModSafety,
     GapCloserController gapCloserController,
     EscapeGapCloserController escapeGapCloserController,
-    RotationSolverActionReflection rotationSolverActions,
-    BossFrontalConeController bossFrontalConeController)
+    RotationSolverActionReflection rotationSolverActions)
 {
 
     private DecisionOverlayState gapCloserDisplayedState = DecisionOverlayState.Suppressed;
@@ -265,31 +264,6 @@ internal sealed class DecisionOverlayController(
                 ]);
         }
 
-        var frontalCone = bossFrontalConeController.Overlay;
-        if (frontalCone != null)
-        {
-            var configEnabled = config.Enabled && config.ManageMovement && config.AvoidBossFrontalCone;
-            var state = !configEnabled
-                ? DecisionOverlayState.Suppressed
-                : !frontalCone.GoalActive
-                ? DecisionOverlayState.Suppressed
-                : frontalCone.PlayerInCone
-                ? DecisionOverlayState.Candidate
-                : DecisionOverlayState.Active;
-            var reason = !configEnabled
-                ? this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.AvoidBossFrontalCone, "Avoid boss frontal cone"))
-                : null;
-            yield return new(
-                DecisionOverlaySource.BossFrontalCone,
-                state,
-                frontalCone.PlayerInCone ? "Avoid boss frontal cone" : "Outside boss frontal cone",
-                reason,
-                47,
-                [new(DecisionOverlayShapeKind.Cone, state, frontalCone.BossPosition, frontalCone.ConeRadius, frontalCone.ConeHalfAngle, frontalCone.ConeRadius, frontalCone.BossRotation, "frontal cone")],
-                [],
-                []);
-        }
-
         this.AddGapCloserSnapshot(player, target, out var gapCloserSnapshot);
         if (gapCloserSnapshot != null)
         {
@@ -377,12 +351,12 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.TargetUptime,
                 insideEnemiesState,
-                insideEnemiesEnabled ? "Avoid hitbox center" : "Hitbox avoidance disabled",
+                insideEnemiesEnabled ? "Avoid boss hitbox" : "Hitbox avoidance disabled",
                 insideEnemiesReason,
                 17,
-                [new(DecisionOverlayShapeKind.Circle, insideEnemiesState, target.Position, MathF.Max(0.5f, target.HitboxRadius), 0f, 0f, 0f, "avoid inside")],
+                [new(DecisionOverlayShapeKind.Circle, insideEnemiesState, target.Position, target.HitboxRadius + 0.75f, 0f, 0f, 0f, "avoid inside")],
                 [],
-                [new(insideEnemiesState, target.Position, 0.35f, "Center")]);
+                [new(insideEnemiesState, target.Position, 0.35f, "Boss")]);
 
             foreach (var positionalSnapshot in this.BuildPositionalDebugSnapshots(target))
             {
@@ -527,7 +501,6 @@ internal sealed class DecisionOverlayController(
             this.DrawConfigRow("Stand in defensive ground effects", config.ManageDefensiveGroundZonePositioning, config.Enabled && config.ManageMovement && config.ManageDefensiveGroundZonePositioning, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageDefensiveGroundZonePositioning, "Stand in defensive ground effects")));
             this.DrawConfigRow("Stand behind Passage of Arms", config.ManagePassageOfArmsPositioning, config.Enabled && config.ManageMovement && config.ManagePassageOfArmsPositioning, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManagePassageOfArmsPositioning, "Stand behind Passage of Arms")));
             this.DrawConfigRow("Avoid standing inside bosses", config.AvoidStandingInsideEnemies, config.Enabled && config.ManageMovement && config.AvoidStandingInsideEnemies, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.AvoidStandingInsideEnemies, "Avoid standing inside bosses")));
-            this.DrawConfigRow("Avoid boss frontal cone", config.AvoidBossFrontalCone, config.Enabled && config.ManageMovement && config.AvoidBossFrontalCone, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.AvoidBossFrontalCone, "Avoid boss frontal cone")));
             this.DrawConfigRow("Avoid arena edge", config.AvoidArenaEdge, config.Enabled && config.ManageMovement && config.AvoidArenaEdge, this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.AvoidArenaEdge, "Avoid arena edge")));
 
             this.DrawConfigSection("AoE & Trash");
@@ -1176,7 +1149,6 @@ internal sealed class DecisionOverlayController(
             DecisionOverlaySource.HealerCoverage => new Vector4(0.35f, 0.95f, 0.48f, alpha),
             DecisionOverlaySource.SurvivabilityZone => new Vector4(0.35f, 0.95f, 0.48f, alpha),
             DecisionOverlaySource.PassageOfArms => new Vector4(1f, 0.88f, 0.25f, alpha),
-            DecisionOverlaySource.BossFrontalCone => new Vector4(1f, 0.45f, 0.45f, alpha),
             DecisionOverlaySource.Positionals => new Vector4(0.88f, 0.45f, 1f, alpha),
             DecisionOverlaySource.GapCloser => new Vector4(0.25f, 0.95f, 0.95f, alpha),
             DecisionOverlaySource.EscapeLanding => new Vector4(0.25f, 0.95f, 0.95f, alpha),

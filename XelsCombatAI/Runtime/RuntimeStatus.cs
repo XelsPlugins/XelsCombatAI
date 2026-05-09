@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace XelsCombatAI.Runtime;
 
 internal sealed record RuntimeStatus(
@@ -5,11 +7,16 @@ internal sealed record RuntimeStatus(
     bool InCombat,
     bool IsDead,
     uint PlayerClassJobId,
+    Vector3? PlayerPosition,
+    float PlayerRotation,
     float PackAoeRange,
     float EngagementRange,
     bool HasTarget,
     uint TargetBaseId,
     ulong TargetObjectId,
+    Vector3? TargetPosition,
+    float TargetRotation,
+    float TargetRadius,
     int PartyCount,
     string? DependencyWarning,
     string? TrueNorthWarning,
@@ -48,7 +55,10 @@ internal sealed record RuntimeStatus(
     string ReflectedGapSafety,
     string ReflectedGapSafetyDiagnostics,
     string AoeGoalHook,
+    string AoeGoalPriority,
+    string AoeGoalSources,
     string AoeGoalHookDiagnostics,
+    BossModMovementDiagnostics BossModMovement,
     AoePackPositioningStatus AoePackPositioning,
     PassageOfArmsPositioningStatus PassageOfArmsPositioning,
     HealerAoePositioningStatus HealerCoveragePositioning,
@@ -59,4 +69,4 @@ internal sealed record RuntimeStatus(
     string LastGapCloserSafety,
     string LastEscapeGapCloserSafety,
     bool InitializedPreset,
-    string BossFrontalConeReason);
+    string ArenaEdgeReason);

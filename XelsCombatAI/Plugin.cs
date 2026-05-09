@@ -80,10 +80,10 @@ public sealed class Plugin : IDalamudPlugin
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
-        var aggroSafetyController = new AggroSafetyController(this.config, this.services);
-        var bossFrontalConeController = new BossFrontalConeController(this.config, this.services, bossMod);
+        var aggroSafetyController = new AggroSafetyController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var arenaEdgePositioningController = new ArenaEdgePositioningController(this.config, this.services);
-        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, [aggroSafetyController, bossFrontalConeController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController]);
+        var aoeGoalHook = new BossModGoalZoneHook(PluginInterface, this.services, Log, [aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController]);
+        var combatLogWriter = new CombatLogWriter(Path.Combine(ResolveConfigDirectory(), "combat-logs"), Log);
         presetController = new BossModPresetController(
             this.config,
             this.services,
@@ -107,7 +107,8 @@ public sealed class Plugin : IDalamudPlugin
             healerAoePositioningController,
             survivabilityZonePositioningController,
             aggroSafetyController,
-            bossFrontalConeController,
+            arenaEdgePositioningController,
+            combatLogWriter,
             manualMovement,
             gapCloserController,
             escapeGapCloserController,
@@ -126,8 +127,7 @@ public sealed class Plugin : IDalamudPlugin
             bossModSafety,
             gapCloserController,
             escapeGapCloserController,
-            rotationSolverActions,
-            bossFrontalConeController);
+            rotationSolverActions);
 
         this.configWindow = new ConfigWindow(
             this.config,
@@ -219,6 +219,25 @@ public sealed class Plugin : IDalamudPlugin
         this.config.Clamp();
         this.config.Save(PluginInterface);
         this.UpdateDtr();
+    }
+
+    private static string ResolveConfigDirectory()
+    {
+        var configDirectory = PluginInterface.GetType().GetProperty("ConfigDirectory")?.GetValue(PluginInterface);
+        if (configDirectory is DirectoryInfo directoryInfo)
+        {
+            return directoryInfo.FullName;
+        }
+
+        if (configDirectory is string directory)
+        {
+            return directory;
+        }
+
+        var configFile = PluginInterface.GetType().GetProperty("ConfigFile")?.GetValue(PluginInterface) as FileInfo;
+        return configFile?.DirectoryName
+            ?? PluginInterface.AssemblyLocation.DirectoryName
+            ?? string.Empty;
     }
 
     private void ToggleEnabled()

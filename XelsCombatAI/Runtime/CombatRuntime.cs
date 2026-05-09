@@ -18,7 +18,8 @@ internal sealed class CombatRuntime(
     HealerAoePositioningController healerAoePositioningController,
     SurvivabilityZonePositioningController survivabilityZonePositioningController,
     AggroSafetyController aggroSafetyController,
-    BossFrontalConeController bossFrontalConeController,
+    ArenaEdgePositioningController arenaEdgePositioningController,
+    CombatLogWriter combatLogWriter,
     ManualMovementInputDetector manualMovement,
     GapCloserController gapCloserController,
     EscapeGapCloserController escapeGapCloserController,
@@ -35,6 +36,7 @@ internal sealed class CombatRuntime(
     private DateTime manualMovementSuppressUntil = DateTime.MinValue;
     private string? lastMissingDependencies;
     private readonly CombatHistory combatHistory = new();
+    private bool combatHistorySaved;
 
     public bool AutomatedMovementSuppressed => DateTime.UtcNow < this.manualMovementSuppressUntil;
 
@@ -61,6 +63,7 @@ internal sealed class CombatRuntime(
         {
             if (this.wasInCombat || presetController.InitializedPreset)
             {
+                this.FlushCombatHistory("combat ended");
                 this.HandleOutOfCombat();
             }
 
@@ -73,6 +76,7 @@ internal sealed class CombatRuntime(
         if (!this.wasInCombat)
         {
             this.combatHistory.Reset();
+            this.combatHistorySaved = false;
             this.wasInCombat = true;
         }
 
@@ -153,7 +157,6 @@ internal sealed class CombatRuntime(
         healerAoePositioningController.Reset();
         survivabilityZonePositioningController.Reset();
         aggroSafetyController.Reset();
-        bossFrontalConeController.Reset();
         aoeGoalHook.Reset();
     }
 
@@ -185,11 +188,16 @@ internal sealed class CombatRuntime(
             services.Condition[ConditionFlag.InCombat],
             services.Condition[ConditionFlag.Unconscious],
             player?.ClassJob.RowId ?? 0,
+            player?.Position,
+            player?.Rotation ?? 0f,
             jobRangeProvider.PackAoeRange,
             jobRangeProvider.EngagementRange,
             target != null,
             target?.BaseId ?? 0,
             target?.GameObjectId ?? 0,
+            target?.Position,
+            target?.Rotation ?? 0f,
+            target?.HitboxRadius ?? 0f,
             player != null ? PartyAllyProvider.GetVisiblePartyAllies(services, player).Members.Count : services.PartyList.Count,
             this.GetDependencyWarning(),
             this.GetTrueNorthWarning(),
@@ -228,7 +236,10 @@ internal sealed class CombatRuntime(
             bossModSafety.Status,
             bossModSafety.Diagnostics,
             aoeGoalHook.Status,
+            aoeGoalHook.LastGoalPriority,
+            aoeGoalHook.LastGoalSources,
             aoeGoalHook.Diagnostics,
+            aoeGoalHook.MovementDiagnostics,
             aoePackPositioningController.Status,
             passageOfArmsPositioningController.Status,
             healerAoePositioningController.Status, // HealerCoveragePositioning
@@ -239,11 +250,16 @@ internal sealed class CombatRuntime(
             gapCloserController.LastGapCloserSafety,
             escapeGapCloserController.LastEscapeGapCloserSafety,
             presetController.InitializedPreset,
-            bossFrontalConeController.LastReason);
+            arenaEdgePositioningController.LastReason);
     }
 
     public void DisposeRuntime()
     {
+        if (this.wasInCombat)
+        {
+            this.FlushCombatHistory("plugin disposed");
+        }
+
         if (config.Enabled)
         {
             presetController.Deactivate();
@@ -313,6 +329,11 @@ internal sealed class CombatRuntime(
             return;
         }
 
+        if (this.wasInCombat)
+        {
+            this.FlushCombatHistory("disabled");
+        }
+
         if (presetController.InitializedPreset)
         {
             presetController.Deactivate();
@@ -343,7 +364,17 @@ internal sealed class CombatRuntime(
                config.ManageHealerCoverageZone ||
                config.ManageDefensiveGroundZonePositioning ||
                config.ManagePassageOfArmsPositioning ||
-               config.AvoidBossFrontalCone ||
                config.AvoidArenaEdge;
+    }
+
+    private void FlushCombatHistory(string reason)
+    {
+        if (this.combatHistorySaved)
+        {
+            return;
+        }
+
+        this.combatHistorySaved = true;
+        combatLogWriter.WriteFight(this.combatHistory, config, reason);
     }
 }

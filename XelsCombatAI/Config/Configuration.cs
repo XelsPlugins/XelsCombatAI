@@ -66,7 +66,6 @@ public sealed class Configuration : IPluginConfiguration
     public bool ManageAggroSafetyMovement { get; set; } = true;
     public bool AvoidStandingInsideEnemies { get; set; } = true;
     public bool AvoidArenaEdge { get; set; } = true;
-    public bool AvoidBossFrontalCone { get; set; } = true;
     public bool ShowDecisionOverlay { get; set; } = false;
     public bool ShowDecisionOverlayHud { get; set; } = false;
 
@@ -194,7 +193,6 @@ public sealed class Configuration : IPluginConfiguration
             this.ManageAggroSafetyMovement = true;
             this.AvoidStandingInsideEnemies = true;
             this.AvoidArenaEdge = true;
-            this.AvoidBossFrontalCone = true;
             this.ShowDecisionOverlay = false;
             this.ShowDecisionOverlayHud = false;
             this.ApplyCompatibilityValues();
@@ -268,7 +266,6 @@ public sealed class Configuration : IPluginConfiguration
         this.ManageAggroSafetyMovement = true;
         this.AvoidStandingInsideEnemies = true;
         this.AvoidArenaEdge = true;
-        this.AvoidBossFrontalCone = true;
         this.ShowDecisionOverlay = false;
         this.ShowDecisionOverlayHud = false;
         this.ResetBehaviorSettings();

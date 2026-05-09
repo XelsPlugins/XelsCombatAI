@@ -17,7 +17,6 @@ internal enum DecisionOverlaySource
     EscapeLanding,
     PassageOfArms,
     SurvivabilityZone,
-    BossFrontalCone,
 }
 
 internal enum DecisionOverlayState

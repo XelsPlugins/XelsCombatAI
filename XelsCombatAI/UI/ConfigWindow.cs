@@ -279,14 +279,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.AvoidStandingInsideEnemies,
             this.defaultConfig.AvoidStandingInsideEnemies,
             v => this.config.AvoidStandingInsideEnemies = v,
-            "Moves out of the center of a boss hitbox when BossMod has an active module for the current target.",
-            movementDisabledTooltip);
-        changed |= this.Checkbox(
-            "Avoid boss frontal cone",
-            this.config.AvoidBossFrontalCone,
-            this.defaultConfig.AvoidBossFrontalCone,
-            v => this.config.AvoidBossFrontalCone = v,
-            "Slightly prefers not standing in front of the boss where the tank holds aggro.\nOnly applies when a boss module is active and a tank is in the party.",
+            "Moves out of boss hitboxes when BossMod has an active module for the current target.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Avoid arena edge",

@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq.Expressions;
+using System.Numerics;
 using System.Reflection;
 using Dalamud.Game.ClientState.Conditions;
 
@@ -10,6 +12,8 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
     : IBossModGoalZoneContributor
 {
     private const float EdgeBand = 2.5f;
+    private const float ActivationDistance = 4f;
+    private static readonly TimeSpan GoalLinger = TimeSpan.FromMilliseconds(750);
     private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private static readonly MethodInfo ScoreCircleMethod = typeof(ArenaEdgePositioningController).GetMethod(nameof(ScoreCircle), BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly MethodInfo ScoreRectMethod = typeof(ArenaEdgePositioningController).GetMethod(nameof(ScoreRect), BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -19,12 +23,18 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
     private FieldInfo? wposXField;
     private FieldInfo? wposZField;
     private FieldInfo? radiusField;
+    private FieldInfo? forcedMovementField;
+    private FieldInfo? forbiddenZonesField;
     private Type? resolvedHintsType;
     private Delegate? lastGoalDelegate;
     private object? lastBounds;
     private float lastCenterX;
     private float lastCenterZ;
     private string hookState = "unresolved";
+    private string lastReason = "not evaluated";
+    private DateTime goalLingerUntil = DateTime.MinValue;
+
+    public string LastReason => this.lastReason;
 
     public void SetHookState(string state)
     {
@@ -36,16 +46,26 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         _ = this.hookState;
         if (!config.Enabled || !config.ManageMovement || !config.AvoidArenaEdge)
         {
+            this.lastReason = "disabled";
             return;
         }
 
         if (!services.Condition[ConditionFlag.InCombat] || services.Condition[ConditionFlag.Unconscious])
         {
+            this.lastReason = "not active in combat";
+            return;
+        }
+
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null || player.IsDead || player.CurrentHp == 0)
+        {
+            this.lastReason = "player unavailable";
             return;
         }
 
         if (!this.EnsureResolved(hints.GetType()))
         {
+            this.lastReason = "BMR arena edge reflection members unavailable";
             return;
         }
 
@@ -53,11 +73,31 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         var bounds = this.boundsField!.GetValue(hints);
         if (center == null || bounds == null)
         {
+            this.lastReason = "BMR arena bounds unavailable";
             return;
         }
 
         var centerX = ReadFloat(this.wposXField!.GetValue(center));
         var centerZ = ReadFloat(this.wposZField!.GetValue(center));
+        var edgeDistance = this.GetEdgeDistance(bounds, centerX, centerZ, player.Position);
+        var now = DateTime.UtcNow;
+        if (edgeDistance <= ActivationDistance)
+        {
+            this.goalLingerUntil = now.Add(GoalLinger);
+        }
+
+        if (edgeDistance > ActivationDistance && now > this.goalLingerUntil)
+        {
+            this.lastReason = "away from arena edge";
+            return;
+        }
+
+        if (this.BossModMechanicSafetyActive(hints))
+        {
+            this.lastReason = "mechanic safety active";
+            return;
+        }
+
         if (this.lastGoalDelegate == null ||
             !ReferenceEquals(this.lastBounds, bounds) ||
             MathF.Abs(this.lastCenterX - centerX) > 0.1f ||
@@ -65,6 +105,7 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         {
             if (!this.TryCreateGoalDelegate(bounds, centerX, centerZ, out this.lastGoalDelegate))
             {
+                this.lastReason = "arena bounds too small";
                 return;
             }
 
@@ -76,6 +117,7 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         if (this.lastGoalDelegate != null)
         {
             contributions.Add(new(this.lastGoalDelegate, BossModGoalPriority.Convenience, "Arena edge avoidance"));
+            this.lastReason = "near arena edge";
         }
     }
 
@@ -86,11 +128,15 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         this.wposXField = null;
         this.wposZField = null;
         this.radiusField = null;
+        this.forcedMovementField = null;
+        this.forbiddenZonesField = null;
         this.resolvedHintsType = null;
         this.lastGoalDelegate = null;
         this.lastBounds = null;
         this.lastCenterX = 0f;
         this.lastCenterZ = 0f;
+        this.lastReason = "reset";
+        this.goalLingerUntil = DateTime.MinValue;
     }
 
     private bool EnsureResolved(Type hintsType)
@@ -100,7 +146,9 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
             this.boundsField != null &&
             this.wposXField != null &&
             this.wposZField != null &&
-            this.radiusField != null)
+            this.radiusField != null &&
+            this.forcedMovementField != null &&
+            this.forbiddenZonesField != null)
         {
             return true;
         }
@@ -111,7 +159,9 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         var xField = wposType?.GetField("X", InstanceFlags);
         var zField = wposType?.GetField("Z", InstanceFlags);
         var radius = bounds?.FieldType.GetField("Radius", InstanceFlags);
-        if (center == null || bounds == null || xField == null || zField == null || radius == null)
+        var forcedMovement = hintsType.GetField("ForcedMovement", InstanceFlags);
+        var forbiddenZones = hintsType.GetField("ForbiddenZones", InstanceFlags);
+        if (center == null || bounds == null || xField == null || zField == null || radius == null || forcedMovement == null || forbiddenZones == null)
         {
             return false;
         }
@@ -121,10 +171,22 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         this.wposXField = xField;
         this.wposZField = zField;
         this.radiusField = radius;
+        this.forcedMovementField = forcedMovement;
+        this.forbiddenZonesField = forbiddenZones;
         this.resolvedHintsType = hintsType;
         this.lastGoalDelegate = null;
         this.lastBounds = null;
         return true;
+    }
+
+    private bool BossModMechanicSafetyActive(object hints)
+    {
+        if (this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 })
+        {
+            return true;
+        }
+
+        return VectorLengthSquared(this.forcedMovementField?.GetValue(hints)) > 0.01f;
     }
 
     private bool TryCreateGoalDelegate(object bounds, float centerX, float centerZ, out Delegate? goal)
@@ -183,22 +245,52 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         return true;
     }
 
+    private float GetEdgeDistance(object bounds, float centerX, float centerZ, Vector3 playerPosition)
+    {
+        var boundsType = bounds.GetType();
+        var halfWidthField = boundsType.GetField("HalfWidth", InstanceFlags);
+        var halfHeightField = boundsType.GetField("HalfHeight", InstanceFlags);
+        var orientationField = boundsType.GetField("Orientation", InstanceFlags);
+        var orientation = orientationField?.GetValue(bounds);
+        var orientationXField = orientation?.GetType().GetField("X", InstanceFlags);
+        var orientationZField = orientation?.GetType().GetField("Z", InstanceFlags);
+        if (halfWidthField != null && halfHeightField != null && orientation != null && orientationXField != null && orientationZField != null)
+        {
+            var halfWidth = ReadFloat(halfWidthField.GetValue(bounds));
+            var halfHeight = ReadFloat(halfHeightField.GetValue(bounds));
+            var orientationX = ReadFloat(orientationXField.GetValue(orientation));
+            var orientationZ = ReadFloat(orientationZField.GetValue(orientation));
+            return EdgeDistanceRect(playerPosition.X, playerPosition.Z, centerX, centerZ, halfWidth, halfHeight, orientationX, orientationZ);
+        }
+
+        var radius = ReadFloat(this.radiusField!.GetValue(bounds));
+        return EdgeDistanceCircle(playerPosition.X, playerPosition.Z, centerX, centerZ, radius);
+    }
+
     private static float ScoreCircle(float x, float z, float centerX, float centerZ, float radius)
     {
-        var dx = x - centerX;
-        var dz = z - centerZ;
-        var edgeDistance = radius - MathF.Sqrt(dx * dx + dz * dz);
-        return ScoreEdgeDistance(edgeDistance);
+        return ScoreEdgeDistance(EdgeDistanceCircle(x, z, centerX, centerZ, radius));
     }
 
     private static float ScoreRect(float x, float z, float centerX, float centerZ, float halfWidth, float halfHeight, float orientationX, float orientationZ)
+    {
+        return ScoreEdgeDistance(EdgeDistanceRect(x, z, centerX, centerZ, halfWidth, halfHeight, orientationX, orientationZ));
+    }
+
+    private static float EdgeDistanceCircle(float x, float z, float centerX, float centerZ, float radius)
+    {
+        var dx = x - centerX;
+        var dz = z - centerZ;
+        return radius - MathF.Sqrt(dx * dx + dz * dz);
+    }
+
+    private static float EdgeDistanceRect(float x, float z, float centerX, float centerZ, float halfWidth, float halfHeight, float orientationX, float orientationZ)
     {
         var dx = x - centerX;
         var dz = z - centerZ;
         var parallel = dx * orientationX + dz * orientationZ;
         var ortho = dx * orientationZ - dz * orientationX;
-        var edgeDistance = MathF.Min(halfHeight - MathF.Abs(parallel), halfWidth - MathF.Abs(ortho));
-        return ScoreEdgeDistance(edgeDistance);
+        return MathF.Min(halfHeight - MathF.Abs(parallel), halfWidth - MathF.Abs(ortho));
     }
 
     private static float ScoreEdgeDistance(float edgeDistance)
@@ -214,6 +306,25 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         }
 
         return GoalZoneScorePolicy.WeakPreference * edgeDistance / EdgeBand;
+    }
+
+    private static float VectorLengthSquared(object? value)
+    {
+        if (value == null)
+        {
+            return 0f;
+        }
+
+        if (value is Vector3 vector)
+        {
+            return vector.LengthSquared();
+        }
+
+        var type = value.GetType();
+        var x = ReadFloat(type.GetField("X", InstanceFlags)?.GetValue(value));
+        var y = ReadFloat(type.GetField("Y", InstanceFlags)?.GetValue(value));
+        var z = ReadFloat(type.GetField("Z", InstanceFlags)?.GetValue(value));
+        return x * x + y * y + z * z;
     }
 
     private static float ReadFloat(object? value)

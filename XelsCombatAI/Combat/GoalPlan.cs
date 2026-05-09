@@ -68,12 +68,17 @@ internal sealed class GoalPlan(
         };
     }
 
-    public CandidateScore FindBestCandidate(Vector2 playerPosition)
+    public CandidateScore FindBestCandidate(Vector2 playerPosition, Func<Vector2, bool>? candidateAllowed = null)
     {
         var best = this.ScoreCandidate(playerPosition);
         var bestPosition = playerPosition;
         foreach (var candidate in this.GenerateCandidates(playerPosition))
         {
+            if (candidateAllowed != null && !candidateAllowed(candidate))
+            {
+                continue;
+            }
+
             var score = this.ScoreCandidate(candidate);
             if (score.Hits > best.Hits ||
                 (score.Hits == best.Hits &&

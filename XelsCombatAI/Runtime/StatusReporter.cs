@@ -82,13 +82,21 @@ internal static class StatusReporter
         AppendSection(builder, "Reflection Diagnostics");
         Append(builder, "BossModSafety", status.ReflectedGapSafetyDiagnostics);
         Append(builder, "BossModGoalHook", status.AoeGoalHookDiagnostics);
+        Append(builder, "BossModActiveModule", status.BossModMovement.ActiveModule);
+        Append(builder, "BossModActiveZoneModule", status.BossModMovement.ActiveZoneModule);
+        Append(builder, "BossModNavigationDestination", status.BossModMovement.NavigationDestination);
+        Append(builder, "BossModNavigationNextWaypoint", status.BossModMovement.NavigationNextWaypoint);
+        Append(builder, "BossModNavigationStats", status.BossModMovement.NavigationStats);
+        Append(builder, "BossModControllerTarget", status.BossModMovement.ControllerTarget);
+        Append(builder, "BossModMovementOverride", status.BossModMovement.MovementOverride);
+        Append(builder, "BossModHintSummary", status.BossModMovement.HintSummary);
         Append(builder, "RotationSolverAction", status.AoePackPositioning.RsrReflectionDiagnostics);
         Append(builder, "AoePackGoalMembers", status.AoePackPositioning.LastReason);
         Append(builder, "PassageGoalMembers", status.PassageOfArmsPositioning.LastReason);
         Append(builder, "HealerCoverageGoalMembers", status.HealerCoveragePositioning.LastReason);
         Append(builder, "SurvivabilityZoneGoalMembers", status.SurvivabilityZonePositioning.LastReason);
         Append(builder, "AggroSafetyGoalMembers", status.AggroSafety.LastReason);
-        Append(builder, "BossFrontalCone", status.BossFrontalConeReason);
+        Append(builder, "ArenaEdge", status.ArenaEdgeReason);
         builder.AppendLine();
 
         AppendSection(builder, "AoE Pack Positioning");

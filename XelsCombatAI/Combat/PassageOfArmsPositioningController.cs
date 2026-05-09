@@ -18,7 +18,9 @@ internal sealed record PassageOfArmsPositioningStatus(
     bool Injected,
     string PaladinName,
     float DistanceToPreferred,
-    bool PlayerInCone);
+    bool PlayerInCone,
+    Vector3? PaladinPosition,
+    Vector3? PreferredPosition);
 
 internal sealed record PassageOfArmsOverlaySnapshot(
     Vector3 PaladinPosition,
@@ -66,7 +68,9 @@ internal sealed class PassageOfArmsPositioningController(
         this.lastInjected,
         this.lastPaladinName,
         this.lastDistanceToPreferred,
-        this.lastPlayerInCone);
+        this.lastPlayerInCone,
+        this.lastOverlay?.PaladinPosition,
+        this.lastOverlay?.PreferredPosition);
 
     public PassageOfArmsOverlaySnapshot? Overlay => this.lastOverlay;
 

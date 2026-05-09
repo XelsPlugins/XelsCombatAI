@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Numerics;
@@ -16,7 +17,8 @@ internal sealed record HealerAoePositioningStatus(
     bool Injected,
     int PartyMembers,
     float DistanceToCenter,
-    int CoveredMembers);
+    int CoveredMembers,
+    Vector3? Center);
 
 internal sealed record HealerCoverageOverlaySnapshot(
     Vector3 Center,
@@ -38,9 +40,13 @@ internal sealed class HealerAoePositioningController(
     // Healer AoE heals and support actions commonly use a 20y radius around the healer.
     private const float CoverageRadius = 20f;
     private const float CoverageRadiusSquared = CoverageRadius * CoverageRadius;
+    private const float MaxConvenienceMoveDistance = 8f;
+    private const int MinimumCoverageGain = 2;
     private const float PreferredScore = GoalZoneScorePolicy.NormalPreference;
 
     private FieldInfo? goalZonesField;
+    private FieldInfo? forcedMovementField;
+    private FieldInfo? forbiddenZonesField;
     private FieldInfo? wposXField;
     private FieldInfo? wposZField;
     private Type? resolvedHintsType;
@@ -61,7 +67,8 @@ internal sealed class HealerAoePositioningController(
         this.lastInjected,
         this.lastPartyMembers,
         this.lastDistanceToCenter,
-        this.lastCoveredMembers);
+        this.lastCoveredMembers,
+        this.lastOverlay?.Center);
 
     public HealerCoverageOverlaySnapshot? Overlay => this.lastOverlay;
 
@@ -73,6 +80,8 @@ internal sealed class HealerAoePositioningController(
     public void Reset()
     {
         this.goalZonesField = null;
+        this.forcedMovementField = null;
+        this.forbiddenZonesField = null;
         this.wposXField = null;
         this.wposZField = null;
         this.resolvedHintsType = null;
@@ -152,7 +161,9 @@ internal sealed class HealerAoePositioningController(
 
         this.lastDistanceToCenter = plan.DistanceToCenter;
         this.lastCoveredMembers = plan.BestCoveredCount;
-        var shouldMove = plan.CurrentCoveredCount < plan.BestCoveredCount;
+        var coverageGain = plan.BestCoveredCount - plan.CurrentCoveredCount;
+        var shouldMove = coverageGain >= MinimumCoverageGain ||
+                         (plan.CurrentCoveredCount == 0 && coverageGain > 0);
 
         if (this.lastPlan == null || !this.lastPlan.SameSource(plan))
         {
@@ -160,14 +171,29 @@ internal sealed class HealerAoePositioningController(
             this.lastPlan = plan;
         }
 
-        if (shouldMove)
+        if (shouldMove && this.BossModMechanicSafetyActive(hints))
         {
-            contributions.Add(new(this.lastGoalDelegate!, BossModGoalPriority.Convenience, "Healer coverage zone"));
-            this.lastReason = $"covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}";
+            shouldMove = false;
+            this.lastReason = "mechanic safety active";
+        }
+        else if (shouldMove && plan.DistanceToCenter > MaxConvenienceMoveDistance)
+        {
+            shouldMove = false;
+            this.lastReason = $"coverage point too far: {plan.DistanceToCenter:0.0}y";
+        }
+        else if (!shouldMove && coverageGain > 0)
+        {
+            this.lastReason = $"minor coverage gain ignored: {plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers}";
         }
         else
         {
             this.lastReason = $"covering {plan.CurrentCoveredCount}/{plan.TotalMembers}";
+        }
+
+        if (shouldMove)
+        {
+            contributions.Add(new(this.lastGoalDelegate!, BossModGoalPriority.Convenience, "Healer coverage zone"));
+            this.lastReason = $"covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}";
         }
 
         this.lastInjected = shouldMove;
@@ -181,65 +207,28 @@ internal sealed class HealerAoePositioningController(
         foreach (var m in members)
             allPositions.Add(new Vector2(m.Position.X, m.Position.Z));
 
-        var candidates = this.GenerateCoverageCandidates(playerPos, allPositions);
         var currentCovered = CountCovered(playerPos, allPositions);
+        var bestCenter = AveragePosition(allPositions);
+        var bestCovered = GetCoveredMembers(bestCenter, allPositions);
 
-        Vector2 bestCenter = playerPos;
-        int bestCount = currentCovered;
-        float bestDistSq = 0f;
-        var bestCovered = GetCoveredMembers(playerPos, allPositions);
-
-        foreach (var candidate in candidates)
+        if (bestCovered.Count <= currentCovered)
         {
-            var covered = GetCoveredMembers(candidate, allPositions);
-            var distToCandidateSq = Vector2.DistanceSquared(playerPos, candidate);
-            if (covered.Count > bestCount ||
-                (covered.Count == bestCount && distToCandidateSq < bestDistSq))
-            {
-                bestCount = covered.Count;
-                bestCenter = candidate;
-                bestDistSq = distToCandidateSq;
-                bestCovered = covered;
-            }
+            bestCenter = playerPos;
+            bestCovered = GetCoveredMembers(playerPos, allPositions);
         }
 
-        return new HealerCoverageGoalPlan(bestCenter, bestCovered, allPositions, MathF.Sqrt(bestDistSq), currentCovered);
+        return new HealerCoverageGoalPlan(bestCenter, bestCovered, allPositions, Vector2.Distance(playerPos, bestCenter), currentCovered);
     }
 
-    private IEnumerable<Vector2> GenerateCoverageCandidates(Vector2 playerPos, IReadOnlyList<Vector2> members)
+    private static Vector2 AveragePosition(IReadOnlyList<Vector2> members)
     {
-        yield return playerPos;
-
         var average = Vector2.Zero;
         foreach (var member in members)
         {
             average += member;
-            yield return member;
         }
 
-        average /= members.Count;
-        yield return average;
-
-        for (var i = 0; i < members.Count; i++)
-        {
-            for (var j = i + 1; j < members.Count; j++)
-            {
-                var delta = members[j] - members[i];
-                var distanceSq = delta.LengthSquared();
-                if (distanceSq <= 0.001f || distanceSq > 4f * CoverageRadiusSquared)
-                    continue;
-
-                var distance = MathF.Sqrt(distanceSq);
-                var midpoint = (members[i] + members[j]) * 0.5f;
-                var halfDistance = distance * 0.5f;
-                var height = MathF.Sqrt(MathF.Max(0f, CoverageRadiusSquared - (halfDistance * halfDistance)));
-                var perpendicular = new Vector2(-delta.Y / distance, delta.X / distance);
-
-                yield return midpoint + (perpendicular * height);
-                if (height > 0.001f)
-                    yield return midpoint - (perpendicular * height);
-            }
-        }
+        return average / members.Count;
     }
 
     private static int CountCovered(Vector2 candidate, IReadOnlyList<Vector2> members)
@@ -270,6 +259,8 @@ internal sealed class HealerAoePositioningController(
     {
         if (this.resolvedHintsType == hintsType &&
             this.goalZonesField != null &&
+            this.forcedMovementField != null &&
+            this.forbiddenZonesField != null &&
             this.wposXField != null &&
             this.wposZField != null)
         {
@@ -277,10 +268,12 @@ internal sealed class HealerAoePositioningController(
         }
 
         var goalZones = hintsType.GetField("GoalZones", InstanceFlags);
+        var forcedMovement = hintsType.GetField("ForcedMovement", InstanceFlags);
+        var forbiddenZones = hintsType.GetField("ForbiddenZones", InstanceFlags);
         var wposType = hintsType.Assembly.GetType("BossMod.WPos");
         var xField = wposType?.GetField("X", InstanceFlags);
         var zField = wposType?.GetField("Z", InstanceFlags);
-        if (goalZones == null || wposType == null || xField == null || zField == null)
+        if (goalZones == null || forcedMovement == null || forbiddenZones == null || wposType == null || xField == null || zField == null)
         {
             this.lastReason = "BMR healer coverage reflection members unavailable";
             return false;
@@ -289,9 +282,50 @@ internal sealed class HealerAoePositioningController(
         this.resolvedHintsType = hintsType;
         this.resolvedWPosType = wposType;
         this.goalZonesField = goalZones;
+        this.forcedMovementField = forcedMovement;
+        this.forbiddenZonesField = forbiddenZones;
         this.wposXField = xField;
         this.wposZField = zField;
         return true;
+    }
+
+    private bool BossModMechanicSafetyActive(object hints)
+    {
+        if (this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 })
+        {
+            return true;
+        }
+
+        return VectorLengthSquared(this.forcedMovementField?.GetValue(hints)) > 0.01f;
+    }
+
+    private static float VectorLengthSquared(object? value)
+    {
+        if (value == null)
+        {
+            return 0f;
+        }
+
+        if (value is Vector3 vector)
+        {
+            return vector.LengthSquared();
+        }
+
+        var type = value.GetType();
+        var x = ReadFloatField(value, type, "X");
+        var y = ReadFloatField(value, type, "Y");
+        var z = ReadFloatField(value, type, "Z");
+        return x * x + y * y + z * z;
+    }
+
+    private static float ReadFloatField(object value, Type type, string name)
+    {
+        return type.GetField(name, InstanceFlags)?.GetValue(value) switch
+        {
+            float f => f,
+            double d => (float)d,
+            _ => 0f
+        };
     }
 
     private sealed class HealerCoverageGoalPlan
@@ -323,7 +357,7 @@ internal sealed class HealerAoePositioningController(
 
         public bool SameSource(HealerCoverageGoalPlan other)
         {
-            if (Vector2.DistanceSquared(this.optimalCenter, other.optimalCenter) > 1f ||
+            if (Vector2.DistanceSquared(this.optimalCenter, other.optimalCenter) > 9f ||
                 this.coveredMembers.Count != other.coveredMembers.Count ||
                 this.allMembers.Count != other.allMembers.Count)
             {
@@ -332,7 +366,7 @@ internal sealed class HealerAoePositioningController(
 
             for (var i = 0; i < this.allMembers.Count; i++)
             {
-                if (Vector2.DistanceSquared(this.allMembers[i], other.allMembers[i]) > 1f)
+                if (Vector2.DistanceSquared(this.allMembers[i], other.allMembers[i]) > 9f)
                     return false;
             }
 

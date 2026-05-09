@@ -22,7 +22,11 @@ internal sealed record AggroSafetyStatus(
     float AggroSeconds,
     bool PriorityDevalued);
 
-internal sealed class AggroSafetyController(Configuration config, DalamudServices services) : IBossModGoalZoneContributor
+internal sealed class AggroSafetyController(
+    Configuration config,
+    DalamudServices services,
+    Func<bool> automatedMovementSuppressed)
+    : IBossModGoalZoneContributor
 {
     private static readonly TimeSpan AggroThreshold = TimeSpan.FromSeconds(3);
     private static readonly MethodInfo ScoreFromWPosMethod = typeof(AggroSafetyController).GetMethod(nameof(ScoreFromWPos), BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -98,6 +102,15 @@ internal sealed class AggroSafetyController(Configuration config, DalamudService
         var now = DateTime.UtcNow;
         var attackers = this.GetAttackers(player).ToArray();
         this.UpdateAggroTracking(attackers, now);
+        if (automatedMovementSuppressed())
+        {
+            this.aggroSeconds = attackers.Length == 0
+                ? 0f
+                : (float)attackers.Max(mob => (now - this.aggroStartByMob[mob.GameObjectId]).TotalSeconds);
+            this.lastReason = "manual movement suppression active";
+            return;
+        }
+
         var active = attackers
             .Select(mob => (Mob: mob, Started: this.aggroStartByMob.TryGetValue(mob.GameObjectId, out var started) ? started : now))
             .Where(entry => now - entry.Started >= AggroThreshold)
