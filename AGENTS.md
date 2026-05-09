@@ -6,6 +6,45 @@ These instructions apply to the entire repository. More specific `AGENTS.md` fil
 
 Xel's Combat AI is a C# Dalamud plugin for Final Fantasy XIV. It manages a dedicated BossMod Reborn preset during combat, using BossMod IPC for movement/range/positioning strategies, Avarice shared data for positionals, and optional RotationSolver Reborn IPC for True North behavior.
 
+## Product Purpose
+
+The primary purpose of Xel's Combat AI is to give BossMod Reborn better choices that make automated combat movement look more human for any job, while preserving BossMod Reborn as the source of encounter safety.
+
+Agent work should optimize for plausible player-like choices among safe options, not for perfect automation, maximum theoretical uptime, or aggressive control.
+
+Before changing behavior, evaluate whether the change:
+
+- Keeps BossMod Reborn safety and encounter logic authoritative.
+- Makes movement, targeting, or positioning look more like a competent human decision.
+- Is job-aware where job range, AoE shape, cast behavior, party role, or mobility differs.
+- Avoids excessive target switching, oscillation, snap movement, or overly perfect reactions.
+- Respects manual player input and hands control back cleanly.
+- Has bounded scope and does not add broad automation unrelated to human-like BossMod Reborn choices.
+
+For behavior changes, include a short "Purpose fit" note in the final response:
+
+- What human-like behavior does this improve?
+- What BossMod Reborn authority or safety behavior is preserved?
+- What could make this look unnatural, and how is that bounded?
+
+A change is aligned when it improves one or more of:
+
+- Natural combat spacing.
+- Believable target selection.
+- Sensible AoE positioning.
+- Safe use of mobility tools.
+- Human-like use of party utility zones.
+- Avoiding awkward robotic positions, such as boss centers, frontals, or arena edges.
+- Reducing movement jitter, target churn, or overcorrection.
+
+A change is not aligned if it primarily:
+
+- Bypasses BossMod Reborn safety.
+- Automates unrelated gameplay decisions.
+- Maximizes uptime at the cost of believable movement.
+- Makes behavior more perfect, instant, or mechanical than a human player.
+- Broadens combat control without a clear human-likeness reason.
+
 ## Repository Layout
 
 - `XelsCombatAI/Plugin.cs` - composition root for Dalamud lifecycle, command registration, DTR, config save wiring, and UI setup.
