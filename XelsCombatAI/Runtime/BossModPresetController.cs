@@ -20,10 +20,6 @@ internal sealed class BossModPresetController(
     public bool? LastLeylinesBetweenTheLines { get; private set; }
     public bool? LastLeylinesRetrace { get; private set; }
     public bool? LastLeylinesGoal { get; private set; }
-    public bool? LastHealerHeal { get; private set; }
-    public bool? LastHealerEsuna { get; private set; }
-    public bool? LastHealerOutOfCombat { get; private set; }
-    public string? LastHealerRaise { get; private set; }
     public bool InitializedPreset { get; private set; }
 
     public bool Initialize()
@@ -52,21 +48,18 @@ internal sealed class BossModPresetController(
 
     public void Deactivate()
     {
+        var presetName = BossModIpc.DefaultPresetName;
         try
         {
-            var presetName = BossModIpc.DefaultPresetName;
+            this.WriteNeutralStrategies(presetName);
+        }
+        catch (Exception ex)
+        {
+            services.Log.Verbose(ex, "Could not write neutral BossMod strategies during deactivation.");
+        }
 
-            bossMod.SetMovement(presetName, false);
-            bossMod.SetMovementRangeStrategy(presetName, "Any");
-            bossMod.SetPositional(presetName, Positional.Any);
-            bossMod.SetLeylinesBetweenTheLines(presetName, false);
-            bossMod.SetLeylinesRetrace(presetName, false);
-            bossMod.SetLeylinesGoal(presetName, false);
-            bossMod.SetHealerHeal(presetName, false);
-            bossMod.SetHealerEsuna(presetName, false);
-            bossMod.SetHealerOutOfCombat(presetName, false);
-            bossMod.SetHealerRaise(presetName, "None");
-
+        try
+        {
             if (bossMod.GetActive() == presetName)
             {
                 bossMod.ClearActive();
@@ -74,7 +67,16 @@ internal sealed class BossModPresetController(
         }
         catch (Exception ex)
         {
-            services.Log.Verbose(ex, "Could not deactivate BossMod preset.");
+            services.Log.Verbose(ex, "Could not clear active BossMod preset.");
+        }
+
+        try
+        {
+            bossMod.ClearTransientPresetStrategies(presetName);
+        }
+        catch (Exception ex)
+        {
+            services.Log.Verbose(ex, "Could not clear BossMod transient preset strategies.");
         }
     }
 
@@ -82,22 +84,27 @@ internal sealed class BossModPresetController(
     {
         try
         {
-            if (services.TargetManager.Target != null)
+            this.SetTargetUptimeRange(config.ManageTargetUptime
+                ? targetUptimePlanner.CalculateTargetUptimeRange()
+                : Configuration.InternalDisabledUptimeRange);
+
+            this.SetForbiddenZoneCushion(config.ManageForbiddenZoneDistance
+                ? MapForbiddenZoneCushion(config.PreferredForbiddenZoneDistance)
+                : "None");
+
+            this.SetMovementRangeStrategy(config.ManageMovement
+                ? MapCombatStyle(config.CombatStyle)
+                : "Any");
+
+
+            if (config.ManagePositionals)
             {
-                this.SetTargetUptimeRange(config.ManageTargetUptime
-                    ? targetUptimePlanner.CalculateTargetUptimeRange()
-                    : Configuration.InternalDisabledUptimeRange);
+                positionalsController.Apply();
             }
-
-            if (config.ManageForbiddenZoneDistance)
+            else
             {
-                this.SetForbiddenZoneCushion(MapForbiddenZoneCushion(config.PreferredForbiddenZoneDistance));
+                this.SetPositional(Positional.Any);
             }
-
-            this.SetMovementRangeStrategy(MapCombatStyle(config.CombatStyle));
-
-
-            positionalsController.Apply();
 
             this.SetMovement(config.ManageMovement && !suppressAutomatedMovement);
 
@@ -126,10 +133,6 @@ internal sealed class BossModPresetController(
         this.LastLeylinesBetweenTheLines = null;
         this.LastLeylinesRetrace = null;
         this.LastLeylinesGoal = null;
-        this.LastHealerHeal = null;
-        this.LastHealerEsuna = null;
-        this.LastHealerOutOfCombat = null;
-        this.LastHealerRaise = null;
         positionalsController.Reset();
         gapCloserController.Reset();
         escapeGapCloserController.Reset();
@@ -266,5 +269,17 @@ internal sealed class BossModPresetController(
         {
             gapCloserController.TryUseReengageGapCloser();
         }
+    }
+
+    private void WriteNeutralStrategies(string presetName)
+    {
+        bossMod.SetMovement(presetName, false);
+        bossMod.SetMovementRangeStrategy(presetName, "Any");
+        bossMod.SetRange(presetName, Configuration.InternalDisabledUptimeRange);
+        bossMod.SetForbiddenZoneCushion(presetName, "None");
+        bossMod.SetPositional(presetName, Positional.Any);
+        bossMod.SetLeylinesBetweenTheLines(presetName, false);
+        bossMod.SetLeylinesRetrace(presetName, false);
+        bossMod.SetLeylinesGoal(presetName, false);
     }
 }

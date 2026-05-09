@@ -154,6 +154,14 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
                 resolvedCastType = xAxisModifier > 0f ? 4 : 2;
                 resolvedRange = 0f;
             }
+            else if (castType == 1 && effectRange > 0f && isFriendly)
+            {
+                // Friendly party AoE heals/shields (e.g. Physis II, Eukrasian Prognosis, Kerachole
+                // on SGE; Medica II on WHM). Always radial — treat as Circle. Single-target
+                // heals/shields have EffectRange=0 and are excluded by the effectRange > 0f guard.
+                resolvedCastType = (int)RsrAoeShape.Circle;
+                resolvedRange = 0f;
+            }
             else
             {
                 reason = $"RSR unsupported cast type {castType}";

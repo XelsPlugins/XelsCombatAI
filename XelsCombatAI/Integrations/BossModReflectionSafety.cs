@@ -97,7 +97,7 @@ internal sealed class BossModReflectionSafety
         }
         catch (Exception ex)
         {
-            this.log.Error(ex, "Could not query reflected BossMod dash safety.");
+            this.log.Verbose(ex, "Could not query reflected BossMod dash safety.");
             this.ResetWithStatus("BMR reflection query failed");
             reason = this.status;
             return false;
@@ -132,7 +132,7 @@ internal sealed class BossModReflectionSafety
         }
         catch (Exception ex)
         {
-            this.log.Error(ex, "Could not query reflected BossMod position safety.");
+            this.log.Verbose(ex, "Could not query reflected BossMod position safety.");
             this.ResetWithStatus("BMR reflection query failed");
             reason = this.status;
             return false;
@@ -272,7 +272,7 @@ internal sealed class BossModReflectionSafety
         }
         catch (Exception ex)
         {
-            this.log.Error(ex, "Could not resolve reflected BossMod safety integration.");
+            this.log.Verbose(ex, "Could not resolve reflected BossMod safety integration.");
             this.ResetWithStatus("BMR reflection resolve failed");
             return false;
         }
@@ -352,7 +352,7 @@ internal sealed class BossModReflectionSafety
         this.status = newStatus;
         if (!string.Equals(oldStatus, newStatus, StringComparison.Ordinal))
         {
-            this.log.Error($"BossMod reflected gap closer safety unavailable: {newStatus}");
+            this.log.Verbose($"BossMod reflected gap closer safety unavailable: {newStatus}");
         }
     }
 
