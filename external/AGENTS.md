@@ -6,12 +6,16 @@ These instructions apply to `external/`.
 
 This directory is a read-only reference workspace for external plugins that Xel's Combat AI integrates with through IPC, shared data, or reflected runtime behavior.
 
+Root repository instructions apply only for how to use this subtree as reference material. Do not apply root C# style, formatting, validation, or refactor rules to external checkouts.
+
 ## Rules
 
 - Do not edit, format, refactor, delete, or rename external plugin files.
 - Do not stage or commit external plugin source, binaries, build outputs, repository metadata, or nested `.git` directories.
 - Do not add external plugin code to project files, package manifests, release artifacts, or build scripts.
 - Use these files only to inspect IPC contracts, payload shapes, public API behavior, reflected member names, and integration details.
+- Prefer current external source evidence over memory when working with BossMod Reborn, Avarice, RotationSolver Reborn, or Dalamud integration behavior.
+- When using external evidence in a change, summarize the contract that was verified rather than copying upstream code into this repository.
 - If an integration requires an upstream code change, make that change in the upstream repository and then refresh the local checkout after the upstream branch includes it.
 
 ## Refreshing References
