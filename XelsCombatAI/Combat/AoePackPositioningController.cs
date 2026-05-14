@@ -312,7 +312,7 @@ internal sealed class AoePackPositioningController(
                                           this.bmrMoveRequested ||
                                           this.bmrMoveImminent ||
                                           bossModuleContext && forbiddenSafetyActive;
-        this.UpdateTrashPullState(targets, allPackTargets, inAoeSituation, bossModuleContext, shouldYieldToMechanicSafety);
+        var trashDiagnostics = this.UpdateTrashPullState(targets, allPackTargets, inAoeSituation, bossModuleContext, shouldYieldToMechanicSafety);
         if (config.KeepTrashTargetSelected)
         {
             if (this.trashPullState.Current.Phase == TrashPullPhase.Gathering && targets.Count > 0)
@@ -341,6 +341,11 @@ internal sealed class AoePackPositioningController(
             return;
         }
 
+        if (this.TryInjectTankLeadMovement(pathfindBounds, trashDiagnostics, targets, contributions))
+        {
+            return;
+        }
+
         var shouldUseRsrTargetControl = inAoeSituation && (config.PickBetterAoeTarget || config.KeepTrashTargetSelected);
         if (shouldUseRsrTargetControl)
         {
@@ -348,7 +353,8 @@ internal sealed class AoePackPositioningController(
         }
 
         var hasAoeAction = rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var action, out var reason);
-        var isTargetCenteredCircle = action != null && action.Shape == RsrAoeShape.Circle && action.Range > action.EffectRange + 3f && !action.IsTargetArea;
+        var isTargetCenteredCircle = action?.IsTargetCenteredCircle == true ||
+                                     action != null && action.Shape == RsrAoeShape.Circle && action.Range > action.EffectRange + 3f && !action.IsTargetArea;
 
         if (!hasAoeAction && this.rsrHenchedActive && this.ShouldRestoreRsrAfterNoAction(reason, shouldUseRsrTargetControl))
         {
@@ -418,10 +424,9 @@ internal sealed class AoePackPositioningController(
         }
 
         // --- Common early-exit for non-AoE actions ---
-        if (!hasAoeAction || action == null || isTargetCenteredCircle)
+        if (!hasAoeAction || action == null)
         {
-            if ((!hasAoeAction && this.ShouldRestoreRsrAfterNoAction(reason, shouldUseRsrTargetControl)) ||
-                (isTargetCenteredCircle && !shouldUseRsrTargetControl))
+            if (!hasAoeAction && this.ShouldRestoreRsrAfterNoAction(reason, shouldUseRsrTargetControl))
             {
                 this.RestoreRsrIfNeeded();
             }
@@ -434,7 +439,7 @@ internal sealed class AoePackPositioningController(
             }
 
             this.lastAction = hasAoeAction ? action : null;
-            this.lastReason = isTargetCenteredCircle ? "target-centered circle AoE skipped" : reason;
+            this.lastReason = reason;
             this.lastCurrentHits = 0;
             this.lastBestHits = 0;
             this.ClearAoeCandidateGoal();
@@ -448,13 +453,31 @@ internal sealed class AoePackPositioningController(
         // Only target-area and targeted circular AoEs can be aimed without moving the body.
         if (ShouldSkipBodyReposition(action))
         {
+            if (action.IsTargetCenteredCircle &&
+                services.ObjectTable.LocalPlayer is { } targetedPlayer &&
+                (config.PickBetterAoeTarget || config.KeepTrashTargetSelected) &&
+                this.TrySelectBestTargetCenteredAoePrimary(action, targets, targetedPlayer, out var targetedPrimaryId, out var targetedCurrentHits, out var targetedBestHits))
+            {
+                this.lastCurrentHits = targetedCurrentHits;
+                this.lastBestHits = targetedBestHits;
+                this.lastBestPrimaryId = targetedPrimaryId;
+                this.ApplyRsrTargeting(targetedPrimaryId, targets, forcePreferred: targetedBestHits > targetedCurrentHits);
+            }
+
             this.lastReason = "targeted AoE — no body repositioning";
-            this.lastCurrentHits = 0;
-            this.lastBestHits = 0;
+            if (!action.IsTargetCenteredCircle)
+            {
+                this.lastCurrentHits = 0;
+                this.lastBestHits = 0;
+            }
+
             this.ClearAoeCandidateGoal();
             if (packCenterMovementEnabled && inAoeSituation)
             {
-                this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "targeted AoE — closing to attack range", aoeRange: null, inAoeSituation: inAoeSituation, contributions: contributions);
+                var targetCenteredRange = action.IsTargetCenteredCircle
+                    ? action.Range
+                    : (float?)null;
+                this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "targeted AoE — closing to attack range", targetCenteredRange, inAoeSituation, contributions);
             }
 
             return;
@@ -1046,7 +1069,53 @@ internal sealed class AoePackPositioningController(
     private static bool ShouldSkipBodyReposition(RsrAoeActionSnapshot action)
     {
         return action.IsTargetArea ||
+               action.IsTargetCenteredCircle ||
                action.Shape == RsrAoeShape.Circle && action.Range > action.EffectRange + 3f;
+    }
+
+    private bool TrySelectBestTargetCenteredAoePrimary(
+        RsrAoeActionSnapshot action,
+        IReadOnlyList<TargetSnapshot> targets,
+        IBattleChara player,
+        out ulong primaryId,
+        out int currentHits,
+        out int bestHits)
+    {
+        primaryId = 0;
+        currentHits = 0;
+        bestHits = 0;
+        if (!action.IsTargetCenteredCircle || targets.Count < 2)
+        {
+            return false;
+        }
+
+        var currentTargetId = services.TargetManager.Target?.GameObjectId ?? 0;
+        var playerPos = new Vector2(player.Position.X, player.Position.Z);
+        foreach (var target in targets)
+        {
+            if (!TargetInActionRange(playerPos, player.HitboxRadius, target, action.Range))
+            {
+                continue;
+            }
+
+            var hits = CountTargetCenteredCircleHits(target, targets, action.EffectRange);
+            var isCurrent = target.InstanceId == currentTargetId;
+            if (isCurrent)
+            {
+                currentHits = hits;
+            }
+
+            if (hits > bestHits ||
+                hits == bestHits && isCurrent)
+            {
+                primaryId = target.InstanceId;
+                bestHits = hits;
+            }
+        }
+
+        return primaryId != 0 &&
+               bestHits >= 2 &&
+               bestHits > currentHits;
     }
 
     private void ClearAoeCandidateGoal()
@@ -1442,6 +1511,26 @@ internal sealed class AoePackPositioningController(
         foreach (var target in targets)
         {
             if (Vector2.Distance(position, target.Position) - target.Radius <= engagementRange)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static bool TargetInActionRange(Vector2 playerPosition, float playerRadius, TargetSnapshot target, float range)
+    {
+        return Vector2.Distance(playerPosition, target.Position) - playerRadius - target.Radius <= range;
+    }
+
+    private static int CountTargetCenteredCircleHits(TargetSnapshot primary, IEnumerable<TargetSnapshot> targets, float radius)
+    {
+        var count = 0;
+        foreach (var target in targets)
+        {
+            var effective = radius + target.Radius;
+            if (Vector2.DistanceSquared(primary.Position, target.Position) <= effective * effective)
             {
                 count++;
             }
@@ -1871,7 +1960,7 @@ internal sealed class AoePackPositioningController(
         return new Vector2(player.Position.X, player.Position.Z);
     }
 
-    private void UpdateTrashPullState(
+    private TrashPullDiagnostics UpdateTrashPullState(
         IReadOnlyList<TargetSnapshot> dominantTargets,
         IReadOnlyList<TargetSnapshot> allTargets,
         bool trashContext,
@@ -1882,7 +1971,7 @@ internal sealed class AoePackPositioningController(
         if (player == null)
         {
             this.trashPullState.Reset("local player unavailable");
-            return;
+            return this.trashPullState.Current;
         }
 
         var tank = PartyAllyProvider.SelectBestTank(services, player);
@@ -1903,7 +1992,75 @@ internal sealed class AoePackPositioningController(
             partyMembers,
             dominantTargets,
             allTargets);
-        this.trashPullState.Update(observation);
+        return this.trashPullState.Update(observation);
+    }
+
+    private bool TryInjectTankLeadMovement(
+        BossModPathfindBoundsSnapshot? pathfindBounds,
+        TrashPullDiagnostics diagnostics,
+        IReadOnlyList<TargetSnapshot> targets,
+        ICollection<BossModGoalContribution> contributions)
+    {
+        if (!config.LeadTrashPullsWithTank ||
+            !config.ManageMovement ||
+            !config.ManageTargetUptime ||
+            !diagnostics.LeadCandidateActive ||
+            diagnostics.LeadDestination == null)
+        {
+            return false;
+        }
+
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            this.lastReason = "local player unavailable";
+            return false;
+        }
+
+        var destination = diagnostics.LeadDestination.Value;
+        var destination2 = new Vector2(destination.X, destination.Z);
+        if (!CandidateInsidePathfindBounds(pathfindBounds, destination2))
+        {
+            this.lastReason = "tank lead outside BMR bounds";
+            return false;
+        }
+
+        var player2 = new Vector2(player.Position.X, player.Position.Z);
+        if (Vector2.Distance(player2, destination2) <= 1.25f)
+        {
+            this.lastReason = "tank lead already reached";
+            return false;
+        }
+
+        if (this.lastCentroidGoalDelegate == null ||
+            Vector2.Distance(destination2, this.lastInjectedCentroid) > FluidPackFollowMovementThreshold)
+        {
+            this.lastCentroidGoalDelegate = this.CreateCentroidGoalDelegate(destination2, acceptRadius: 2.5f);
+            this.lastInjectedCentroid = destination2;
+        }
+
+        contributions.Add(new(this.lastCentroidGoalDelegate, BossModGoalPriority.Uptime, "Tank pull lead"));
+        this.lastAction = null;
+        this.lastCurrentHits = 0;
+        this.lastBestHits = Math.Max(0, diagnostics.DominantTargetCount);
+        this.ClearAoeCandidateGoal();
+        this.lastInjected = true;
+        this.lastReason = string.Create(
+            CultureInfo.InvariantCulture,
+            $"following tank lead; behind={diagnostics.BehindDistance?.ToString("0.0", CultureInfo.InvariantCulture) ?? "n/a"}y; {diagnostics.LeadRejectionReason}");
+        var centroid = diagnostics.PackCentroid ?? destination;
+        this.lastOverlay = new AoePackOverlaySnapshot(
+            0,
+            "Tank pull lead",
+            RsrAoeShape.Circle.ToString(),
+            new Vector3(destination.X, player.Position.Y, destination.Z),
+            new Vector3(centroid.X, player.Position.Y, centroid.Z),
+            jobRangeProvider.PackAoeRange,
+            0f,
+            0,
+            this.lastBestHits,
+            this.CreateOverlayTargets(targets, player.Position.Y, destination2, hit: false));
+        return true;
     }
 
     private static float AverageDistanceSquared(IReadOnlyCollection<TargetSnapshot> targets, Vector2 anchor)

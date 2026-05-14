@@ -22,6 +22,7 @@ var tests = new (string Name, Action Body)[]
     ("schema v2 rejection", SchemaV2Rejected),
     ("configuration logging defaults/reset", ConfigurationLoggingDefaultsAndReset),
     ("configuration tank lead defaults/reset", ConfigurationTankLeadDefaultsAndReset),
+    ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
     ("multi-target large trash remains trash context", MultiTargetLargeTrashRemainsTrashContext),
     ("trash pull tracker phase transitions", TrashPullTrackerPhaseTransitions),
     ("trash pull tracker remote settled pack remains catch-up", TrashPullTrackerRemoteSettledPackRemainsCatchUp),
@@ -56,6 +57,8 @@ var tests = new (string Name, Action Body)[]
     ("movement jitter detector", MovementJitterDetector),
     ("BMR conflict detector", BmrConflictDetector),
     ("range failure detector", RangeFailureDetector),
+    ("range failure ignores disabled range within role range", RangeFailureIgnoresDisabledRangeWithinRoleRange),
+    ("range failure uses role range when preset range missing", RangeFailureUsesRoleRangeWhenPresetRangeMissing),
     ("range failure includes BMR pressure context", RangeFailureIncludesBmrPressureContext),
     ("range failure ignores all-pressure Greed linger", RangeFailureIgnoresAllPressureGreedLinger),
     ("range failure keeps Greed recovery failures", RangeFailureKeepsGreedRecoveryFailures),
@@ -282,6 +285,71 @@ static void ConfigurationTankLeadDefaultsAndReset()
     config.Migrate();
     AssertEqual(currentVersion, config.Version, "tank lead migrated version");
     AssertTrue(config.LeadTrashPullsWithTank, "migration enables tank lead");
+}
+
+static void FriendlyAnchorDashRequiresMeaningfulGain()
+{
+    AssertFalse(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            routeDashActive: false,
+            moveDistance: 3.1f,
+            safetyGain: 0f,
+            uptimeGain: 2.4f,
+            pathGain: 0f,
+            out var closeReason),
+        "nearby ally anchor should not spend a healer dash");
+    AssertContains("too close", closeReason, "nearby ally rejection reason");
+
+    AssertFalse(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            routeDashActive: false,
+            moveDistance: 8f,
+            safetyGain: 0f,
+            uptimeGain: 2f,
+            pathGain: 0f,
+            out var lowGainReason),
+        "distant ally anchor should still need meaningful uptime gain");
+    AssertContains("low uptime", lowGainReason, "low uptime ally rejection reason");
+
+    AssertTrue(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            routeDashActive: false,
+            moveDistance: 8f,
+            safetyGain: 0f,
+            uptimeGain: 5f,
+            pathGain: 0f,
+            out _),
+        "meaningful uptime anchor is allowed");
+
+    AssertTrue(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            routeDashActive: false,
+            moveDistance: 3f,
+            safetyGain: 1f,
+            uptimeGain: 0f,
+            pathGain: 0f,
+            out _),
+        "safety anchor can still be short");
+
+    AssertTrue(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            routeDashActive: false,
+            moveDistance: 3f,
+            safetyGain: 0f,
+            uptimeGain: 0f,
+            pathGain: 1f,
+            out _),
+        "path recovery anchor can still be short");
+
+    AssertTrue(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            routeDashActive: true,
+            moveDistance: 3f,
+            safetyGain: 0f,
+            uptimeGain: 0f,
+            pathGain: 0f,
+            out _),
+        "route anchor can still be short");
 }
 
 static void MultiTargetLargeTrashRemainsTrashContext()
@@ -814,6 +882,32 @@ static void RangeFailureDetector()
         Frame(1, chosenSource: "<none>", targetSurfaceDistance: 10, engagementRange: 3),
         Frame(2.2f, chosenSource: "<none>", targetSurfaceDistance: 10, engagementRange: 3),
         Frame(3.1f, chosenSource: "<none>", targetSurfaceDistance: 10, engagementRange: 3),
+    };
+
+    AssertHasIncident(IncidentDetector.Detect(Log(frames)), "range-failure");
+}
+
+static void RangeFailureIgnoresDisabledRangeWithinRoleRange()
+{
+    var frames = new[]
+    {
+        Frame(0, chosenSource: "<none>", targetSurfaceDistance: 1.1f, engagementRange: -1, playerClassJobId: 40),
+        Frame(1, chosenSource: "<none>", targetSurfaceDistance: 1.1f, engagementRange: -1, playerClassJobId: 40),
+        Frame(2.2f, chosenSource: "<none>", targetSurfaceDistance: 1.1f, engagementRange: -1, playerClassJobId: 40),
+        Frame(3.1f, chosenSource: "<none>", targetSurfaceDistance: 1.1f, engagementRange: -1, playerClassJobId: 40),
+    };
+
+    AssertNoIncident(IncidentDetector.Detect(Log(frames)), "range-failure");
+}
+
+static void RangeFailureUsesRoleRangeWhenPresetRangeMissing()
+{
+    var frames = new[]
+    {
+        Frame(0, chosenSource: "<none>", targetSurfaceDistance: 28f, engagementRange: -1, playerClassJobId: 40),
+        Frame(1, chosenSource: "<none>", targetSurfaceDistance: 28f, engagementRange: -1, playerClassJobId: 40),
+        Frame(2.2f, chosenSource: "<none>", targetSurfaceDistance: 28f, engagementRange: -1, playerClassJobId: 40),
+        Frame(3.1f, chosenSource: "<none>", targetSurfaceDistance: 28f, engagementRange: -1, playerClassJobId: 40),
     };
 
     AssertHasIncident(IncidentDetector.Detect(Log(frames)), "range-failure");

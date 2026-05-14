@@ -40,7 +40,8 @@ internal sealed class HealerAoePositioningController(
     // Healer AoE heals and support actions commonly use a 20y radius around the healer.
     private const float CoverageRadius = 20f;
     private const float CoverageRadiusSquared = CoverageRadius * CoverageRadius;
-    private const float MaxConvenienceMoveDistance = 8f;
+    private const float MaxConvenienceMoveDistance = 6f;
+    private const float MaxTankCoverageRestoreDistance = 4.5f;
     private const int MinimumCoverageGain = 2;
     private const float PreferredScore = GoalZoneScorePolicy.NormalPreference;
     private const float TankCoverageBonus = 0.25f;
@@ -61,6 +62,8 @@ internal sealed class HealerAoePositioningController(
     private HealerCoverageOverlaySnapshot? lastOverlay;
     private HealerCoverageGoalPlan? lastPlan;
     private Delegate? lastGoalDelegate;
+    private bool bmrMoveRequested;
+    private bool bmrMoveImminent;
 
     public HealerAoePositioningStatus Status => new(
         this.hookState,
@@ -76,6 +79,12 @@ internal sealed class HealerAoePositioningController(
     public void SetHookState(string state)
     {
         this.hookState = state;
+    }
+
+    public void SetBossModMovementState(bool moveRequested, bool moveImminent)
+    {
+        this.bmrMoveRequested = moveRequested;
+        this.bmrMoveImminent = moveImminent;
     }
 
     public void Reset()
@@ -95,6 +104,8 @@ internal sealed class HealerAoePositioningController(
         this.lastOverlay = null;
         this.lastPlan = null;
         this.lastGoalDelegate = null;
+        this.bmrMoveRequested = false;
+        this.bmrMoveImminent = false;
     }
 
     public void TryInjectGoal(object hints, ICollection<BossModGoalContribution> contributions)
@@ -167,9 +178,11 @@ internal sealed class HealerAoePositioningController(
         var restoresTankCoverage = plan.HasTank &&
                                     !plan.CurrentCoversTank &&
                                     plan.BestCoversTank;
-        var shouldMove = coverageGain >= MinimumCoverageGain ||
-                         (plan.CurrentCoveredCount == 0 && coverageGain > 0) ||
-                         restoresTankCoverage;
+        var strongCoverageGain = coverageGain >= MinimumCoverageGain ||
+                                 plan.CurrentCoveredCount == 0 && coverageGain > 0;
+        var boundedTankRestore = restoresTankCoverage &&
+                                 plan.DistanceToCenter <= MaxTankCoverageRestoreDistance;
+        var shouldMove = strongCoverageGain || boundedTankRestore;
 
         if (this.lastPlan == null || !this.lastPlan.SameSource(plan))
         {
@@ -186,6 +199,10 @@ internal sealed class HealerAoePositioningController(
         {
             shouldMove = false;
             this.lastReason = $"coverage point too far: {plan.DistanceToCenter:0.0}y";
+        }
+        else if (!shouldMove && restoresTankCoverage && plan.DistanceToCenter > MaxTankCoverageRestoreDistance)
+        {
+            this.lastReason = $"tank coverage point too far: {plan.DistanceToCenter:0.0}y";
         }
         else if (!shouldMove && coverageGain > 0)
         {
@@ -374,6 +391,11 @@ internal sealed class HealerAoePositioningController(
 
     private bool BossModMechanicSafetyActive(object hints)
     {
+        if (this.bmrMoveRequested || this.bmrMoveImminent)
+        {
+            return true;
+        }
+
         if (this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 })
         {
             return true;

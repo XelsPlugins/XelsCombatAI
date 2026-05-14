@@ -11,9 +11,9 @@ namespace XelsCombatAI.Combat;
 internal sealed class ArenaEdgePositioningController(Configuration config, DalamudServices services)
     : IBossModGoalZoneContributor
 {
-    private const float EdgeBand = 0.75f;
-    private const float ActivationDistance = 0.85f;
-    private static readonly TimeSpan GoalLinger = TimeSpan.FromMilliseconds(500);
+    private const float EdgeBand = 2.5f;
+    private const float ActivationDistance = 2.25f;
+    private static readonly TimeSpan GoalLinger = TimeSpan.FromMilliseconds(1500);
     private static readonly TimeSpan PostMechanicEdgeCooldown = TimeSpan.FromSeconds(2);
     private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private static readonly MethodInfo ScoreCircleMethod = typeof(ArenaEdgePositioningController).GetMethod(nameof(ScoreCircle), BindingFlags.Static | BindingFlags.NonPublic)!;

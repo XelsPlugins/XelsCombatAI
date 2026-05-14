@@ -30,7 +30,8 @@ internal sealed record RsrAoeActionSnapshot(
     float PrimaryTargetRadius,
     int AffectedTargetCount,
     bool IsFriendly,
-    bool IsTargetArea);
+    bool IsTargetArea,
+    bool IsTargetCenteredCircle);
 
 internal sealed class RotationSolverActionReflection(IDalamudPluginInterface pluginInterface, IPluginLog log)
 {
@@ -147,6 +148,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             // body repositioning and avoid tiny correction steps for jobs like AST.
             int resolvedCastType;
             float resolvedRange;
+            var isTargetCenteredCircle = false;
             if (castType is 2 or 3 or 4)
             {
                 resolvedCastType = castType;
@@ -158,6 +160,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
                 // Otherwise it's a radial AoE around the target — treat as Circle.
                 resolvedCastType = xAxisModifier > 0f ? 4 : 2;
                 resolvedRange = xAxisModifier > 0f ? 0f : range;
+                isTargetCenteredCircle = xAxisModifier <= 0f;
             }
             else if (castType == 1 && effectRange > 0f && isFriendly)
             {
@@ -198,7 +201,8 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
                 primaryRadius,
                 affectedCount,
                 isFriendly,
-                isTargetArea);
+                isTargetArea,
+                isTargetCenteredCircle);
             reason = "available";
             return true;
         }

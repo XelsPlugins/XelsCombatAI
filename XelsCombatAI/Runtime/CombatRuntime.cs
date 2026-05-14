@@ -38,6 +38,7 @@ internal sealed class CombatRuntime(
     Action<string> print)
 {
     private static readonly TimeSpan ManualMovementResumeDelay = TimeSpan.FromMilliseconds(350);
+    private static readonly TimeSpan CombatDependencyGrace = TimeSpan.FromSeconds(15);
     private const int MaxReviewActorSnapshots = 48;
     private const float MaxReviewActorDistance = 60f;
 
@@ -45,6 +46,7 @@ internal sealed class CombatRuntime(
     private bool wasInCombat;
     private DateTime nextRuntimeUpdate = DateTime.MinValue;
     private DateTime manualMovementSuppressUntil = DateTime.MinValue;
+    private DateTime dependencyGraceUntil = DateTime.MinValue;
     private DateTime nextRuntimeErrorLog = DateTime.MinValue;
     private string? lastMissingDependencies;
     private readonly CombatHistory combatHistory = new();
@@ -84,14 +86,20 @@ internal sealed class CombatRuntime(
             return;
         }
 
-        if (!dependencyChecker.DependenciesAvailable(out var missing))
+        var now = DateTime.UtcNow;
+        var dependenciesAvailable = dependencyChecker.DependenciesAvailable(out var missing);
+        if (!dependenciesAvailable &&
+            !this.ShouldContinueThroughTransientDependencyLoss(combatEngagement.EffectiveInCombat, now))
         {
             this.UpdateFightReviewLogging(CombatEngagementDetector.IsEffectivelyInCombat(services), "dependencies unavailable");
             this.WaitForDependencies(missing);
             return;
         }
 
-        this.ClearDependencyWaitState();
+        if (dependenciesAvailable)
+        {
+            this.ClearDependencyWaitState();
+        }
 
         if (!combatEngagement.EffectiveInCombat)
         {
@@ -139,7 +147,6 @@ internal sealed class CombatRuntime(
             aoeGoalHook.EnsureActive();
         }
 
-        var now = DateTime.UtcNow;
         if (now < this.nextRuntimeUpdate)
         {
             return;
@@ -193,6 +200,7 @@ internal sealed class CombatRuntime(
     public void ResetRuntimeCache()
     {
         this.manualMovementSuppressUntil = DateTime.MinValue;
+        this.dependencyGraceUntil = DateTime.MinValue;
         presetController.ResetCache();
         aoePackPositioningController.Reset();
         passageOfArmsPositioningController.Reset();
@@ -348,6 +356,7 @@ internal sealed class CombatRuntime(
 
     private void ClearDependencyWaitState()
     {
+        this.dependencyGraceUntil = DateTime.MinValue;
         if (this.lastMissingDependencies == null)
         {
             return;
@@ -355,6 +364,23 @@ internal sealed class CombatRuntime(
 
         this.lastMissingDependencies = null;
         updateDtr();
+    }
+
+    private bool ShouldContinueThroughTransientDependencyLoss(bool effectiveInCombat, DateTime now)
+    {
+        if (!effectiveInCombat)
+        {
+            this.dependencyGraceUntil = DateTime.MinValue;
+            return false;
+        }
+
+        if (presetController.InitializedPreset && this.dependencyGraceUntil == DateTime.MinValue)
+        {
+            this.dependencyGraceUntil = now.Add(CombatDependencyGrace);
+        }
+
+        return this.dependencyGraceUntil != DateTime.MinValue &&
+               now < this.dependencyGraceUntil;
     }
 
     private bool ShouldSuppressAutomatedMovement(DateTime now)

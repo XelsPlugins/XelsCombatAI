@@ -734,8 +734,9 @@ internal static class IncidentDetector
         for (var i = 0; i < log.Frames.Count; i++)
         {
             var frame = log.Frames[i];
-            var outOfRange = frame.Motion.TargetSurfaceDistance.HasValue &&
-                             frame.Motion.TargetSurfaceDistance.Value > frame.EngagementRange + 1.5f &&
+            var outOfRange = frame.TargetObjectId != 0 &&
+                             frame.Motion.TargetSurfaceDistance.HasValue &&
+                             frame.Motion.TargetSurfaceDistance.Value > EffectiveRangeFailureSurfaceRange(frame) + 1.5f &&
                              frame.Planner.ChosenSource == "<none>" &&
                              !IsManualSuppressed(frame);
             if (outOfRange && start < 0)
@@ -813,6 +814,16 @@ internal static class IncidentDetector
         return greedStyle
             ? "Preserve BossMod Greed timing, then recover range smoothly once BMR pressure clears so intentional greed does not become avoidable ABC loss."
             : "Preserve BMR mechanic safety, but improve safe re-engage and recovery timing so BMR-driven movement does not create avoidable ABC loss.";
+    }
+
+    private static float EffectiveRangeFailureSurfaceRange(XcaiFrame frame)
+    {
+        if (frame.EngagementRange > 0f)
+        {
+            return frame.EngagementRange;
+        }
+
+        return UptimeJobProfile.For(frame.PlayerClassJobId).PreferredSurfaceRange;
     }
 
     private static void DetectTrashAoeOpportunities(XcaiLog log, List<Incident> incidents)

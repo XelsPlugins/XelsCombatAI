@@ -29,6 +29,8 @@ internal sealed class GapCloserController(
     private const float TrashRouteDashMinimumDistance = 6f;
     private const float TrashRouteDashMinimumGain = 4f;
     private const float TrashRouteDashMinimumDirectionDot = 0.55f;
+    private const float FriendlyAnchorMinimumMoveDistance = 6f;
+    private const float FriendlyAnchorMinimumUptimeGain = 4f;
     private readonly record struct DirectionalDashFacingCandidate(float Rotation, Vector3 Destination);
     private readonly record struct TrashRouteDashContext(bool Active, Vector3 Anchor, string Source)
     {
@@ -468,6 +470,13 @@ internal sealed class GapCloserController(
                     continue;
                 }
 
+                if (!ShouldUseFriendlyAnchorDash(routeDash.Active, decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
+                {
+                    this.lastGapCloserSafety = anchorReason;
+                    mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, anchorReason);
+                    continue;
+                }
+
                 var reason = styleOpportunity.Reason is "knockback recovery" or "capped charge" or "pack surf"
                     ? styleOpportunity.Reason
                     : "ally anchor";
@@ -537,6 +546,13 @@ internal sealed class GapCloserController(
                 continue;
             }
 
+            if (!ShouldUseFriendlyAnchorDash(routeDash.Active, decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
+            {
+                this.lastGapCloserSafety = anchorReason;
+                mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, anchorReason);
+                continue;
+            }
+
             this.lastSafeLandingPosition = ally.Position;
             var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, ally.GameObjectId);
             mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
@@ -550,6 +566,37 @@ internal sealed class GapCloserController(
         }
 
         return false;
+    }
+
+    internal static bool ShouldUseFriendlyAnchorDash(
+        bool routeDashActive,
+        float moveDistance,
+        float safetyGain,
+        float uptimeGain,
+        float pathGain,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (routeDashActive ||
+            safetyGain > 0.1f ||
+            pathGain > 0.1f)
+        {
+            return true;
+        }
+
+        if (moveDistance < FriendlyAnchorMinimumMoveDistance)
+        {
+            reason = $"ally anchor too close: {moveDistance:0.0}y";
+            return false;
+        }
+
+        if (uptimeGain < FriendlyAnchorMinimumUptimeGain)
+        {
+            reason = $"ally anchor low uptime gain: {uptimeGain:0.0}y";
+            return false;
+        }
+
+        return true;
     }
 
     private unsafe bool TryUseTargetGapCloser(uint actionId, string actionName, float distanceToHitbox, IGameObject target, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity, TrashRouteDashContext routeDash)

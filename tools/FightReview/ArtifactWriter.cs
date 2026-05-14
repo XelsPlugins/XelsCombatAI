@@ -1217,7 +1217,7 @@ resize();
         if (category.Contains("safety", StringComparison.OrdinalIgnoreCase) ||
             category.Contains("bmr", StringComparison.OrdinalIgnoreCase))
         {
-            yield return "XelsCombatAI/Combat/MovementIntentPlanner.cs";
+            yield return "XelsCombatAI/Integrations/BossModGoalZoneHook.cs";
             yield return "XelsCombatAI/Integrations/BossModReflectionSafety.cs";
         }
 
@@ -1228,7 +1228,8 @@ resize();
             category.Contains("range", StringComparison.OrdinalIgnoreCase) ||
             category.Contains("manual", StringComparison.OrdinalIgnoreCase))
         {
-            yield return "XelsCombatAI/Combat/MovementIntentPlanner.cs";
+            yield return "XelsCombatAI/Runtime/BossModPresetController.cs";
+            yield return "XelsCombatAI/Integrations/BossModGoalZoneHook.cs";
         }
 
         if (category.Contains("trash", StringComparison.OrdinalIgnoreCase) ||
@@ -1236,12 +1237,14 @@ resize();
             category.Contains("pack", StringComparison.OrdinalIgnoreCase) ||
             category.Contains("route-memory", StringComparison.OrdinalIgnoreCase))
         {
+            yield return "XelsCombatAI/Combat/AoePackPositioningController.cs";
             yield return "XelsCombatAI/Combat/TrashPullStateTracker.cs";
-            yield return "XelsCombatAI/Combat/MovementIntentPlanner.cs";
+            yield return "XelsCombatAI/Integrations/BossModGoalZoneHook.cs";
         }
 
         if (category.Contains("aoe", StringComparison.OrdinalIgnoreCase))
         {
+            yield return "XelsCombatAI/Combat/AoePackPositioningController.cs";
             yield return "XelsCombatAI/Combat/HealerAoePositioningController.cs";
             yield return "XelsCombatAI/Game/JobRangeProvider.cs";
         }
