@@ -50,6 +50,9 @@ https://raw.githubusercontent.com/Xeltor/XelsCombatAI/master/pluginmaster.json
 | `/xcai on` | Enable |
 | `/xcai off` | Disable |
 | `/xcai config` | Open settings |
+| `/xcai logs on` | Enable run-review logging |
+| `/xcai logs off` | Disable run-review logging |
+| `/xcai logs status` | Show whether run-review logging is enabled and where logs are written |
 
 ## Configuration
 
@@ -96,3 +99,5 @@ When the Gap closers option is enabled and Movement timing is set to a greedy pr
 **Troubleshooting** — Show the movement overlay, toggle the movable debug HUD, copy a debug snapshot, or enable run-review logging.
 
 Run-review logging is off by default. When enabled, the plugin writes one detailed JSONL file for the current duty, matching BossMod Reborn's whole-replay style so dungeon pulls can be compared in one analyzer run. If no duty is active, it falls back to a single combat log. Files are written to the plugin config directory under `XelsCombatAI/combat-logs`. Combat is sampled at the normal review cadence and downtime is sampled slower to keep resource cost bounded. Movement review data includes bounded vnavmesh query diagnostics such as path status, detour distance, waypoint distance, and off-mesh probes; it does not copy cached navmesh files.
+
+Use `/xcai logs on` before a run to enable capture quickly. Logging remains active while movement control is disabled with `/xcai off`, so erratic behavior can be reviewed without allowing automated movement. Each successful write is also recorded in the plugin log with the JSONL path, frame count, and duration.

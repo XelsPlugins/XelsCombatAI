@@ -186,7 +186,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Toggle Xel's Combat AI. Usage: /xcai [on|off|toggle|config]"
+            HelpMessage = "Toggle Xel's Combat AI. Usage: /xcai [on|off|toggle|config|logs on|logs off|logs status]"
         });
         Framework.Update += this.runtime.OnFrameworkUpdate;
         PluginInterface.UiBuilder.Draw += this.decisionOverlay.Draw;
@@ -227,7 +227,6 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "off":
                 this.runtime.SetEnabled(false, false);
-                this.Print("Disabled.");
                 break;
             case "toggle":
                 this.runtime.SetEnabled(!this.config.Enabled);
@@ -235,8 +234,49 @@ public sealed class Plugin : IDalamudPlugin
             case "config":
                 this.OpenConfig();
                 break;
+            case "logs":
+            case "logging":
+            case "review":
+                this.SetFightReviewLogging(args);
+                break;
             default:
-                this.Print("Usage: /xcai [on|off|toggle|config]");
+                this.Print("Usage: /xcai [on|off|toggle|config|logs on|logs off|logs status]");
+                break;
+        }
+    }
+
+    private void SetFightReviewLogging(string[] args)
+    {
+        var logsDirectory = Path.Combine(ResolveConfigDirectory(), "combat-logs");
+        if (args.Length < 2 || args[1].Equals("status", StringComparison.OrdinalIgnoreCase))
+        {
+            this.Print($"Run-review logging is {(this.config.FightReviewLoggingEnabled ? "enabled" : "disabled")}. Logs: {logsDirectory}");
+            return;
+        }
+
+        switch (args[1].ToLowerInvariant())
+        {
+            case "on":
+            case "enable":
+            case "enabled":
+                this.config.FightReviewLoggingEnabled = true;
+                this.SaveConfig();
+                this.Print($"Run-review logging enabled. Logs: {logsDirectory}");
+                break;
+            case "off":
+            case "disable":
+            case "disabled":
+                this.config.FightReviewLoggingEnabled = false;
+                this.SaveConfig();
+                this.Print("Run-review logging disabled.");
+                break;
+            case "toggle":
+                this.config.FightReviewLoggingEnabled = !this.config.FightReviewLoggingEnabled;
+                this.SaveConfig();
+                this.Print($"Run-review logging {(this.config.FightReviewLoggingEnabled ? "enabled" : "disabled")}. Logs: {logsDirectory}");
+                break;
+            default:
+                this.Print("Usage: /xcai logs [on|off|toggle|status]");
                 break;
         }
     }

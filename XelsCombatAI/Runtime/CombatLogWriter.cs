@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -23,6 +24,9 @@ internal sealed class CombatLogWriter(string rootDirectory, IPluginLog log)
             var historyPath = this.CreateFightFilePath(history, reason);
             File.WriteAllText(historyPath, history.BuildJsonLines(config), Encoding.UTF8);
 
+            log.Information(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Wrote XCAI combat history: {historyPath} ({history.FrameCount} frames, {history.DurationSeconds:0.0}s, reason={reason})."));
             this.PruneOldLogs();
             return historyPath;
         }

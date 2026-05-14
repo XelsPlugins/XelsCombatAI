@@ -12,6 +12,7 @@ internal sealed record CombatHistoryFrame(
     float T,
     bool InCombat,
     bool IsDead,
+    bool PluginEnabled,
     uint PlayerClassJobId,
     uint TerritoryType,
     uint ContentFinderConditionId,
@@ -41,6 +42,7 @@ internal sealed record CombatHistoryFrame(
     string HealerCoverageReason,
     bool HealerCoverageInjected,
     int HealerCoverageMembers,
+    int HealerCoverageCoveredMembers,
     float HealerCoverageDist,
     // AoE pack
     string Reason,

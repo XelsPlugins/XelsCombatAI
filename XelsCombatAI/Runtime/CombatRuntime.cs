@@ -76,9 +76,11 @@ internal sealed class CombatRuntime(
         _ = framework;
         jobRangeProvider.Tick();
 
+        var combatEngagement = CombatEngagementDetector.Detect(services);
         if (!config.Enabled)
         {
-            this.HandleDisabled();
+            this.HandleDisabled(flushCombatHistory: false);
+            this.UpdateFightReviewLogging(combatEngagement.EffectiveInCombat, this.DisabledLoggingInactiveReason());
             return;
         }
 
@@ -91,7 +93,6 @@ internal sealed class CombatRuntime(
 
         this.ClearDependencyWaitState();
 
-        var combatEngagement = CombatEngagementDetector.Detect(services);
         if (!combatEngagement.EffectiveInCombat)
         {
             if (this.wasInCombat || presetController.InitializedPreset)
@@ -181,7 +182,11 @@ internal sealed class CombatRuntime(
         }
 
         saveConfig();
-        print(config.Enabled ? "Enabled." : "Disabled.");
+        print(config.Enabled
+            ? "Enabled."
+            : config.FightReviewLoggingEnabled
+                ? "Disabled. Run-review logging remains active."
+                : "Disabled.");
         return true;
     }
 
@@ -368,14 +373,14 @@ internal sealed class CombatRuntime(
         return now < this.manualMovementSuppressUntil;
     }
 
-    private void HandleDisabled()
+    private void HandleDisabled(bool flushCombatHistory = true)
     {
         if (!this.wasInCombat && !this.wasDead && !presetController.InitializedPreset)
         {
             return;
         }
 
-        if (this.wasInCombat || this.combatHistoryActive || this.combatHistory.HasFrames)
+        if (flushCombatHistory && (this.wasInCombat || this.combatHistoryActive || this.combatHistory.HasFrames))
         {
             this.FlushCombatHistory("disabled");
         }
@@ -388,6 +393,13 @@ internal sealed class CombatRuntime(
         this.wasInCombat = false;
         this.wasDead = false;
         this.ResetRuntimeCache();
+    }
+
+    private string DisabledLoggingInactiveReason()
+    {
+        return this.combatHistoryActive && !this.IsDutyContextActive()
+            ? "duty ended while disabled"
+            : "plugin disabled";
     }
 
     private void HandleDeath()

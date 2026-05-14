@@ -39,6 +39,8 @@ internal sealed class CombatHistory
     private string logScope = "instance-run";
 
     public bool HasFrames => this.count > 0;
+    public int FrameCount => this.count;
+    public float DurationSeconds => this.LastFrame?.T ?? 0f;
     public DateTime CombatStartUtc => this.combatStart;
     public CombatHistoryFrame? FirstFrame => this.count == 0 ? null : this.frames[this.head];
     public CombatHistoryFrame? LastFrame => this.count == 0 ? null : this.frames[(this.head + this.count - 1) % MaxFrames];
@@ -77,6 +79,7 @@ internal sealed class CombatHistory
             T: (float)(now - this.combatStart).TotalSeconds,
             InCombat: status.InCombat,
             IsDead: status.IsDead,
+            PluginEnabled: status.Enabled,
             PlayerClassJobId: status.PlayerClassJobId,
             TerritoryType: status.TerritoryType,
             ContentFinderConditionId: status.ContentFinderConditionId,
@@ -102,6 +105,7 @@ internal sealed class CombatHistory
             HealerCoverageReason: status.HealerCoveragePositioning.LastReason,
             HealerCoverageInjected: status.HealerCoveragePositioning.Injected,
             HealerCoverageMembers: status.HealerCoveragePositioning.PartyMembers,
+            HealerCoverageCoveredMembers: status.HealerCoveragePositioning.CoveredMembers,
             HealerCoverageDist: status.HealerCoveragePositioning.DistanceToCenter,
             Reason: aoe.LastReason,
             Henched: aoe.RsrHenchedActive,
@@ -197,6 +201,7 @@ internal sealed class CombatHistory
             // Always show state changes relevant to debugging
             AppendIfChanged(sb, "InCombat", frame.InCombat, prev?.InCombat);
             AppendIfChanged(sb, "Dead", frame.IsDead, prev?.IsDead);
+            AppendIfChanged(sb, "Enabled", frame.PluginEnabled, prev?.PluginEnabled);
             AppendIfChanged(sb, "PlayerPos", FormatVector(frame.PlayerPosition), prev == null ? null : FormatVector(prev.PlayerPosition));
             AppendIfChanged(sb, "PlayerRot", FormatFloat(frame.PlayerRotation), prev == null ? null : FormatFloat(prev.PlayerRotation));
             AppendIfChanged(sb, "Target", frame.TargetBaseId, prev?.TargetBaseId);
@@ -246,6 +251,7 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "HealerCoverage", frame.HealerCoverageReason, prev?.HealerCoverageReason);
             AppendIfChanged(sb, "HCInjected", frame.HealerCoverageInjected, prev?.HealerCoverageInjected);
             AppendIfChanged(sb, "HCMembers", frame.HealerCoverageMembers, prev?.HealerCoverageMembers);
+            AppendIfChanged(sb, "HCCovered", frame.HealerCoverageCoveredMembers, prev?.HealerCoverageCoveredMembers);
             AppendIfChanged(sb, "HCDist", $"{frame.HealerCoverageDist:0.0}", prev == null ? null : $"{prev.HealerCoverageDist:0.0}");
 
             // AoE pack fields — only print when relevant
@@ -530,6 +536,7 @@ internal sealed class CombatHistory
         bool ManageSocialTurning,
         bool UseRedMageMeleeComboMovement,
         bool FightReviewLoggingEnabled,
+        bool PluginEnabled,
         string CombatStyle,
         bool GreedyUnsafeEscapeDashes)
     {
@@ -545,6 +552,7 @@ internal sealed class CombatHistory
                 config.ManageSocialTurning,
                 config.UseRedMageMeleeComboMovement,
                 config.FightReviewLoggingEnabled,
+                config.Enabled,
                 config.CombatStyle.ToString(),
                 config.UseGapCloser && config.CombatStyle != XelsCombatAI.Models.CombatStyle.Normal);
         }
