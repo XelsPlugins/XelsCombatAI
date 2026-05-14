@@ -14,17 +14,6 @@ internal enum MovementCandidatePriority
     Defensive = 400
 }
 
-internal sealed record MovementCandidate(
-    string Source,
-    string Reason,
-    Vector3 Destination,
-    float AcceptanceRadius,
-    MovementCandidatePriority Priority,
-    float SourceScore,
-    float TargetRangeScore = 0f,
-    float AoeScore = 0f,
-    float HumanScore = 0.5f);
-
 internal sealed record MovementCandidateScore(
     string Source,
     string Reason,
@@ -53,15 +42,6 @@ internal sealed record MovementCandidateScore(
     float? FirstWaypointDistance,
     float? FirstWaypointYawDelta,
     string ScoreBreakdown);
-
-internal sealed record MovementIntent(
-    long IntentId,
-    string Source,
-    Vector3 Destination,
-    float AcceptanceRadius,
-    MovementCandidateScore Score,
-    DateTime CommittedAtUtc,
-    DateTime HoldUntilUtc);
 
 internal sealed record MovementLineOfSightDiagnostics(
     bool Checked,
@@ -187,36 +167,4 @@ internal sealed record MovementPlannerDiagnostics(
         false,
         false,
         TrashRouteMemoryDiagnostics.Empty);
-}
-
-internal sealed class MovementPlannerContext
-{
-    public required object Hints { get; init; }
-    public required DateTime NowUtc { get; init; }
-    public required IBattleChara Player { get; init; }
-    public required Vector3 PlayerPosition { get; init; }
-    public required float PlayerRotation { get; init; }
-    public required float PlayerHitboxRadius { get; init; }
-    public required IBattleChara? Target { get; init; }
-    public required float EngagementRange { get; init; }
-    public required float PackAoeRange { get; init; }
-    public required bool AutomatedMovementSuppressed { get; init; }
-    public required bool BmrMoveRequested { get; init; }
-    public required bool BmrMoveImminent { get; init; }
-    public required bool BossModEncounterActive { get; init; }
-    public required int BmrGoalZones { get; init; }
-    public required int BmrForbiddenZones { get; init; }
-    public required int BmrTemporaryObstacles { get; init; }
-    public required int BmrTeleporters { get; init; }
-    public required Vector3? BmrForcedMovement { get; init; }
-    public required Vector3? PathfindMapCenter { get; init; }
-    public required MovementLineOfSightDiagnostics LineOfSight { get; init; }
-    public required Func<Vector3, bool> IsInsidePathfindMap { get; init; }
-
-    public bool HasBmrDynamicGeometryPressure =>
-        this.BossModEncounterActive &&
-        (this.BmrGoalZones > 0 ||
-         this.BmrForbiddenZones > 0 ||
-         this.BmrTemporaryObstacles > 0 ||
-         this.BmrTeleporters > 0);
 }

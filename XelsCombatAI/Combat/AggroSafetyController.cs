@@ -29,14 +29,13 @@ internal sealed class AggroSafetyController(
     Configuration config,
     DalamudServices services,
     Func<bool> automatedMovementSuppressed)
-    : IBossModGoalZoneContributor, IMovementCandidateSource
+    : IBossModGoalZoneContributor
 {
     internal const string CandidateSource = "Aggro safety";
     private static readonly TimeSpan AggroThreshold = TimeSpan.FromSeconds(3);
     private const float TankPickupSurfaceDistance = 8f;
     private const float MaxDistantTankDragSurfaceDistance = 24f;
     private const float CloseAggroSurfaceDistance = 5f;
-    private const float AggroSafetyLocalStepMaxDistance = 9.5f;
     private static readonly MethodInfo ScoreFromWPosMethod = typeof(AggroSafetyController).GetMethod(nameof(ScoreFromWPos), BindingFlags.Instance | BindingFlags.NonPublic)!;
 
     private readonly Dictionary<ulong, DateTime> aggroStartByMob = [];
@@ -70,40 +69,6 @@ internal sealed class AggroSafetyController(
         this.injected ? new Vector3(this.tankPosition.X, services.ObjectTable.LocalPlayer?.Position.Y ?? 0f, this.tankPosition.Y) : null,
         this.aggroSeconds,
         this.priorityDevalued);
-
-    public void AddMovementCandidates(MovementPlannerContext context, ICollection<MovementCandidate> candidates)
-    {
-        if (!this.injected || this.selectedTankId == 0)
-        {
-            return;
-        }
-
-        var destination = new Vector3(this.tankPosition.X, context.PlayerPosition.Y, this.tankPosition.Y);
-        var reason = this.lastReason;
-        var destination2 = new Vector2(destination.X, destination.Z);
-        var player2 = new Vector2(context.PlayerPosition.X, context.PlayerPosition.Z);
-        var delta = destination2 - player2;
-        var distance = delta.Length();
-        if (distance > AggroSafetyLocalStepMaxDistance && distance > 0.01f)
-        {
-            var step = player2 + (delta / distance * AggroSafetyLocalStepMaxDistance);
-            destination = new Vector3(step.X, context.PlayerPosition.Y, step.Y);
-            reason = string.Create(
-                CultureInfo.InvariantCulture,
-                $"{reason}; local tank step {AggroSafetyLocalStepMaxDistance:0.0}y");
-        }
-
-        candidates.Add(new(
-            CandidateSource,
-            reason,
-            destination,
-            MathF.Max(1.5f, this.tankRadius),
-            MovementCandidatePriority.Defensive,
-            1f,
-            0f,
-            0f,
-            0.8f));
-    }
 
     public void SetHookState(string state)
     {

@@ -14,11 +14,10 @@ internal sealed class BossCenterAvoidanceController(
     Configuration config,
     DalamudServices services,
     Func<bool> currentTargetHasBossModule)
-    : IBossModGoalZoneContributor, IMovementCandidateSource
+    : IBossModGoalZoneContributor
 {
     private const float BossHitboxAvoidanceMargin = 0.35f;
     private const float CandidateExtraDistance = 0.9f;
-    private const float AcceptanceRadius = 0.75f;
     private const float BossLikeHitboxRadius = 4f;
     private static readonly TimeSpan PostMechanicCenterCooldown = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan InsideCenterDwell = TimeSpan.FromMilliseconds(750);
@@ -40,25 +39,6 @@ internal sealed class BossCenterAvoidanceController(
     internal static float AvoidanceRadius(float hitboxRadius)
     {
         return Math.Max(1.25f, hitboxRadius + BossHitboxAvoidanceMargin);
-    }
-
-    public void AddMovementCandidates(MovementPlannerContext context, ICollection<MovementCandidate> candidates)
-    {
-        if (this.candidate == null)
-        {
-            return;
-        }
-
-        candidates.Add(new(
-            "Boss center avoidance",
-            this.lastReason,
-            this.candidate.Value,
-            AcceptanceRadius,
-            MovementCandidatePriority.Comfort,
-            1f,
-            0f,
-            0f,
-            0.9f));
     }
 
     public void SetHookState(string state)

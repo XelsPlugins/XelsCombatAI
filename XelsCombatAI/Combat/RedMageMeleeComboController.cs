@@ -25,10 +25,8 @@ internal sealed record RedMageMeleeComboStatus(
     Vector3? CandidateDestination,
     Vector3? LastJumpLanding);
 
-internal sealed class RedMageMeleeComboController : IMovementCandidateSource, IDisposable
+internal sealed class RedMageMeleeComboController : IDisposable
 {
-    internal const string CandidateSource = "Red Mage melee combo";
-
     private const uint RedMageJobId = 35;
     private const float SingleTargetMeleeSurfaceRange = 2.6f;
     private const float MoulinetConeSurfaceRange = 4.6f;
@@ -144,54 +142,6 @@ internal sealed class RedMageMeleeComboController : IMovementCandidateSource, ID
             RedMageComboMode.StayCloseAfterExit => Math.Clamp(decision.CurrentSurfaceDistance, SingleTargetMeleeSurfaceRange, StayCloseMaxSurfaceRange),
             _ => null
         };
-    }
-
-    public void AddMovementCandidates(MovementPlannerContext context, ICollection<MovementCandidate> candidates)
-    {
-        if (!this.TryEvaluate(context.Player, context.Target, out var decision) ||
-            decision.Mode is not (RedMageComboMode.MoveInSingleTarget or RedMageComboMode.MoveInAoeCone) ||
-            decision.Target == null)
-        {
-            return;
-        }
-
-        if (decision.CurrentSurfaceDistance <= decision.DesiredSurfaceDistance + decision.AcceptanceRadius)
-        {
-            this.lastCandidateDestination = null;
-            this.UpdateStatus(decision, "already in combo range");
-            return;
-        }
-
-        if (this.ShouldHoldMovementForCorpsACorps(decision))
-        {
-            this.lastCandidateDestination = null;
-            this.UpdateStatus(decision, "waiting for Corps-a-corps");
-            return;
-        }
-
-        var first = true;
-        foreach (var destination in this.EnumerateTargetRingDestinations(context, decision.Target, decision.DesiredSurfaceDistance))
-        {
-            if (first)
-            {
-                this.lastCandidateDestination = destination;
-                first = false;
-            }
-
-            var rangeGain = Math.Clamp((decision.CurrentSurfaceDistance - decision.DesiredSurfaceDistance) / 10f, 0.45f, 1f);
-            candidates.Add(new(
-                CandidateSource,
-                decision.Reason,
-                destination,
-                decision.AcceptanceRadius,
-                decision.Mode == RedMageComboMode.MoveInAoeCone ? MovementCandidatePriority.ActiveAoe : MovementCandidatePriority.TargetRange,
-                1f,
-                rangeGain,
-                decision.Mode == RedMageComboMode.MoveInAoeCone ? 1f : 0f,
-                0.75f));
-        }
-
-        this.UpdateStatus(decision, decision.Reason);
     }
 
     public unsafe bool TryUseComboJump()
@@ -823,40 +773,6 @@ internal sealed class RedMageMeleeComboController : IMovementCandidateSource, ID
 
         reason = "enabled";
         return true;
-    }
-
-    private IEnumerable<Vector3> EnumerateTargetRingDestinations(MovementPlannerContext context, IBattleChara target, float desiredSurfaceDistance)
-    {
-        var centerDistance = context.PlayerHitboxRadius + target.HitboxRadius + desiredSurfaceDistance;
-        var target2 = new Vector2(target.Position.X, target.Position.Z);
-        var player2 = new Vector2(context.PlayerPosition.X, context.PlayerPosition.Z);
-        var fromTargetToPlayer = player2 - target2;
-        if (fromTargetToPlayer.LengthSquared() <= 0.01f)
-        {
-            fromTargetToPlayer = new Vector2(0f, -1f);
-        }
-
-        fromTargetToPlayer = Vector2.Normalize(fromTargetToPlayer);
-        foreach (var direction in EnumerateHumanLikeTargetDirections(target, fromTargetToPlayer))
-        {
-            var destination2 = target2 + direction * centerDistance;
-            yield return new Vector3(destination2.X, target.Position.Y, destination2.Y);
-        }
-    }
-
-    private static IEnumerable<Vector2> EnumerateHumanLikeTargetDirections(IBattleChara target, Vector2 fromTargetToPlayer)
-    {
-        yield return fromTargetToPlayer;
-
-        var targetForward = new Vector2(MathF.Sin(target.Rotation), MathF.Cos(target.Rotation));
-        var targetBack = -targetForward;
-        var targetLeft = new Vector2(-targetForward.Y, targetForward.X);
-        var targetRight = -targetLeft;
-        yield return targetBack;
-        yield return Vector2.Normalize(targetBack + targetLeft);
-        yield return Vector2.Normalize(targetBack + targetRight);
-        yield return targetLeft;
-        yield return targetRight;
     }
 
     private RedMageComboTrack ResolveContinuationTrack(uint actionId, bool aoeTrash, byte manaStacks)

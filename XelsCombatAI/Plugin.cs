@@ -66,7 +66,6 @@ public sealed class Plugin : IDalamudPlugin
 
         var bossMod = new BossModIpc(PluginInterface, Log);
         var bossModSafety = new BossModReflectionSafety(PluginInterface, Log);
-        var lineOfSight = new CombatLineOfSightChecker(Log);
         var vnavmesh = new VNavmeshIpc(PluginInterface);
         var manualMovement = new ManualMovementInputDetector();
         var rotationSolver = new RotationSolverIpc(PluginInterface, Log);
@@ -85,7 +84,6 @@ public sealed class Plugin : IDalamudPlugin
         var redMageMeleeComboController = new RedMageMeleeComboController(this.config, this.services, rotationSolverActions, bossModSafety, mobilityDecisionEvaluator, facingController, () => targetUptimePlanner.CurrentTargetHasBossModule());
         targetUptimePlanner.TargetUptimeRangeOverride = redMageMeleeComboController.GetTargetUptimeRangeOverride;
         var aoePackPositioningController = new AoePackPositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), this.jobRangeProvider);
-        MovementIntentPlanner? movementPlanner = null;
         var gapCloserController = new GapCloserController(
             this.config,
             this.services,
@@ -96,17 +94,14 @@ public sealed class Plugin : IDalamudPlugin
             dashStyleController,
             facingController,
             () => aoePackPositioningController.Status.TrashPull,
-            () => movementPlanner?.Diagnostics ?? MovementPlannerDiagnostics.Empty);
+            () => MovementPlannerDiagnostics.Empty);
         var escapeGapCloserController = new EscapeGapCloserController(this.config, this.services, bossModSafety, mobilityDecisionEvaluator, gapCloserController, dashStyleController, facingController);
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var aggroSafetyController = new AggroSafetyController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
-        var bossCenterAvoidanceController = new BossCenterAvoidanceController(this.config, this.services, () => targetUptimePlanner.CurrentTargetHasBossModule());
-        IBossModGoalZoneContributor[] legacyMovementContributors = [aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController];
-        IMovementCandidateSource[] movementCandidateSources = [redMageMeleeComboController, aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController];
-        movementPlanner = new MovementIntentPlanner(this.config, this.services, bossModSafety, lineOfSight, vnavmesh, this.jobRangeProvider, () => runtime?.AutomatedMovementSuppressed == true, () => aoePackPositioningController.Status.TrashPull, legacyMovementContributors, movementCandidateSources);
-        var aoeGoalHook = new BossModGoalZoneHook(this.config, PluginInterface, this.services, Log, vnavmesh, bossModSafety, movementPlanner);
+        IBossModGoalZoneContributor[] legacyMovementContributors = [aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController];
+        var aoeGoalHook = new BossModGoalZoneHook(this.config, PluginInterface, this.services, Log, vnavmesh, legacyMovementContributors);
         var combatLogWriter = new CombatLogWriter(Path.Combine(ResolveConfigDirectory(), "combat-logs"), Log);
         presetController = new BossModPresetController(
             this.config,

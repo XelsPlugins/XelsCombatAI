@@ -37,7 +37,7 @@ internal sealed record SurvivabilityZoneOverlaySnapshot(
     string ZoneName,
     string CasterName);
 
-internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneContributor, IMovementCandidateSource, IDisposable
+internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneContributor, IDisposable
 {
     private const float PreferredEntryRadius = 1.5f;
     private const float ZoneEntryMargin = 1.5f;
@@ -99,27 +99,6 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
         this.lastOverlay?.CasterPosition);
 
     public SurvivabilityZoneOverlaySnapshot? Overlay => this.lastOverlay;
-
-    public void AddMovementCandidates(MovementPlannerContext context, ICollection<MovementCandidate> candidates)
-    {
-        var status = this.Status;
-        var plan = this.lastPlan;
-        if (!status.Injected || status.ZoneCenter == null || plan == null || plan.PlayerInZone)
-        {
-            return;
-        }
-
-        candidates.Add(new(
-            "Defensive zone",
-            status.LastReason,
-            plan.MovementDestination(context.PlayerPosition.Y),
-            2.5f,
-            MovementCandidatePriority.Defensive,
-            1f,
-            0f,
-            0f,
-            0.85f));
-    }
 
     public void SetHookState(string state)
     {

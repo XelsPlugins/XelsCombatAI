@@ -9,12 +9,10 @@ using Dalamud.Game.ClientState.Conditions;
 namespace XelsCombatAI.Combat;
 
 internal sealed class ArenaEdgePositioningController(Configuration config, DalamudServices services)
-    : IBossModGoalZoneContributor, IMovementCandidateSource
+    : IBossModGoalZoneContributor
 {
     private const float EdgeBand = 0.75f;
     private const float ActivationDistance = 0.85f;
-    private const float NudgeDistance = 0.9f;
-    private const float AcceptanceRadius = 0.75f;
     private static readonly TimeSpan GoalLinger = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan PostMechanicEdgeCooldown = TimeSpan.FromSeconds(2);
     private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -45,33 +43,6 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
     private float lastObservedRadius;
 
     public string LastReason => this.lastReason;
-
-    public void AddMovementCandidates(MovementPlannerContext context, ICollection<MovementCandidate> candidates)
-    {
-        if (!string.Equals(this.lastReason, "near arena edge", StringComparison.Ordinal) || context.PathfindMapCenter == null)
-        {
-            return;
-        }
-
-        var towardCenter = context.PathfindMapCenter.Value - context.PlayerPosition;
-        towardCenter.Y = 0f;
-        if (towardCenter.LengthSquared() <= 0.01f)
-        {
-            return;
-        }
-
-        towardCenter = Vector3.Normalize(towardCenter);
-        candidates.Add(new(
-            "Arena edge",
-            this.lastReason,
-            context.PlayerPosition + towardCenter * NudgeDistance,
-            AcceptanceRadius,
-            MovementCandidatePriority.Comfort,
-            1f,
-            0f,
-            0f,
-            0.45f));
-    }
 
     public void SetHookState(string state)
     {

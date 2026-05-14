@@ -1171,8 +1171,7 @@ internal sealed class GapCloserController(
 
     private static bool IsTrashRoutePlannerSource(string source)
     {
-        return source.Equals("Tank pull lead", StringComparison.Ordinal) ||
-               source.Equals(TrashRouteMemory.CandidateSource, StringComparison.Ordinal);
+        return source.Equals("Tank pull lead", StringComparison.Ordinal);
     }
 
     private static bool TryDirectionDot(Vector3 from, Vector3 destination, Vector3 routeAnchor, out float dot)

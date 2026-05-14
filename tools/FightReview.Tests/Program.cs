@@ -4,6 +4,7 @@ using System.Text.Json;
 using FightReview;
 using XelsCombatAI.Combat;
 using XelsCombatAI.Config;
+using XelsCombatAI.Game;
 
 CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
@@ -21,7 +22,7 @@ var tests = new (string Name, Action Body)[]
     ("schema v2 rejection", SchemaV2Rejected),
     ("configuration logging defaults/reset", ConfigurationLoggingDefaultsAndReset),
     ("configuration tank lead defaults/reset", ConfigurationTankLeadDefaultsAndReset),
-    ("boss center route crossing geometry", BossCenterRouteCrossingGeometry),
+    ("multi-target large trash remains trash context", MultiTargetLargeTrashRemainsTrashContext),
     ("trash pull tracker phase transitions", TrashPullTrackerPhaseTransitions),
     ("trash pull tracker remote settled pack remains catch-up", TrashPullTrackerRemoteSettledPackRemainsCatchUp),
     ("trash pull tracker tank lead only when behind", TrashPullTrackerTankLeadOnlyWhenBehind),
@@ -283,25 +284,41 @@ static void ConfigurationTankLeadDefaultsAndReset()
     AssertTrue(config.LeadTrashPullsWithTank, "migration enables tank lead");
 }
 
-static void BossCenterRouteCrossingGeometry()
+static void MultiTargetLargeTrashRemainsTrashContext()
 {
-    var center = new Vector3(100, 0, 100);
-
     AssertTrue(
-        MovementIntentPlanner.BossCenterRouteCrosses(
-            new Vector3(100, 0, 112),
-            new Vector3(100, 0, 88),
-            center,
-            6.5f),
-        "direct route through boss center");
+        AoePackPositioningController.IsPackLikeTrashContext(
+            bossModEncounterActive: false,
+            targetHasBossModule: false,
+            effectivePackTargetCount: 2),
+        "two visible non-module enemies are a trash pack");
 
     AssertFalse(
-        MovementIntentPlanner.BossCenterRouteCrosses(
-            new Vector3(112, 0, 100),
-            new Vector3(112, 0, 108),
-            center,
-            6.5f),
-        "same-side route around boss center");
+        AoePackPositioningController.ShouldUseBossModuleContext(
+            bossModEncounterActive: false,
+            targetHasBossModule: false,
+            packLikeTrashContext: true,
+            hitboxBossLikeContext: true,
+            previousBossLikeCombatActive: true),
+        "multi-target trash clears sticky hitbox-only boss context");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldUseBossModuleContext(
+            bossModEncounterActive: true,
+            targetHasBossModule: false,
+            packLikeTrashContext: true,
+            hitboxBossLikeContext: false,
+            previousBossLikeCombatActive: false),
+        "BossMod encounter context remains authoritative");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldUseBossModuleContext(
+            bossModEncounterActive: false,
+            targetHasBossModule: false,
+            packLikeTrashContext: false,
+            hitboxBossLikeContext: true,
+            previousBossLikeCombatActive: false),
+        "single large hitbox target still behaves boss-like");
 }
 
 static void TrashPullTrackerPhaseTransitions()

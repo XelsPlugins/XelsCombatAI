@@ -36,7 +36,7 @@ internal sealed class PassageOfArmsPositioningController(
     Configuration config,
     DalamudServices services,
     Func<bool> automatedMovementSuppressed)
-    : IBossModGoalZoneContributor, IMovementCandidateSource
+    : IBossModGoalZoneContributor
 {
     private const float ConeRadius = 8f;
     private const float ConeHalfAngle = MathF.PI / 3f;
@@ -75,26 +75,6 @@ internal sealed class PassageOfArmsPositioningController(
         this.lastOverlay?.PreferredPosition);
 
     public PassageOfArmsOverlaySnapshot? Overlay => this.lastOverlay;
-
-    public void AddMovementCandidates(MovementPlannerContext context, ICollection<MovementCandidate> candidates)
-    {
-        var status = this.Status;
-        if (!status.Injected || status.PreferredPosition == null)
-        {
-            return;
-        }
-
-        candidates.Add(new(
-            "Passage of Arms",
-            status.LastReason,
-            new Vector3(status.PreferredPosition.Value.X, context.PlayerPosition.Y, status.PreferredPosition.Value.Z),
-            1.75f,
-            MovementCandidatePriority.Defensive,
-            1f,
-            0f,
-            0f,
-            status.PlayerInCone ? 1f : 0.85f));
-    }
 
     public void SetHookState(string state)
     {
