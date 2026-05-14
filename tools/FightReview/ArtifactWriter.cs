@@ -7,6 +7,7 @@ namespace FightReview;
 
 internal static class ArtifactWriter
 {
+    private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = false,
@@ -25,19 +26,22 @@ internal static class ArtifactWriter
         WriteNormalized(review, Path.Combine(outputDirectory, "fight.normalized.jsonl"));
         WriteIncidents(review, Path.Combine(outputDirectory, "incidents"));
         WriteReport(review, Path.Combine(outputDirectory, "fight.report.md"));
+        WriteAgentImprovement(review, Path.Combine(outputDirectory, "agent.improvement.json"));
         WriteHtml(review, Path.Combine(outputDirectory, "fight.html"));
     }
 
     private static void WriteNormalized(ReviewBundle review, string path)
     {
-        using var writer = new StreamWriter(path, false, Encoding.UTF8);
+        var uptime = UptimeScoring.Analyze(review.Xcai);
+        using var writer = new StreamWriter(path, false, Utf8NoBom);
         writer.WriteLine(JsonSerializer.Serialize(new
         {
             Type = "header",
             GeneratedUtc = DateTime.UtcNow,
             Xcai = review.Xcai.Header,
             Bmr = review.Bmr with { Events = Array.Empty<BmrEvent>() },
-            Match = review.Match
+            Match = review.Match,
+            Uptime = uptime
         }, JsonOptions));
 
         foreach (var frame in review.Xcai.Frames)
@@ -120,19 +124,22 @@ internal static class ArtifactWriter
                 })
                 .ToArray();
             var path = Path.Combine(incidentsDirectory, $"{Sanitize(incident.Id)}.json");
-            File.WriteAllText(path, JsonSerializer.Serialize(new { Incident = incident, Frames = slice }, PrettyJsonOptions), Encoding.UTF8);
+            File.WriteAllText(path, JsonSerializer.Serialize(new { Incident = incident, Frames = slice }, PrettyJsonOptions) + Environment.NewLine, Utf8NoBom);
         }
     }
 
     private static void WriteReport(ReviewBundle review, string path)
     {
         var sb = new StringBuilder();
+        var uptime = UptimeScoring.Analyze(review.Xcai);
         sb.AppendLine("# Fight Review");
         sb.AppendLine();
-        sb.AppendLine("Review premise: find bad choices that caused danger, downtime, or unhuman-like behavior. ABC is the baseline: when BossMod-safe and job-feasible, unnecessary time unable to cast or fight is a failure to investigate. Trash pulls are judged by pack flow, tank-follow timing, AoE target/position quality, late single-target or ranged fallback GCDs, and ABC rather than frontal or center positioning. Boss context comes from active BossMod modules, boss-only duty types, or strong target HP outliers. BMR safety pressure is context, not immunity; preserve BossMod authority while still reviewing avoidable downtime or awkward recovery under mechanics. When a Greed combat style is logged, BMR-pressure linger can be intentional uptime timing, so all-pressure windows are not treated as XCAI range failures unless recovery remains bad after pressure clears. Boss-center placement is supporting context only, not a standalone finding. Defensive-zone behavior is only reported when paired with objective failure such as stuck movement. vnavmesh diagnostics are used as path evidence for detours, off-mesh destinations, query stalls, and reachable-but-stuck movement. Manual movement takeovers are correction labels: review the preceding behavior, while not blaming automation for frames where manual suppression is active.");
+        sb.AppendLine("Review premise: uptime is the primary positive signal: staying in usable target range gives RSR freedom to act, melee/tank ranged fallback is partial uptime, melee range is better, trash pack positions should hit more targets, and healer uptime is scored together with visible party heal coverage. BMR remains the safety authority. Normal profile BMR pressure is safety context; Greed profiles are expected to preserve uptime until BMR actually requires movement. Fight review still flags danger, downtime, unhuman-like movement, manual corrections, vnavmesh issues, and poor recovery.");
         sb.AppendLine();
         sb.AppendLine($"- XCAI log: `{review.Xcai.Path}`");
         sb.AppendLine($"- BMR replay: `{review.Bmr.Path}`");
+        sb.AppendLine($"- Log scope: `{review.Xcai.Header.LogScope}`");
+        sb.AppendLine($"- Run start UTC: `{review.Xcai.Header.RunStartUtc:O}`");
         sb.AppendLine($"- Combat start UTC: `{review.Xcai.Header.CombatStartUtc:O}`");
         sb.AppendLine($"- Duration: `{review.Xcai.Header.DurationSeconds:0.0}s`");
         sb.AppendLine($"- Job: `{review.Xcai.Header.PlayerClassJobId}`");
@@ -143,6 +150,45 @@ internal static class ArtifactWriter
         foreach (var evidence in review.Match.Evidence)
         {
             sb.AppendLine($"  - {evidence}");
+        }
+
+        var runScore = BuildRunScore(review, uptime);
+        sb.AppendLine();
+        sb.AppendLine("## Run Score");
+        sb.AppendLine();
+        sb.AppendLine($"- Overall: `{runScore.Overall:0.0}/100`");
+        sb.AppendLine($"- Uptime: `{runScore.Uptime:0.0}/100`");
+        sb.AppendLine($"- Safety: `{runScore.Safety:0.0}/100`");
+        sb.AppendLine($"- Efficiency: `{runScore.Efficiency:0.0}/100`");
+        sb.AppendLine($"- Human-likeness: `{runScore.HumanLikeness:0.0}/100`");
+        sb.AppendLine($"- Resource discipline: `{runScore.ResourceDiscipline:0.0}/100`");
+        sb.AppendLine($"- Job role: `{uptime.Job.Role}`");
+        sb.AppendLine($"- Target weighted uptime: `{uptime.Metrics.TargetWeightedUptimePercent:0.0}%`");
+        sb.AppendLine($"- Preferred range ratio: `{uptime.Metrics.PreferredUptimeRatio:P0}`");
+        sb.AppendLine($"- Fallback range seconds: `{uptime.Metrics.FallbackUptimeSeconds:0.0}`");
+        sb.AppendLine($"- Avoidable out-of-range seconds: `{uptime.Metrics.AvoidableOutOfRangeSeconds:0.0}`");
+        sb.AppendLine($"- Trash hit efficiency: `{uptime.Metrics.PackHitEfficiencyPercent:0.0}%`");
+        if (uptime.Job.IsHealer)
+        {
+            sb.AppendLine($"- Healer party coverage: `{uptime.Metrics.HealerPartyCoveragePercent:0.0}%`");
+        }
+
+        sb.AppendLine($"- Combat seconds: `{runScore.Metrics.CombatSeconds:0.0}`");
+        sb.AppendLine($"- Active movement seconds: `{runScore.Metrics.ActiveMovementSeconds:0.0}`");
+        sb.AppendLine($"- Average generated candidates/frame: `{runScore.Metrics.AverageGeneratedCandidates:0.0}`");
+        sb.AppendLine($"- Average route-query budget/frame: `{runScore.Metrics.AverageRouteQueryBudgetUsed:0.00}`");
+        sb.AppendLine($"- Manual correction count: `{runScore.Metrics.ManualCorrectionCount}`");
+
+        sb.AppendLine();
+        sb.AppendLine("## Uptime Signals");
+        foreach (var signal in uptime.PositiveSignals.OrderByDescending(signal => signal.Weight).Take(8))
+        {
+            sb.AppendLine($"- Positive `{signal.Category}` weight `{signal.Weight:0.0}`: {signal.Evidence}");
+        }
+
+        foreach (var signal in uptime.NegativeSignals.OrderByDescending(signal => signal.Weight).Take(8))
+        {
+            sb.AppendLine($"- Negative `{signal.Category}` weight `{signal.Weight:0.0}`: {signal.Evidence} Goal: {signal.SuggestedGoal}");
         }
 
         sb.AppendLine();
@@ -179,7 +225,122 @@ internal static class ArtifactWriter
         sb.AppendLine();
         sb.AppendLine("If an incident pattern cannot be corrected cleanly with existing settings, treat it as a candidate for a new user-facing option. Communicate the candidate and ask before implementation; do not silently add config surface as part of a behavior fix.");
 
-        File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
+        File.WriteAllText(path, sb.ToString(), Utf8NoBom);
+    }
+
+    private static void WriteAgentImprovement(ReviewBundle review, string path)
+    {
+        var uptime = UptimeScoring.Analyze(review.Xcai);
+        var runScore = BuildRunScore(review, uptime);
+        var categoryScores = review.Incidents
+            .GroupBy(incident => incident.Category, StringComparer.Ordinal)
+            .Select(group => new
+            {
+                Category = group.Key,
+                Count = group.Count(),
+                Score = group.Sum(incident => IncidentWeight(incident.Severity)),
+                HighestSeverity = HighestSeverity(group.Select(incident => incident.Severity))
+            })
+            .OrderByDescending(category => category.Score)
+            .ThenBy(category => category.Category, StringComparer.Ordinal)
+            .ToArray();
+        var improvementCandidates = review.Incidents
+            .GroupBy(incident => incident.SuggestedGoal, StringComparer.Ordinal)
+            .Select(group => new
+            {
+                Priority = CandidatePriority(group),
+                Goal = group.Key,
+                TotalScore = group.Sum(incident => IncidentWeight(incident.Severity)),
+                IncidentCount = group.Count(),
+                Categories = group.Select(incident => incident.Category).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+                FirstOccurrenceT = group.Min(incident => incident.T),
+                CodeAreas = group.SelectMany(incident => CodeAreasForIncident(incident.Category)).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+                TestFocus = group.SelectMany(incident => TestFocusForIncident(incident.Category)).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+                Evidence = group.OrderBy(incident => incident.T).Select(incident => new
+                {
+                    incident.Id,
+                    incident.Category,
+                    incident.T,
+                    incident.Severity,
+                    incident.Evidence,
+                    Slice = $"incidents/{Sanitize(incident.Id)}.json"
+                }).ToArray()
+            })
+            .OrderBy(candidate => CandidatePriorityRank(candidate.Priority))
+            .ThenByDescending(candidate => candidate.TotalScore)
+            .ThenBy(candidate => candidate.FirstOccurrenceT)
+            .ToArray();
+
+        var packet = new
+        {
+            Type = "agent.improvement",
+            SchemaVersion = 1,
+            GeneratedUtc = DateTime.UtcNow,
+            Review = new
+            {
+                XcaiLog = review.Xcai.Path,
+                BmrReplay = review.Bmr.Path,
+                review.Xcai.Header.LogScope,
+                review.Xcai.Header.RunStartUtc,
+                review.Xcai.Header.RunEndUtc,
+                review.Xcai.Header.CombatStartUtc,
+                review.Xcai.Header.DurationSeconds,
+                Job = review.Xcai.Header.PlayerClassJobId,
+                review.Xcai.Header.TerritoryType,
+                review.Xcai.Header.ContentFinderConditionId,
+                review.Xcai.Header.BossModActiveModule,
+                review.Xcai.Header.CombatStyle,
+                MatchConfidence = review.Match.Confidence,
+                MatchEvidence = review.Match.Evidence
+            },
+            Scores = new
+            {
+                IncidentCount = review.Incidents.Count,
+                HighIncidentCount = review.Incidents.Count(incident => incident.Severity.Equals("high", StringComparison.OrdinalIgnoreCase)),
+                MediumIncidentCount = review.Incidents.Count(incident => incident.Severity.Equals("medium", StringComparison.OrdinalIgnoreCase)),
+                LowIncidentCount = review.Incidents.Count(incident => incident.Severity.Equals("low", StringComparison.OrdinalIgnoreCase)),
+                CategoryScores = categoryScores,
+                RunScore = runScore,
+                Uptime = uptime.Metrics
+            },
+            Objectives = new
+            {
+                Primary = "Maximize BossMod-safe uptime by keeping RSR in useful target range.",
+                Rules = new[]
+                {
+                    "Melee/tank ranged fallback is useful partial uptime; melee range is better.",
+                    "Trash pack movement should improve AoE hit count while preserving ABC.",
+                    "Healer uptime includes both target access and visible party heal coverage.",
+                    "Normal profile BMR pressure is safety context; Greed profiles should stay useful until BMR requires movement."
+                }
+            },
+            PositiveSignals = uptime.PositiveSignals.OrderByDescending(signal => signal.Weight).ToArray(),
+            UptimeNegativeSignals = uptime.NegativeSignals.OrderByDescending(signal => signal.Weight).ToArray(),
+            NegativeSignals = review.Incidents.OrderBy(incident => incident.T).Select(incident => new
+            {
+                incident.Id,
+                incident.Category,
+                incident.T,
+                incident.Severity,
+                incident.Evidence,
+                incident.SuggestedGoal,
+                Slice = $"incidents/{Sanitize(incident.Id)}.json"
+            }).ToArray(),
+            ImprovementCandidates = improvementCandidates,
+            RouteSegments = BuildAgentRouteSegments(review),
+            UptimeSegments = uptime.Segments,
+            CodeAreas = review.Incidents.SelectMany(incident => CodeAreasForIncident(incident.Category)).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            TestFocus = review.Incidents.SelectMany(incident => TestFocusForIncident(incident.Category)).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            Artifacts = new
+            {
+                Normalized = "fight.normalized.jsonl",
+                Report = "fight.report.md",
+                Html = "fight.html",
+                Incidents = "incidents/*.json"
+            }
+        };
+
+        File.WriteAllText(path, JsonSerializer.Serialize(packet, PrettyJsonOptions) + Environment.NewLine, Utf8NoBom);
     }
 
     private static void WriteHtml(ReviewBundle review, string path)
@@ -729,7 +890,7 @@ resize();
 </html>
 """;
 
-        File.WriteAllText(path, html, Encoding.UTF8);
+        File.WriteAllText(path, html, Utf8NoBom);
     }
 
     private static bool IsHtmlMechanicEvent(BmrEvent evt)
@@ -753,4 +914,409 @@ resize();
         var chars = value.Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' ? c : '-').ToArray();
         return new string(chars).Trim('-');
     }
+
+    private static AgentRunScore BuildRunScore(ReviewBundle review, UptimeAnalysis uptime)
+    {
+        var frames = review.Xcai.Frames;
+        var durations = EstimateFrameDurations(frames);
+        var totalSeconds = Math.Max(review.Xcai.Header.DurationSeconds, durations.Sum());
+        var combatSeconds = SumSeconds(frames, durations, frame => frame.InCombat);
+        var activeMovementSeconds = SumSeconds(frames, durations, HasActiveDestination);
+        var manualSuppressedSeconds = SumSeconds(frames, durations, frame => frame.AutomatedMovementSuppressed);
+        var bmrPressureSeconds = SumSeconds(frames, durations, HasBmrPressure);
+        var generatedAverage = frames.Count == 0 ? 0f : (float)frames.Average(frame => frame.Planner.GeneratedCount);
+        var acceptedAverage = frames.Count == 0 ? 0f : (float)frames.Average(frame => frame.Planner.AcceptedCount);
+        var routeBudgetAverage = frames.Count == 0 ? 0f : (float)frames.Average(frame => frame.Planner.RouteMemory.QueryBudgetUsed);
+        var queryPendingRatio = frames.Count == 0 ? 0f : frames.Count(frame => frame.Planner.Vnavmesh.PathfindInProgress == true) / (float)frames.Count;
+        var frameRate = totalSeconds > 0 ? frames.Count / totalSeconds : 0f;
+        var destinationChangesPerMinute = totalSeconds > 0
+            ? CountDestinationChanges(frames, 1.25f) / (totalSeconds / 60f)
+            : 0f;
+
+        var safetyPenalty = review.Incidents.Where(incident => IsSafetyIncident(incident.Category)).Sum(incident => IncidentWeight(incident.Severity));
+        var efficiencyPenalty = review.Incidents.Where(incident => IsEfficiencyIncident(incident.Category)).Sum(incident => IncidentWeight(incident.Severity));
+        var humanPenalty = review.Incidents.Where(incident => IsHumanIncident(incident.Category)).Sum(incident => IncidentWeight(incident.Severity));
+        var manualCorrectionCount = review.Incidents.Count(incident => incident.Category.Equals("manual-correction", StringComparison.Ordinal));
+        var resourcePenalty = MathF.Max(0f, generatedAverage - 10f) * 2f +
+                              MathF.Max(0f, routeBudgetAverage - 1.5f) * 10f +
+                              queryPendingRatio * 20f +
+                              MathF.Max(0f, frameRate - 4.5f) * 5f;
+
+        var safety = ClampScore(100f - (safetyPenalty * 11f));
+        var uptimeScore = uptime.Metrics.UptimeScore;
+        var efficiency = ClampScore(100f - (efficiencyPenalty * 8f) - MathF.Max(0f, (activeMovementSeconds / MathF.Max(1f, combatSeconds)) - 0.45f) * 20f);
+        var humanLikeness = ClampScore(100f - (humanPenalty * 9f) - (manualCorrectionCount * 6f) - MathF.Max(0f, destinationChangesPerMinute - 8f) * 1.5f);
+        var resourceDiscipline = ClampScore(100f - resourcePenalty);
+        var overall = ClampScore((uptimeScore * 0.35f) + (safety * 0.25f) + (efficiency * 0.20f) + (humanLikeness * 0.15f) + (resourceDiscipline * 0.05f));
+
+        return new AgentRunScore(
+            overall,
+            uptimeScore,
+            safety,
+            efficiency,
+            humanLikeness,
+            resourceDiscipline,
+            "Higher is better. Uptime is the primary positive signal, with BMR safety authority preserved and candidate/query cost kept bounded.",
+            new AgentRunMetrics(
+                totalSeconds,
+                combatSeconds,
+                MathF.Max(0f, totalSeconds - combatSeconds),
+                activeMovementSeconds,
+                manualSuppressedSeconds,
+                bmrPressureSeconds,
+                frameRate,
+                generatedAverage,
+                acceptedAverage,
+                routeBudgetAverage,
+                queryPendingRatio,
+                destinationChangesPerMinute,
+                manualCorrectionCount),
+            BuildRunPenalties(safetyPenalty, efficiencyPenalty, humanPenalty, resourcePenalty, uptimeScore));
+    }
+
+    private static IReadOnlyList<AgentRunPenalty> BuildRunPenalties(int safetyPenalty, int efficiencyPenalty, int humanPenalty, float resourcePenalty, float uptimeScore)
+    {
+        return new[]
+            {
+                new AgentRunPenalty("uptime", 100f - uptimeScore, "Lost target range, melee comfort, pack hit value, or healer party coverage."),
+                new AgentRunPenalty("safety", safetyPenalty, "BMR conflicts, blocked routes, unsafe destinations, or stuck movement."),
+                new AgentRunPenalty("efficiency", efficiencyPenalty, "Range loss, late trash engagement, slow pack follow, or missed AoE value."),
+                new AgentRunPenalty("human-likeness", humanPenalty, "Destination churn, oscillation, jitter, edge hugging, or manual corrections."),
+                new AgentRunPenalty("resource", resourcePenalty, "High candidate count, vnavmesh query pressure, pending queries, or excessive frame rate.")
+            }
+            .Where(penalty => penalty.WeightedPenalty > 0)
+            .ToArray();
+    }
+
+    private static float[] EstimateFrameDurations(IReadOnlyList<XcaiFrame> frames)
+    {
+        if (frames.Count == 0)
+        {
+            return [];
+        }
+
+        var durations = new float[frames.Count];
+        for (var i = 0; i < frames.Count - 1; i++)
+        {
+            durations[i] = Math.Clamp(frames[i + 1].T - frames[i].T, 0f, 2f);
+        }
+
+        durations[^1] = frames.Count > 1 ? durations[^2] : 0f;
+        return durations;
+    }
+
+    private static float SumSeconds(IReadOnlyList<XcaiFrame> frames, IReadOnlyList<float> durations, Func<XcaiFrame, bool> predicate)
+    {
+        var total = 0f;
+        for (var i = 0; i < frames.Count; i++)
+        {
+            if (predicate(frames[i]))
+            {
+                total += durations[i];
+            }
+        }
+
+        return total;
+    }
+
+    private static int CountDestinationChanges(IReadOnlyList<XcaiFrame> frames, float threshold)
+    {
+        Vec3? previous = null;
+        var changes = 0;
+        foreach (var frame in frames)
+        {
+            var destination = frame.Planner.Destination;
+            if (destination == null)
+            {
+                continue;
+            }
+
+            if (previous != null && Vec3.Distance2D(destination, previous) >= threshold)
+            {
+                changes++;
+            }
+
+            previous = destination;
+        }
+
+        return changes;
+    }
+
+    private static bool HasActiveDestination(XcaiFrame frame)
+    {
+        return frame.Planner.Destination != null && frame.Planner.ChosenSource != "<none>";
+    }
+
+    private static bool HasBmrPressure(XcaiFrame frame)
+    {
+        return frame.Planner.BmrForcedMovement != null ||
+               frame.Planner.BmrForbiddenZones > 0 ||
+               frame.Planner.BmrMoveRequested ||
+               frame.Planner.BmrMoveImminent ||
+               frame.BossMod.ForbiddenZones.GetValueOrDefault() > 0 ||
+               IsSpecialBmrMode(frame.BossMod.ImminentSpecialMode);
+    }
+
+    private static bool IsSpecialBmrMode(string mode)
+    {
+        return !string.IsNullOrWhiteSpace(mode) &&
+               mode != "<none>" &&
+               !mode.StartsWith("(Normal,", StringComparison.Ordinal);
+    }
+
+    private static bool IsSafetyIncident(string category)
+    {
+        return category.Contains("safety", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("bmr", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("blocked", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("unsafe", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("offmesh", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEfficiencyIncident(string category)
+    {
+        return category.Contains("range", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("late", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("slow", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("aoe", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("pack", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("tank", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("route-memory", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsHumanIncident(string category)
+    {
+        return category.Contains("churn", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("oscillation", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("jitter", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("edge", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("manual", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("stuck", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("overcommit", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static float ClampScore(float value)
+    {
+        return Math.Clamp(value, 0f, 100f);
+    }
+
+    private static IReadOnlyList<AgentRouteSegment> BuildAgentRouteSegments(ReviewBundle review)
+    {
+        var frames = review.Xcai.Frames;
+        if (frames.Count == 0)
+        {
+            return [];
+        }
+
+        var segments = new List<AgentRouteSegment>();
+        var start = 0;
+        var source = SegmentSource(frames[0]);
+        for (var i = 1; i < frames.Count; i++)
+        {
+            var nextSource = SegmentSource(frames[i]);
+            if (nextSource.Equals(source, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            AddAgentRouteSegment(review, segments, start, i - 1, source);
+            start = i;
+            source = nextSource;
+        }
+
+        AddAgentRouteSegment(review, segments, start, frames.Count - 1, source);
+        return segments
+            .Where(segment => segment.DurationSeconds >= 1f || segment.IncidentCount > 0)
+            .OrderBy(segment => segment.StartT)
+            .Take(40)
+            .ToArray();
+    }
+
+    private static void AddAgentRouteSegment(
+        ReviewBundle review,
+        ICollection<AgentRouteSegment> segments,
+        int start,
+        int end,
+        string source)
+    {
+        var frames = review.Xcai.Frames;
+        var startT = frames[start].T;
+        var endT = frames[end].T;
+        var incidents = review.Incidents
+            .Where(incident => incident.T >= startT && incident.T <= endT)
+            .ToArray();
+        var switchReasons = frames
+            .Skip(start)
+            .Take(end - start + 1)
+            .Select(frame => frame.Planner.SwitchReason)
+            .Where(reason => !string.IsNullOrWhiteSpace(reason) && !reason.Equals("<none>", StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(reason => reason, StringComparer.Ordinal)
+            .Take(6)
+            .ToArray();
+        var rejectionReasons = frames
+            .Skip(start)
+            .Take(end - start + 1)
+            .SelectMany(frame => frame.Planner.RejectedByReason)
+            .GroupBy(entry => entry.Key, StringComparer.Ordinal)
+            .OrderByDescending(group => group.Sum(entry => entry.Value))
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .Take(6)
+            .Select(group => $"{group.Key}:{group.Sum(entry => entry.Value)}")
+            .ToArray();
+
+        segments.Add(new AgentRouteSegment(
+            startT,
+            endT,
+            MathF.Max(0f, endT - startT),
+            source,
+            end - start + 1,
+            incidents.Length,
+            incidents.Select(incident => incident.Category).Distinct(StringComparer.Ordinal).OrderBy(category => category, StringComparer.Ordinal).ToArray(),
+            switchReasons,
+            rejectionReasons));
+    }
+
+    private static string SegmentSource(XcaiFrame frame)
+    {
+        return string.IsNullOrWhiteSpace(frame.Planner.ChosenSource)
+            ? "<none>"
+            : frame.Planner.ChosenSource;
+    }
+
+    private static string CandidatePriority(IGrouping<string, Incident> incidents)
+    {
+        var score = incidents.Sum(incident => IncidentWeight(incident.Severity));
+        return incidents.Any(incident => incident.Severity.Equals("high", StringComparison.OrdinalIgnoreCase)) || score >= 6
+            ? "high"
+            : incidents.Any(incident => incident.Severity.Equals("medium", StringComparison.OrdinalIgnoreCase)) || score >= 3 ? "medium" : "low";
+    }
+
+    private static int CandidatePriorityRank(string priority)
+    {
+        return priority.Equals("high", StringComparison.OrdinalIgnoreCase)
+            ? 0
+            : priority.Equals("medium", StringComparison.OrdinalIgnoreCase) ? 1 : 2;
+    }
+
+    private static int IncidentWeight(string severity)
+    {
+        return severity.Equals("high", StringComparison.OrdinalIgnoreCase)
+            ? 3
+            : severity.Equals("medium", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+    }
+
+    private static string HighestSeverity(IEnumerable<string> severities)
+    {
+        var max = severities.Select(IncidentWeight).DefaultIfEmpty(0).Max();
+        return max >= 3 ? "high" : max >= 2 ? "medium" : "low";
+    }
+
+    private static IEnumerable<string> CodeAreasForIncident(string category)
+    {
+        if (category.Contains("safety", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("bmr", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "XelsCombatAI/Combat/MovementIntentPlanner.cs";
+            yield return "XelsCombatAI/Integrations/BossModReflectionSafety.cs";
+        }
+
+        if (category.Contains("vnavmesh", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("stuck", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("churn", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("jitter", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("range", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("manual", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "XelsCombatAI/Combat/MovementIntentPlanner.cs";
+        }
+
+        if (category.Contains("trash", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("tank", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("pack", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("route-memory", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "XelsCombatAI/Combat/TrashPullStateTracker.cs";
+            yield return "XelsCombatAI/Combat/MovementIntentPlanner.cs";
+        }
+
+        if (category.Contains("aoe", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "XelsCombatAI/Combat/HealerAoePositioningController.cs";
+            yield return "XelsCombatAI/Game/JobRangeProvider.cs";
+        }
+
+        yield return "tools/FightReview/IncidentDetector.cs";
+    }
+
+    private static IEnumerable<string> TestFocusForIncident(string category)
+    {
+        yield return "tools/FightReview.Tests detector fixture for this incident category";
+
+        if (category.Contains("churn", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("jitter", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Movement intent retention and destination hysteresis";
+        }
+
+        if (category.Contains("safety", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("bmr", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "BossMod safety raster destination and route validation";
+        }
+
+        if (category.Contains("trash", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("pack", StringComparison.OrdinalIgnoreCase) ||
+            category.Contains("tank", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Trash pull tracker and pack engagement policy";
+        }
+
+        if (category.Contains("manual", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Manual suppression lookback slice review";
+        }
+    }
+
+    private sealed record AgentRouteSegment(
+        float StartT,
+        float EndT,
+        float DurationSeconds,
+        string Source,
+        int FrameCount,
+        int IncidentCount,
+        IReadOnlyList<string> IncidentCategories,
+        IReadOnlyList<string> SwitchReasons,
+        IReadOnlyList<string> RejectionReasons);
+
+    private sealed record AgentRunScore(
+        float Overall,
+        float Uptime,
+        float Safety,
+        float Efficiency,
+        float HumanLikeness,
+        float ResourceDiscipline,
+        string Interpretation,
+        AgentRunMetrics Metrics,
+        IReadOnlyList<AgentRunPenalty> Penalties);
+
+    private sealed record AgentRunMetrics(
+        float TotalSeconds,
+        float CombatSeconds,
+        float DowntimeSeconds,
+        float ActiveMovementSeconds,
+        float ManualSuppressedSeconds,
+        float BmrPressureSeconds,
+        float LoggedFramesPerSecond,
+        float AverageGeneratedCandidates,
+        float AverageAcceptedCandidates,
+        float AverageRouteQueryBudgetUsed,
+        float VnavmeshQueryPendingRatio,
+        float DestinationChangesPerMinute,
+        int ManualCorrectionCount);
+
+    private sealed record AgentRunPenalty(
+        string Name,
+        float WeightedPenalty,
+        string Meaning);
 }

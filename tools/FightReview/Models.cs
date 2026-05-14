@@ -25,7 +25,10 @@ internal sealed record Vec3(float X, float Y, float Z)
 internal sealed record XcaiLog(string Path, XcaiHeader Header, IReadOnlyList<XcaiFrame> Frames);
 
 internal sealed record XcaiHeader(
+    string LogScope,
     string PluginVersion,
+    DateTime RunStartUtc,
+    DateTime RunEndUtc,
     DateTime CombatStartUtc,
     DateTime CombatEndUtc,
     float DurationSeconds,

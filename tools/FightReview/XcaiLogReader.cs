@@ -59,7 +59,10 @@ internal static class XcaiLogReader
         }
 
         return new XcaiHeader(
+            ReadString(root, "LogScope", "combat"),
             ReadString(root, "PluginVersion", "unknown"),
+            ReadDateTime(root, "RunStartUtc", ReadDateTime(root, "CombatStartUtc")),
+            ReadDateTime(root, "RunEndUtc", ReadDateTime(root, "CombatEndUtc")),
             ReadDateTime(root, "CombatStartUtc"),
             ReadDateTime(root, "CombatEndUtc"),
             ReadFloat(root, "DurationSeconds"),
@@ -509,6 +512,13 @@ internal static class XcaiLogReader
         return element.TryGetProperty(name, out var value) && value.TryGetDateTime(out var result)
             ? result
             : throw new InvalidDataException($"Missing or invalid DateTime property '{name}'.");
+    }
+
+    private static DateTime ReadDateTime(JsonElement element, string name, DateTime fallback)
+    {
+        return element.TryGetProperty(name, out var value) && value.TryGetDateTime(out var result)
+            ? result
+            : fallback;
     }
 
     private static int ReadInt(JsonElement element, string name)

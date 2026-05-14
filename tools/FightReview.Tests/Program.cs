@@ -12,6 +12,9 @@ BossMod.Service.LogHandlerDebug = message => Console.Error.WriteLine("BMR: " + m
 var tests = new (string Name, Action Body)[]
 {
     ("schema v3 parsing", SchemaV3Parsing),
+    ("artifact writer emits agent improvement packet", ArtifactWriterEmitsAgentImprovementPacket),
+    ("uptime scoring weights melee fallback below melee range", UptimeScoringWeightsMeleeFallbackBelowMeleeRange),
+    ("uptime scoring rewards greed pressure uptime", UptimeScoringRewardsGreedPressureUptime),
     ("trash pull diagnostics parsing", TrashPullDiagnosticsParsing),
     ("2D BMR pathfind center parsing", PathfindCenter2dParsing),
     ("BOM-prefixed JSONL", BomPrefixedJsonl),
@@ -32,6 +35,7 @@ var tests = new (string Name, Action Body)[]
     ("movement stuck detector", MovementStuckDetector),
     ("vnavmesh detour detector", VnavmeshDetourDetector),
     ("vnavmesh offmesh destination detector", VnavmeshOffmeshDestinationDetector),
+    ("vnavmesh offmesh ignored without active destination", VnavmeshOffmeshIgnoredWithoutActiveDestination),
     ("vnavmesh query stall detector", VnavmeshQueryStallDetector),
     ("vnavmesh reachable stuck detector", VnavmeshReachableStuckDetector),
     ("safety raster parsing", SafetyRasterParsing),
@@ -39,6 +43,7 @@ var tests = new (string Name, Action Body)[]
     ("safety blocked destination detector", SafetyBlockedDestinationDetector),
     ("safety blocked route detector", SafetyBlockedRouteDetector),
     ("safety boundary stuck detector", SafetyBoundaryStuckDetector),
+    ("BMR exit wall risk detector", BmrExitWallRiskDetector),
     ("Greed future danger safety linger is not blocked", GreedFutureDangerSafetyLingerIsNotBlocked),
     ("HTML includes safety raster controls", HtmlIncludesSafetyRasterControls),
     ("slow pack follow detector", SlowPackFollowDetector),
@@ -104,6 +109,7 @@ static void SchemaV3Parsing()
 {
     var log = XcaiLogReader.Read(FixturePath("schema-v3-minimal.jsonl"));
     AssertEqual(3f, log.Header.DurationSeconds, "duration");
+    AssertEqual("combat", log.Header.LogScope, "default log scope");
     AssertEqual(2, log.Frames.Count, "frame count");
     AssertEqual((uint)1234, log.Header.TerritoryType, "territory");
     AssertEqual("Standard", log.Header.CombatStyle, "default combat style");
@@ -120,6 +126,80 @@ static void BomPrefixedJsonl()
 
     var log = XcaiLogReader.Read(path);
     AssertEqual(2, log.Frames.Count, "BOM frame count");
+}
+
+static void ArtifactWriterEmitsAgentImprovementPacket()
+{
+    using var temp = TempDirectory.Create();
+    var log = XcaiLogReader.Read(FixturePath("schema-v3-minimal.jsonl"));
+    var bmr = new BmrSummary(
+        "minimal-bmr.log",
+        log.Header.CombatStartUtc,
+        log.Header.CombatEndUtc,
+        0,
+        0,
+        [],
+        [],
+        []);
+    var incident = new Incident(
+        "destination-churn-1-00",
+        "destination-churn",
+        log.Header.CombatStartUtc.AddSeconds(1),
+        1f,
+        "medium",
+        "Planner destination changed repeatedly.",
+        "Increase hold time or destination stickiness so non-defensive movement does not disrupt ABC uptime.",
+        0,
+        1);
+    var review = new ReviewBundle(
+        log,
+        bmr,
+        new MatchResult(bmr.Path, 0.9d, ["fixture match"]),
+        [incident]);
+
+    ArtifactWriter.Write(review, temp.Path);
+
+    var path = Path.Combine(temp.Path, "agent.improvement.json");
+    AssertTrue(File.Exists(path), "agent improvement packet exists");
+    using var document = JsonDocument.Parse(File.ReadAllText(path));
+    var root = document.RootElement;
+    AssertEqual("agent.improvement", root.GetProperty("Type").GetString()!, "packet type");
+    AssertEqual(1, root.GetProperty("SchemaVersion").GetInt32(), "packet schema");
+    AssertEqual(1, root.GetProperty("Scores").GetProperty("IncidentCount").GetInt32(), "incident count");
+    AssertTrue(root.GetProperty("Scores").GetProperty("RunScore").GetProperty("Overall").GetSingle() > 0, "run score emitted");
+    AssertTrue(root.GetProperty("Scores").GetProperty("RunScore").GetProperty("Uptime").GetSingle() > 0, "uptime score emitted");
+    AssertTrue(root.GetProperty("PositiveSignals").GetArrayLength() > 0, "positive uptime signals");
+    AssertTrue(root.GetProperty("Scores").GetProperty("Uptime").GetProperty("TargetWeightedUptimePercent").GetSingle() > 0, "uptime metrics emitted");
+    AssertEqual("destination-churn", root.GetProperty("NegativeSignals")[0].GetProperty("Category").GetString()!, "negative signal category");
+    AssertEqual("medium", root.GetProperty("ImprovementCandidates")[0].GetProperty("Priority").GetString()!, "candidate priority");
+    AssertTrue(root.GetProperty("RouteSegments").GetArrayLength() > 0, "route segment summaries");
+}
+
+static void UptimeScoringWeightsMeleeFallbackBelowMeleeRange()
+{
+    var log = Log(
+        Frame(0, playerClassJobId: 34, targetSurfaceDistance: 2, engagementRange: 3),
+        Frame(1, playerClassJobId: 34, targetSurfaceDistance: 10, engagementRange: 3),
+        Frame(2, playerClassJobId: 34, targetSurfaceDistance: 20, engagementRange: 3));
+
+    var analysis = UptimeScoring.Analyze(log);
+    AssertEqual("melee-dps", analysis.Job.Role, "melee profile");
+    AssertTrue(analysis.Metrics.FallbackUptimeSeconds > 0, "fallback uptime counted");
+    AssertTrue(analysis.Metrics.TargetWeightedUptimePercent is > 0 and < 100, "fallback weighted below full uptime");
+    AssertTrue(analysis.NegativeSignals.Any(signal => signal.Category == "melee-comfort-loss"), "melee comfort loss signal");
+}
+
+static void UptimeScoringRewardsGreedPressureUptime()
+{
+    var log = LogWithCombatStyle(
+        "Greed",
+        Frame(0, playerClassJobId: 34, targetSurfaceDistance: 2, engagementRange: 3, bmrForbiddenZones: 1),
+        Frame(1, playerClassJobId: 34, targetSurfaceDistance: 2, engagementRange: 3, bmrForbiddenZones: 1),
+        Frame(2, playerClassJobId: 34, targetSurfaceDistance: 2, engagementRange: 3, bmrForbiddenZones: 1));
+
+    var analysis = UptimeScoring.Analyze(log);
+    AssertTrue(analysis.PositiveSignals.Any(signal => signal.Category == "greed-pressure-uptime"), "greed pressure uptime signal");
+    AssertEqual(100f, analysis.Metrics.TargetWeightedUptimePercent, "greed pressure target uptime");
 }
 
 static void PathfindCenter2dParsing()
@@ -436,6 +516,18 @@ static void VnavmeshOffmeshDestinationDetector()
     AssertHasIncident(IncidentDetector.Detect(Log(frame)), "vnavmesh-offmesh-destination");
 }
 
+static void VnavmeshOffmeshIgnoredWithoutActiveDestination()
+{
+    var frame = Frame(
+        0,
+        destination: null,
+        chosenSource: "<none>",
+        generatedCount: 1,
+        vnavmeshDestination: new VnavmeshPointSnapshot("Ready", null, null, null, 2.2f, null, null));
+
+    AssertNoIncident(IncidentDetector.Detect(Log(frame)), "vnavmesh-offmesh-destination");
+}
+
 static void VnavmeshQueryStallDetector()
 {
     var frames = new[]
@@ -524,6 +616,20 @@ static void SafetyBoundaryStuckDetector()
     };
 
     AssertHasIncident(IncidentDetector.Detect(Log(frames)), "safety-boundary-stuck");
+}
+
+static void BmrExitWallRiskDetector()
+{
+    var frame = Frame(
+        0,
+        chosenSource: "<none>",
+        destination: null,
+        activeModule: "Boss",
+        bmrMoveRequested: true,
+        safetyRaster: Raster(destination: "blocked"));
+
+    AssertHasIncident(IncidentDetector.Detect(Log(frame)), "bmr-exit-wall-risk");
+    AssertNoIncident(IncidentDetector.Detect(Log(frame)), "safety-blocked-destination");
 }
 
 static void GreedFutureDangerSafetyLingerIsNotBlocked()
@@ -1095,12 +1201,15 @@ static XcaiLog LogWithCombatStyle(string combatStyle, params XcaiFrame[] frames)
     return new XcaiLog(
         "incident-fixture.jsonl",
         new XcaiHeader(
+            "combat",
             "tests",
+            new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 1, 1, 0, 0, 10, DateTimeKind.Utc),
             new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
             new DateTime(2026, 1, 1, 0, 0, 10, DateTimeKind.Utc),
             10,
             frames.Length,
-            38,
+            first?.PlayerClassJobId ?? 38,
             1234,
             first?.ContentFinderConditionId ?? 0,
             "<none>",
@@ -1174,7 +1283,8 @@ static XcaiFrame Frame(
     VnavmeshPointSnapshot? vnavmeshDestination = null,
     SafetyRasterSnapshot? safetyRaster = null,
     RouteMemorySnapshot? routeMemory = null,
-    IReadOnlyList<ActorSnapshot>? actors = null)
+    IReadOnlyList<ActorSnapshot>? actors = null,
+    uint playerClassJobId = 38)
 {
     targetPosition ??= new Vec3(10, 0, 0);
     playerPosition ??= new Vec3(0, 0, 0);
@@ -1188,7 +1298,7 @@ static XcaiFrame Frame(
         t,
         true,
         false,
-        38,
+        playerClassJobId,
         1234,
         contentFinderConditionId,
         playerPosition,

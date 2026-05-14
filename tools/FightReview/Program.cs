@@ -130,6 +130,7 @@ Outputs:
   fight.report.md
   fight.html
   incidents/*.json
+  agent.improvement.json
 """);
         }
 

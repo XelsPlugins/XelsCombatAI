@@ -13,6 +13,7 @@ internal static class IncidentDetector
         DetectIndecisiveOscillation(log, incidents);
         DetectStuckMovement(log, incidents);
         DetectSafetyRasterIssues(log, incidents);
+        DetectBmrExitWallRisks(log, incidents);
         DetectVnavmeshPathingIssues(log, incidents);
         DetectSlowPackFollow(log, incidents);
         DetectMovementJitter(log, incidents);
@@ -215,6 +216,79 @@ internal static class IncidentDetector
         DetectSafetyBlockedDestinations(log, incidents);
         DetectSafetyBlockedRoutes(log, incidents);
         DetectSafetyBoundaryStuck(log, incidents);
+    }
+
+    private static void DetectBmrExitWallRisks(XcaiLog log, List<Incident> incidents)
+    {
+        var nextAllowed = 0f;
+        for (var i = 0; i < log.Frames.Count; i++)
+        {
+            var frame = log.Frames[i];
+            if (frame.T < nextAllowed ||
+                IsManualSuppressed(frame) ||
+                !HasBmrSafetyPressure(frame) ||
+                !TryDescribeBmrExitWallRisk(frame, out var evidence))
+            {
+                continue;
+            }
+
+            incidents.Add(NewIncident(
+                "bmr-exit-wall-risk",
+                frame,
+                "high",
+                $"BMR safety movement appears to aim the shortest mechanic exit into blocked or boundary geometry. {evidence}{BuildSafetyEvidence(frame)}",
+                "Use BMR raster/bounds evidence to identify shortest-exit wall bumps and prefer a nearby safe inward recovery point once BossMod movement authority allows it.",
+                Math.Max(0, i - 4),
+                Math.Min(log.Frames.Count - 1, i + 8)));
+            nextAllowed = frame.T + 6f;
+        }
+    }
+
+    private static bool TryDescribeBmrExitWallRisk(XcaiFrame frame, out string evidence)
+    {
+        evidence = string.Empty;
+        var raster = frame.BossMod.SafetyRaster;
+        if (!raster.Status.Equals("captured", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (SafetyRasterCodec.IsHardBlocked(raster.Destination.State))
+        {
+            evidence = $"BMR destination was {raster.Destination.State}.";
+            return true;
+        }
+
+        if (SafetyRasterCodec.IsHardBlocked(raster.FirstWaypoint.State))
+        {
+            evidence = $"BMR first waypoint was {raster.FirstWaypoint.State}.";
+            return true;
+        }
+
+        if (raster.Destination.Position != null &&
+            TryFindBlockedSafetyRoute(frame, raster.Destination.Position, out var state, out var blockedDistance))
+        {
+            evidence = $"Route from player to BMR destination crossed a raster {state} cell about {blockedDistance:0.0}y from the player.";
+            return true;
+        }
+
+        if (raster.FirstWaypoint.Position != null &&
+            TryFindBlockedSafetyRoute(frame, raster.FirstWaypoint.Position, out state, out blockedDistance))
+        {
+            evidence = $"Route from player to BMR first waypoint crossed a raster {state} cell about {blockedDistance:0.0}y from the player.";
+            return true;
+        }
+
+        var endpoint = raster.FirstWaypoint.Position ?? raster.Destination.Position;
+        if (endpoint != null &&
+            LooksNearArenaEdge(frame, endpoint) &&
+            (IsNearZeroMomentum(frame) || IsBmrMovementOverrideBlocked(frame)))
+        {
+            evidence = "BMR movement endpoint was near the pathfinding boundary while movement showed blocked or near-zero progress.";
+            return true;
+        }
+
+        return false;
     }
 
     private static void DetectSafetyBlockedDestinations(XcaiLog log, List<Incident> incidents)
@@ -1527,6 +1601,11 @@ internal static class IncidentDetector
     private static bool HasVnavmeshOffmeshDestination(XcaiFrame frame, out float? distance)
     {
         distance = null;
+        if (!HasActiveDestination(frame))
+        {
+            return false;
+        }
+
         var probe = frame.Planner.VnavmeshDestination;
         if (probe == null)
         {
@@ -1554,13 +1633,18 @@ internal static class IncidentDetector
 
     private static bool TryFindBlockedSafetyRoute(XcaiFrame frame, out string state, out float blockedDistance)
     {
+        return TryFindBlockedSafetyRoute(frame, frame.Planner.Destination, out state, out blockedDistance);
+    }
+
+    private static bool TryFindBlockedSafetyRoute(XcaiFrame frame, Vec3? destination, out string state, out float blockedDistance)
+    {
         state = string.Empty;
         blockedDistance = 0f;
         var raster = frame.BossMod.SafetyRaster;
         if (!raster.Status.Equals("captured", StringComparison.Ordinal) ||
             raster.Center == null ||
             frame.PlayerPosition == null ||
-            frame.Planner.Destination == null ||
+            destination == null ||
             raster.SourceResolution <= 0f ||
             raster.SourceWidth <= 0 ||
             raster.SourceHeight <= 0 ||
@@ -1571,13 +1655,13 @@ internal static class IncidentDetector
         }
 
         var cells = SafetyRasterCodec.Decode(raster.CellsRle, raster.Width * raster.Height);
-        var distance = Vec3.Distance2D(frame.PlayerPosition, frame.Planner.Destination);
+        var distance = Vec3.Distance2D(frame.PlayerPosition, destination);
         var step = MathF.Max(0.25f, raster.SourceResolution * Math.Max(1, raster.CellScale) * 0.5f);
         var steps = Math.Clamp((int)MathF.Ceiling(distance / step), 1, 256);
         for (var i = 1; i <= steps; i++)
         {
             var t = i / (float)steps;
-            var point = Lerp(frame.PlayerPosition, frame.Planner.Destination, t);
+            var point = Lerp(frame.PlayerPosition, destination, t);
             if (!TryWorldToSafetyRasterCell(point, raster, out var cellX, out var cellY))
             {
                 continue;
@@ -1593,6 +1677,11 @@ internal static class IncidentDetector
         }
 
         return false;
+    }
+
+    private static bool IsBmrMovementOverrideBlocked(XcaiFrame frame)
+    {
+        return frame.BossMod.MovementOverride.Contains("Blocked=True", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildSafetyEvidence(XcaiFrame frame)

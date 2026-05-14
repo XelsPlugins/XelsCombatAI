@@ -34,12 +34,24 @@ internal static partial class BmrReplayReader
             return;
         }
 
-        Service.LogHandlerDebug ??= message => Console.Error.WriteLine(message);
-        Service.LogHandlerVerbose ??= message => Console.Error.WriteLine(message);
+        var verboseBossModLogs = IsVerboseBossModLoggingEnabled();
+        Service.LogHandlerDebug ??= verboseBossModLogs
+            ? message => Console.Error.WriteLine(message)
+            : _ => { };
+        Service.LogHandlerVerbose ??= verboseBossModLogs
+            ? message => Console.Error.WriteLine(message)
+            : _ => { };
         RegisterAssemblyResolver();
         Service.LuminaGameData ??= new Lumina.GameData(FindGameDataPath());
         Service.Config.Initialize();
         initializedBossMod = true;
+    }
+
+    private static bool IsVerboseBossModLoggingEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable("FIGHT_REVIEW_BMR_VERBOSE");
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void RegisterAssemblyResolver()
@@ -405,6 +417,7 @@ internal static partial class BmrReplayReader
     {
         var evidence = new List<string>();
         var score = 0d;
+        score += ScoreReplayWindowMatch(xcai, bmr.Summary, evidence);
 
         var encounterMatch = ScoreBestEncounterMatch(xcai, bmr.Summary);
         if (encounterMatch != null)
@@ -463,6 +476,47 @@ internal static partial class BmrReplayReader
         }
 
         return new MatchResult(bmr.Path, Math.Min(1d, score), evidence);
+    }
+
+    private static double ScoreReplayWindowMatch(XcaiLog xcai, BmrSummary summary, List<string> evidence)
+    {
+        if (summary.Start == null || summary.End == null)
+        {
+            return 0d;
+        }
+
+        var runStart = ToBmrClock(xcai.Header.RunStartUtc);
+        var runEnd = ToBmrClock(xcai.Header.RunEndUtc);
+        var replayStart = summary.Start.Value;
+        var replayEnd = summary.End.Value;
+        var distanceSeconds = WindowDistanceSeconds(runStart, runEnd, replayStart, replayEnd);
+        if (distanceSeconds <= 0d)
+        {
+            evidence.Add($"XCAI {xcai.Header.LogScope} window overlaps BMR replay window");
+            return 0.2d + ScoreDurationSimilarity(runStart, runEnd, replayStart, replayEnd, evidence);
+        }
+
+        if (distanceSeconds <= 120d)
+        {
+            evidence.Add($"XCAI {xcai.Header.LogScope} window is {distanceSeconds:0}s from BMR replay window");
+            return 0.1d;
+        }
+
+        return 0d;
+    }
+
+    private static double ScoreDurationSimilarity(DateTime runStart, DateTime runEnd, DateTime replayStart, DateTime replayEnd, List<string> evidence)
+    {
+        var runDuration = Math.Max(1d, (runEnd - runStart).TotalSeconds);
+        var replayDuration = Math.Max(1d, (replayEnd - replayStart).TotalSeconds);
+        var ratio = Math.Min(runDuration, replayDuration) / Math.Max(runDuration, replayDuration);
+        if (ratio < 0.65d)
+        {
+            return 0d;
+        }
+
+        evidence.Add($"run/replay duration similarity {ratio:0.00}");
+        return ratio >= 0.85d ? 0.1d : 0.05d;
     }
 
     private static double ScoreReplayStartTime(XcaiLog xcai, DateTime estimatedStartUtc, List<string> evidence)
