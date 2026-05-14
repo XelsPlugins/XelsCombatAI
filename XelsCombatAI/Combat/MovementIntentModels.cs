@@ -142,7 +142,11 @@ internal sealed record MovementPlannerDiagnostics(
     VNavmeshPointDiagnostics? VnavmeshDestination,
     MovementLineOfSightDiagnostics LineOfSight,
     Vector3? BmrForcedMovement,
+    int BmrGoalZones,
     int BmrForbiddenZones,
+    int BmrTemporaryObstacles,
+    int BmrTeleporters,
+    bool BmrDynamicGeometry,
     bool BmrMoveRequested,
     bool BmrMoveImminent,
     TrashRouteMemoryDiagnostics RouteMemory)
@@ -176,6 +180,10 @@ internal sealed record MovementPlannerDiagnostics(
         MovementLineOfSightDiagnostics.NotChecked("not evaluated"),
         null,
         0,
+        0,
+        0,
+        0,
+        false,
         false,
         false,
         TrashRouteMemoryDiagnostics.Empty);
@@ -198,8 +206,17 @@ internal sealed class MovementPlannerContext
     public required bool BossModEncounterActive { get; init; }
     public required int BmrGoalZones { get; init; }
     public required int BmrForbiddenZones { get; init; }
+    public required int BmrTemporaryObstacles { get; init; }
+    public required int BmrTeleporters { get; init; }
     public required Vector3? BmrForcedMovement { get; init; }
     public required Vector3? PathfindMapCenter { get; init; }
     public required MovementLineOfSightDiagnostics LineOfSight { get; init; }
     public required Func<Vector3, bool> IsInsidePathfindMap { get; init; }
+
+    public bool HasBmrDynamicGeometryPressure =>
+        this.BossModEncounterActive &&
+        (this.BmrGoalZones > 0 ||
+         this.BmrForbiddenZones > 0 ||
+         this.BmrTemporaryObstacles > 0 ||
+         this.BmrTeleporters > 0);
 }

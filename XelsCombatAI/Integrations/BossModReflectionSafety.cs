@@ -341,9 +341,98 @@ internal sealed class BossModReflectionSafety
         }
     }
 
+    public bool TryCheckNavigationHardBlockLine(Vector3 from, Vector3 to, out BossModNavigationLineCheck check)
+    {
+        check = BossModNavigationLineCheck.Unavailable(this.status);
+
+        if (!this.EnsureResolved())
+        {
+            check = BossModNavigationLineCheck.Unavailable(this.status);
+            return false;
+        }
+
+        try
+        {
+            var map = this.ResolveNormalMovementMap();
+            if (map == null)
+            {
+                check = BossModNavigationLineCheck.Unavailable("BMR navigation map unavailable");
+                return false;
+            }
+
+            const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var width = ReadInt(ReadField(map, "Width", Flags)).GetValueOrDefault();
+            var height = ReadInt(ReadField(map, "Height", Flags)).GetValueOrDefault();
+            var resolution = ReadFloat(ReadField(map, "Resolution", Flags)).GetValueOrDefault();
+            var pixelMaxG = ReadField(map, "PixelMaxG", Flags) as float[];
+            var center = this.ReadWPos(ReadField(map, "Center", Flags));
+            var rotation = ReadAngleRadians(ReadField(map, "Rotation", Flags)).GetValueOrDefault();
+            if (width <= 0 || height <= 0 || resolution <= 0f || pixelMaxG == null || center == null)
+            {
+                check = BossModNavigationLineCheck.Unavailable("BMR navigation map incomplete");
+                return false;
+            }
+
+            if (pixelMaxG.Length < width * height)
+            {
+                check = BossModNavigationLineCheck.Unavailable("BMR navigation map arrays incomplete");
+                return false;
+            }
+
+            var center3 = new Vector3(center.Value.X, from.Y, center.Value.Y);
+            var distance = Distance2D(from, to);
+            var steps = Math.Clamp((int)MathF.Ceiling(distance / MathF.Max(0.25f, resolution * 0.5f)), 1, MaxLineCheckSamples);
+            for (var i = 1; i <= steps; i++)
+            {
+                var t = i / (float)steps;
+                var point = Vector3.Lerp(from, to, t);
+                var grid = WorldToGrid(point, center3, rotation, resolution, width, height);
+                if (!IsGridInside(grid, width, height))
+                {
+                    check = BossModNavigationLineCheck.Blocked("outside BMR pathfinding map", point, distance * t);
+                    return true;
+                }
+
+                var maxG = pixelMaxG[(grid.Y * width) + grid.X];
+                if (IsNavigationHardBlock(maxG, out var reason))
+                {
+                    check = BossModNavigationLineCheck.Blocked(reason, point, distance * t);
+                    return true;
+                }
+            }
+
+            check = BossModNavigationLineCheck.ClearResult("BMR hard-block path clear");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.log.Verbose(ex, "Could not query reflected BossMod navigation hard-block line safety.");
+            check = BossModNavigationLineCheck.Unavailable("BMR navigation hard-block line query failed");
+            return false;
+        }
+    }
+
     private static bool IsGridInside((int X, int Y) grid, int width, int height)
     {
         return grid.X >= 0 && grid.X < width && grid.Y >= 0 && grid.Y < height;
+    }
+
+    private static bool IsNavigationHardBlock(float pixelMaxG, out string reason)
+    {
+        if (float.IsNaN(pixelMaxG))
+        {
+            reason = "BMR hard navigation cell unknown";
+            return true;
+        }
+
+        if (pixelMaxG < 0f)
+        {
+            reason = "BMR hard navigation blocker";
+            return true;
+        }
+
+        reason = "BMR hard navigation cell passable";
+        return false;
     }
 
     private static bool IsActiveDanger(float pixelMaxG)

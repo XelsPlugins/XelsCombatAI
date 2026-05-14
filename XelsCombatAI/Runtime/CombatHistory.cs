@@ -217,6 +217,7 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "PlannerPath", frame.MovementPlanner.PathStatus, prev?.MovementPlanner.PathStatus);
             AppendIfChanged(sb, "PlannerScore", frame.MovementPlanner.ScoreBreakdown, prev?.MovementPlanner.ScoreBreakdown);
             AppendIfChanged(sb, "PlannerRejects", FormatPlannerRejects(frame.MovementPlanner.RejectedByReason), prev == null ? null : FormatPlannerRejects(prev.MovementPlanner.RejectedByReason));
+            AppendIfChanged(sb, "BMRGeometry", FormatBmrGeometry(frame.MovementPlanner), prev == null ? null : FormatBmrGeometry(prev.MovementPlanner));
             AppendIfChanged(sb, "RouteMemory", FormatRouteMemory(frame.MovementPlanner.RouteMemory), prev == null ? null : FormatRouteMemory(prev.MovementPlanner.RouteMemory));
             AppendIfChanged(sb, "TargetLOS", FormatLineOfSight(frame.MovementPlanner.LineOfSight), prev == null ? null : FormatLineOfSight(prev.MovementPlanner.LineOfSight));
             AppendIfChanged(sb, "SafetyBuffer", frame.SafetyBuffer, prev?.SafetyBuffer);
@@ -444,6 +445,11 @@ internal sealed class CombatHistory
         }
 
         return $"{routeMemory.Source}/{routeMemory.State}/dest={FormatVector(routeMemory.LocalDestination)}/offset={routeMemory.OffsetSide}:{routeMemory.OffsetDistance:0.0}/vnav={routeMemory.VnavStatus}/budget={routeMemory.QueryBudgetUsed}/{routeMemory.QueryBudgetLimit}/{routeMemory.InvalidationReason}";
+    }
+
+    private static string FormatBmrGeometry(MovementPlannerDiagnostics planner)
+    {
+        return $"goals={planner.BmrGoalZones}/forbid={planner.BmrForbiddenZones}/obs={planner.BmrTemporaryObstacles}/tele={planner.BmrTeleporters}/active={planner.BmrDynamicGeometry}";
     }
 
     private static MobilityDecisionDiagnostics FreshMobilityDecision(DateTime now, MobilityDecisionDiagnostics decision)

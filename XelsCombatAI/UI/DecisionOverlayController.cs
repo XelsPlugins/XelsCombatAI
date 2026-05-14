@@ -1200,6 +1200,7 @@ internal sealed class DecisionOverlayController(
             "TinyMovement" => "too close",
             "CasterComfortHold" => "casting",
             "BmrGoalZoneActive" => "BMR mechanic",
+            "BmrDynamicGeometryActive" => "BMR mechanic geometry",
             "BmrPathBlocked" => "pillar/wall blocks path",
             "BmrBoundaryHugging" => "too close to pillar/wall",
             "OutsidePathfindMap" => "outside arena",

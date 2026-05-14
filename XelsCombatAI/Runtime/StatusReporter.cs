@@ -169,7 +169,11 @@ internal static class StatusReporter
         Append(builder, "VnavmeshDestination", status.MovementPlanner.VnavmeshDestination);
         Append(builder, "LineOfSight", status.MovementPlanner.LineOfSight);
         Append(builder, "BmrForcedMovement", status.MovementPlanner.BmrForcedMovement);
+        Append(builder, "BmrGoalZones", status.MovementPlanner.BmrGoalZones);
         Append(builder, "BmrForbiddenZones", status.MovementPlanner.BmrForbiddenZones);
+        Append(builder, "BmrTemporaryObstacles", status.MovementPlanner.BmrTemporaryObstacles);
+        Append(builder, "BmrTeleporters", status.MovementPlanner.BmrTeleporters);
+        Append(builder, "BmrDynamicGeometry", status.MovementPlanner.BmrDynamicGeometry);
         Append(builder, "BmrMoveRequested", status.MovementPlanner.BmrMoveRequested);
         Append(builder, "BmrMoveImminent", status.MovementPlanner.BmrMoveImminent);
         Append(builder, "TopCandidates", FormatPlannerCandidates(status.MovementPlanner.TopCandidates));

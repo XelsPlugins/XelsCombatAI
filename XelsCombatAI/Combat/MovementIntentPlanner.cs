@@ -603,6 +603,11 @@ internal sealed class MovementIntentPlanner(
             return this.Reject(context, candidate, "BmrGoalZoneActive");
         }
 
+        if (ShouldSuppressComfortMovementForBmrGeometry(context, candidate))
+        {
+            return this.Reject(context, candidate, "BmrDynamicGeometryActive");
+        }
+
         if (!queryBudget.TryConsume(candidate, out var queryBudgetReason))
         {
             return this.Reject(context, candidate, queryBudgetReason);
@@ -1027,6 +1032,12 @@ internal sealed class MovementIntentPlanner(
                 context.BmrMoveRequested ||
                 context.BmrMoveImminent ||
                 context.BmrForcedMovement is { } forced && forced.LengthSquared() > 0.01f);
+    }
+
+    private static bool ShouldSuppressComfortMovementForBmrGeometry(MovementPlannerContext context, MovementCandidate candidate)
+    {
+        return candidate.Priority == MovementCandidatePriority.Comfort &&
+               context.HasBmrDynamicGeometryPressure;
     }
 
     private bool ShouldRejectBossCenterCrossing(MovementPlannerContext context, MovementCandidate candidate)
@@ -1831,6 +1842,8 @@ internal sealed class MovementIntentPlanner(
         var forcedMovement = ReadVector3(members.ForcedMovementField.GetValue(hints));
         var goalZones = CountCollection(members.GoalZonesField.GetValue(hints));
         var forbiddenZones = CountCollection(members.ForbiddenZonesField.GetValue(hints));
+        var temporaryObstacles = CountCollection(members.TemporaryObstaclesField.GetValue(hints));
+        var teleporters = CountCollection(members.TeleportersField.GetValue(hints));
         var mapCenter = this.ReadWPosAsVector3(members.PathfindMapCenterField.GetValue(hints), player.Position.Y);
         _ = BossModPathfindBoundsSnapshot.TryCreate(
             hints,
@@ -1860,6 +1873,8 @@ internal sealed class MovementIntentPlanner(
             BossModEncounterActive = this.bossModEncounterActive,
             BmrGoalZones = goalZones,
             BmrForbiddenZones = forbiddenZones,
+            BmrTemporaryObstacles = temporaryObstacles,
+            BmrTeleporters = teleporters,
             BmrForcedMovement = forcedMovement,
             PathfindMapCenter = mapCenter,
             LineOfSight = lineOfSightDiagnostics,
@@ -1928,6 +1943,8 @@ internal sealed class MovementIntentPlanner(
         var forcedMovement = hintsType.GetField("ForcedMovement", Flags);
         var goalZones = hintsType.GetField("GoalZones", Flags);
         var forbiddenZones = hintsType.GetField("ForbiddenZones", Flags);
+        var temporaryObstacles = hintsType.GetField("TemporaryObstacles", Flags);
+        var teleporters = hintsType.GetField("Teleporters", Flags);
         var pathfindMapCenter = hintsType.GetField("PathfindMapCenter", Flags);
         var pathfindMapBounds = hintsType.GetField("PathfindMapBounds", Flags);
         var pathfindMapObstacles = hintsType.GetField("PathfindMapObstacles", Flags);
@@ -1955,6 +1972,8 @@ internal sealed class MovementIntentPlanner(
             forcedMovement == null ||
             goalZones == null ||
             forbiddenZones == null ||
+            temporaryObstacles == null ||
+            teleporters == null ||
             pathfindMapCenter == null ||
             pathfindMapBounds == null ||
             pathfindMapObstacles == null ||
@@ -1969,6 +1988,8 @@ internal sealed class MovementIntentPlanner(
                 (forcedMovement == null, "AIHints.ForcedMovement"),
                 (goalZones == null, "AIHints.GoalZones"),
                 (forbiddenZones == null, "AIHints.ForbiddenZones"),
+                (temporaryObstacles == null, "AIHints.TemporaryObstacles"),
+                (teleporters == null, "AIHints.Teleporters"),
                 (pathfindMapCenter == null, "AIHints.PathfindMapCenter"),
                 (pathfindMapBounds == null, "AIHints.PathfindMapBounds"),
                 (pathfindMapObstacles == null, "AIHints.PathfindMapObstacles"),
@@ -1987,6 +2008,8 @@ internal sealed class MovementIntentPlanner(
             forcedMovement,
             goalZones,
             forbiddenZones,
+            temporaryObstacles,
+            teleporters,
             pathfindMapCenter,
             pathfindMapBounds,
             pathfindMapObstacles,
@@ -2059,7 +2082,11 @@ internal sealed class MovementIntentPlanner(
             vnavmeshDestination,
             context?.LineOfSight ?? MovementLineOfSightDiagnostics.NotChecked("not evaluated"),
             context?.BmrForcedMovement,
+            context?.BmrGoalZones ?? 0,
             context?.BmrForbiddenZones ?? 0,
+            context?.BmrTemporaryObstacles ?? 0,
+            context?.BmrTeleporters ?? 0,
+            context?.HasBmrDynamicGeometryPressure ?? false,
             context?.BmrMoveRequested ?? this.bmrMoveRequested,
             context?.BmrMoveImminent ?? this.bmrMoveImminent,
             routeMemory);
@@ -2562,6 +2589,8 @@ internal sealed class MovementIntentPlanner(
         FieldInfo ForcedMovementField,
         FieldInfo GoalZonesField,
         FieldInfo ForbiddenZonesField,
+        FieldInfo TemporaryObstaclesField,
+        FieldInfo TeleportersField,
         FieldInfo PathfindMapCenterField,
         FieldInfo PathfindMapBoundsField,
         FieldInfo PathfindMapObstaclesField,

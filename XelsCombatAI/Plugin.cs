@@ -106,7 +106,7 @@ public sealed class Plugin : IDalamudPlugin
         IBossModGoalZoneContributor[] legacyMovementContributors = [aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController];
         IMovementCandidateSource[] movementCandidateSources = [redMageMeleeComboController, aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController];
         movementPlanner = new MovementIntentPlanner(this.config, this.services, bossModSafety, lineOfSight, vnavmesh, this.jobRangeProvider, () => runtime?.AutomatedMovementSuppressed == true, () => aoePackPositioningController.Status.TrashPull, legacyMovementContributors, movementCandidateSources);
-        var aoeGoalHook = new BossModGoalZoneHook(this.config, PluginInterface, this.services, Log, vnavmesh, movementPlanner);
+        var aoeGoalHook = new BossModGoalZoneHook(this.config, PluginInterface, this.services, Log, vnavmesh, bossModSafety, movementPlanner);
         var combatLogWriter = new CombatLogWriter(Path.Combine(ResolveConfigDirectory(), "combat-logs"), Log);
         presetController = new BossModPresetController(
             this.config,
