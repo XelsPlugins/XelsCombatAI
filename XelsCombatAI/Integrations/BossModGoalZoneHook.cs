@@ -261,7 +261,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.services, this.log, this.vnavmesh, out var reason);
+            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.services, this.log, this.vnavmesh, this.HandleFailure, out var reason);
             if (reflectedDraw == null)
             {
                 this.SetStatus(reason);
@@ -360,6 +360,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly DalamudServices services;
         private readonly IPluginLog log;
         private readonly VNavmeshIpc vnavmesh;
+        private readonly Action<Exception, string, string> failureHandler;
         private readonly MethodInfo executeHintsMethod;
         private readonly FieldInfo previousUpdateTimeField;
         private readonly object dtr;
@@ -435,6 +436,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             DalamudServices services,
             IPluginLog log,
             VNavmeshIpc vnavmesh,
+            Action<Exception, string, string> failureHandler,
             ReflectedMembers members)
         {
             this.plugin = plugin;
@@ -446,6 +448,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.services = services;
             this.log = log;
             this.vnavmesh = vnavmesh;
+            this.failureHandler = failureHandler;
             this.executeHintsMethod = members.ExecuteHintsMethod;
             this.previousUpdateTimeField = members.PreviousUpdateTimeField;
             this.dtr = members.Dtr;
@@ -515,7 +518,15 @@ internal sealed class BossModGoalZoneHook : IDisposable
                    activePlugin.GetType().Assembly == this.plugin.GetType().Assembly;
         }
 
-        public static ReflectedDraw? TryCreate(object plugin, Configuration config, IReadOnlyList<IBossModGoalZoneContributor> contributors, DalamudServices services, IPluginLog log, VNavmeshIpc vnavmesh, out string reason)
+        public static ReflectedDraw? TryCreate(
+            object plugin,
+            Configuration config,
+            IReadOnlyList<IBossModGoalZoneContributor> contributors,
+            DalamudServices services,
+            IPluginLog log,
+            VNavmeshIpc vnavmesh,
+            Action<Exception, string, string> failureHandler,
+            out string reason)
         {
             reason = string.Empty;
             const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -601,7 +612,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             try
             {
-                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, services, log, vnavmesh, members);
+                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, services, log, vnavmesh, failureHandler, members);
             }
             catch (Exception ex)
             {
@@ -641,7 +652,6 @@ internal sealed class BossModGoalZoneHook : IDisposable
             }
             catch (Exception ex)
             {
-                this.log.Error(ex, "Reflected BossMod draw wrapper failed; falling back to original BossMod draw for this frame.");
                 try
                 {
                     this.originalDraw();
@@ -650,6 +660,11 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 {
                     this.log.Verbose(fallbackEx, "Original BossMod draw fallback failed.");
                 }
+
+                this.failureHandler(
+                    ex,
+                    "Reflected BossMod draw wrapper failed; falling back to original BossMod draw for this frame.",
+                    $"BMR goal wrapper draw failed: {ex.Message}");
             }
         }
 

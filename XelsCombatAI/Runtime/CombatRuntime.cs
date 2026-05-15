@@ -443,7 +443,8 @@ internal sealed class CombatRuntime(
 
     private bool ShouldUseGoalHook()
     {
-        return config.ManageAoePackPositioning ||
+        return (config.ManageMovement && config.GuardUnknownBossNavigationWithVnavmesh) ||
+               config.ManageAoePackPositioning ||
                config.KeepTrashTargetSelected ||
                config.ManageTargetUptime ||
                config.ManageAggroSafetyMovement ||
