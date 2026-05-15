@@ -85,7 +85,7 @@ public sealed class Plugin : IDalamudPlugin
         targetUptimePlanner.TargetUptimeRangeOverride = redMageMeleeComboController.GetTargetUptimeRangeOverride;
         var aoePackPositioningController = new AoePackPositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), this.jobRangeProvider);
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
-        var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
+        var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var aggroSafetyController = new AggroSafetyController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         IBossModGoalZoneContributor[] legacyMovementContributors = [aggroSafetyController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController];

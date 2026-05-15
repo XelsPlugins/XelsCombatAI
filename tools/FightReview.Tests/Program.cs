@@ -5,6 +5,7 @@ using FightReview;
 using XelsCombatAI.Combat;
 using XelsCombatAI.Config;
 using XelsCombatAI.Game;
+using XelsCombatAI.Integrations;
 
 CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
@@ -25,6 +26,8 @@ var tests = new (string Name, Action Body)[]
     ("configuration tank lead defaults/reset", ConfigurationTankLeadDefaultsAndReset),
     ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
     ("healer coverage restores single missing member", HealerCoverageRestoresSingleMissingMember),
+    ("healer coverage catches up for party-saving AoE heals", HealerCoverageCatchesUpForPartySavingAoeHeals),
+    ("healer coverage catches up from critical party isolation", HealerCoverageCatchesUpFromCriticalPartyIsolation),
     ("healer coverage combines with forbidden zones", HealerCoverageCombinesWithForbiddenZones),
     ("pack movement combines with forbidden zones", PackMovementCombinesWithForbiddenZones),
     ("multi-target large trash remains trash context", MultiTargetLargeTrashRemainsTrashContext),
@@ -386,6 +389,75 @@ static void HealerCoverageRestoresSingleMissingMember()
             totalMembers: 7,
             distanceToCenter: 8f),
         "full coverage restore should stay distance bounded");
+}
+
+static void HealerCoverageCatchesUpForPartySavingAoeHeals()
+{
+    var action = new RsrAoeActionSnapshot(
+        ActionId: 0,
+        AdjustedActionId: 0,
+        ActionName: "Eukrasian Prognosis II",
+        Shape: RsrAoeShape.Circle,
+        Range: 1f,
+        EffectRange: 20f,
+        HalfWidth: 0f,
+        AoeCount: 1,
+        PrimaryTargetId: 0,
+        PrimaryTargetPosition: Vector3.Zero,
+        PrimaryTargetRadius: 0f,
+        AffectedTargetCount: 0,
+        IsFriendly: true,
+        IsTargetArea: false,
+        IsTargetCenteredCircle: false);
+
+    AssertTrue(
+        HealerAoePositioningController.IsPartyAoeHealAction(action),
+        "friendly self-centered AoE heal should be recognized");
+
+    AssertTrue(
+        HealerAoePositioningController.ShouldCatchUpForPartyAoeHeal(
+            currentCoveredCount: 4,
+            bestCoveredCount: 7,
+            totalMembers: 7,
+            distanceToCenter: 38f,
+            partyAoeHealPending: true),
+        "party-saving AoE heals should allow safe cross-arena catch-up");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldCatchUpForPartyAoeHeal(
+            currentCoveredCount: 4,
+            bestCoveredCount: 7,
+            totalMembers: 7,
+            distanceToCenter: 38f,
+            partyAoeHealPending: false),
+        "long catch-up should require an actual party AoE heal cue unless coverage is critical");
+}
+
+static void HealerCoverageCatchesUpFromCriticalPartyIsolation()
+{
+    AssertTrue(
+        HealerAoePositioningController.ShouldCatchUpCriticalCoverage(
+            currentCoveredCount: 0,
+            bestCoveredCount: 7,
+            totalMembers: 7,
+            distanceToCenter: 38f),
+        "critical party isolation should allow safe cross-arena recovery");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldCatchUpCriticalCoverage(
+            currentCoveredCount: 4,
+            bestCoveredCount: 7,
+            totalMembers: 7,
+            distanceToCenter: 38f),
+        "non-critical long movement should still require a party AoE heal cue");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldCatchUpCriticalCoverage(
+            currentCoveredCount: 0,
+            bestCoveredCount: 7,
+            totalMembers: 7,
+            distanceToCenter: 70f),
+        "critical recovery keeps a sanity bound for impossible or stale party positions");
 }
 
 static void HealerCoverageCombinesWithForbiddenZones()

@@ -32,6 +32,7 @@ internal sealed record HealerCoverageOverlaySnapshot(
 internal sealed class HealerAoePositioningController(
     Configuration config,
     DalamudServices services,
+    RotationSolverActionReflection rotationSolverActions,
     Func<bool> automatedMovementSuppressed)
     : IBossModGoalZoneContributor
 {
@@ -43,6 +44,8 @@ internal sealed class HealerAoePositioningController(
     private const float MaxConvenienceMoveDistance = 6f;
     private const float MaxTankCoverageRestoreDistance = 4.5f;
     private const float MaxSingleMemberFullCoverageMoveDistance = 6f;
+    private const float MaxPartySaveCatchUpMoveDistance = 60f;
+    private const float MinimumPartyAoeHealEffectRange = 8f;
     private const int MinimumCoverageGain = 2;
     private const float PreferredScore = GoalZoneScorePolicy.NormalPreference;
     private const float TankCoverageBonus = 0.25f;
@@ -186,9 +189,27 @@ internal sealed class HealerAoePositioningController(
             plan.BestCoveredCount,
             plan.TotalMembers,
             plan.DistanceToCenter);
+        var partyAoeHealPending = this.TryGetUpcomingPartyAoeHeal(out var partyAoeHealActionName);
+        var criticalCoverageCatchUp = ShouldCatchUpCriticalCoverage(
+            plan.CurrentCoveredCount,
+            plan.BestCoveredCount,
+            plan.TotalMembers,
+            plan.DistanceToCenter);
+        var partyAoeHealCatchUp = ShouldCatchUpForPartyAoeHeal(
+            plan.CurrentCoveredCount,
+            plan.BestCoveredCount,
+            plan.TotalMembers,
+            plan.DistanceToCenter,
+            partyAoeHealPending);
         var boundedTankRestore = restoresTankCoverage &&
                                  plan.DistanceToCenter <= MaxTankCoverageRestoreDistance;
-        var shouldMove = strongCoverageGain || restoresFullCoverage || boundedTankRestore;
+        var shouldMove = strongCoverageGain || restoresFullCoverage || criticalCoverageCatchUp || partyAoeHealCatchUp || boundedTankRestore;
+        var maxMoveDistance = criticalCoverageCatchUp || partyAoeHealCatchUp
+            ? MaxPartySaveCatchUpMoveDistance
+            : MaxConvenienceMoveDistance;
+        var priority = criticalCoverageCatchUp || partyAoeHealCatchUp
+            ? BossModGoalPriority.DefensiveMechanic
+            : BossModGoalPriority.Uptime;
 
         if (this.lastPlan == null || !this.lastPlan.SameSource(plan))
         {
@@ -201,10 +222,12 @@ internal sealed class HealerAoePositioningController(
             shouldMove = false;
             this.lastReason = "forced mechanic movement active";
         }
-        else if (shouldMove && plan.DistanceToCenter > MaxConvenienceMoveDistance)
+        else if (shouldMove && plan.DistanceToCenter > maxMoveDistance)
         {
             shouldMove = false;
-            this.lastReason = $"coverage point too far: {plan.DistanceToCenter:0.0}y";
+            this.lastReason = partyAoeHealPending
+                ? $"party AoE heal coverage point too far: {plan.DistanceToCenter:0.0}y"
+                : $"coverage point too far: {plan.DistanceToCenter:0.0}y";
         }
         else if (!shouldMove && restoresTankCoverage && plan.DistanceToCenter > MaxTankCoverageRestoreDistance)
         {
@@ -225,10 +248,15 @@ internal sealed class HealerAoePositioningController(
 
         if (shouldMove)
         {
-            contributions.Add(new(this.lastGoalDelegate!, BossModGoalPriority.Uptime, "Healer coverage zone"));
-            this.lastReason = restoresTankCoverage
-                ? $"tank out of coverage; covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}"
-                : $"covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}";
+            contributions.Add(new(this.lastGoalDelegate!, priority, "Healer coverage zone"));
+            var prefix = partyAoeHealCatchUp
+                ? $"party AoE heal ({partyAoeHealActionName}); "
+                : criticalCoverageCatchUp
+                ? "critical party coverage; "
+                : restoresTankCoverage
+                ? "tank out of coverage; "
+                : string.Empty;
+            this.lastReason = $"{prefix}covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}";
         }
 
         this.lastInjected = shouldMove;
@@ -427,6 +455,47 @@ internal sealed class HealerAoePositioningController(
                distanceToCenter <= MaxSingleMemberFullCoverageMoveDistance;
     }
 
+    internal static bool ShouldCatchUpCriticalCoverage(
+        int currentCoveredCount,
+        int bestCoveredCount,
+        int totalMembers,
+        float distanceToCenter)
+    {
+        var criticalCoveredThreshold = Math.Max(1, totalMembers / 4);
+        var partyClusterThreshold = Math.Max(1, (totalMembers + 1) / 2);
+        return totalMembers > 0 &&
+               currentCoveredCount <= criticalCoveredThreshold &&
+               bestCoveredCount >= partyClusterThreshold &&
+               bestCoveredCount > currentCoveredCount &&
+               distanceToCenter <= MaxPartySaveCatchUpMoveDistance;
+    }
+
+    internal static bool ShouldCatchUpForPartyAoeHeal(
+        int currentCoveredCount,
+        int bestCoveredCount,
+        int totalMembers,
+        float distanceToCenter,
+        bool partyAoeHealPending)
+    {
+        return partyAoeHealPending &&
+               totalMembers > 0 &&
+               totalMembers - currentCoveredCount >= 2 &&
+               bestCoveredCount >= Math.Max(1, totalMembers - 1) &&
+               bestCoveredCount > currentCoveredCount &&
+               distanceToCenter <= MaxPartySaveCatchUpMoveDistance;
+    }
+
+    internal static bool IsPartyAoeHealAction(RsrAoeActionSnapshot action)
+    {
+        if (IsKnownOffensivePartyHeal(action.ActionName))
+            return true;
+
+        return action.IsFriendly &&
+               action.Shape == RsrAoeShape.Circle &&
+               action.Range <= 1.5f &&
+               action.EffectRange >= MinimumPartyAoeHealEffectRange;
+    }
+
     internal static bool ShouldYieldCoverageForSafety(
         bool forcedMovementActive,
         bool forbiddenSafetyActive,
@@ -446,6 +515,24 @@ internal sealed class HealerAoePositioningController(
             this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 },
             this.bmrMoveRequested,
             this.bmrMoveImminent);
+    }
+
+    private bool TryGetUpcomingPartyAoeHeal(out string actionName)
+    {
+        actionName = "<none>";
+        if (!rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var action, out _) ||
+            !IsPartyAoeHealAction(action))
+        {
+            return false;
+        }
+
+        actionName = action.ActionName;
+        return true;
+    }
+
+    private static bool IsKnownOffensivePartyHeal(string actionName)
+    {
+        return string.Equals(actionName, "Pneuma", StringComparison.OrdinalIgnoreCase);
     }
 
     private static float VectorLengthSquared(object? value)
