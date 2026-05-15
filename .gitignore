@@ -5,6 +5,7 @@ artifacts/
 *.suo
 .vs/
 .claude/
+.codex/
 external/*
 !external/AGENTS.md
 !external/sources.json

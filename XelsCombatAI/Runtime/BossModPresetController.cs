@@ -7,25 +7,20 @@ internal sealed class BossModPresetController(
     DalamudServices services,
     BossModIpc bossMod,
     BossModReflectionSafety bossModSafety,
-    RangePlanner rangePlanner,
+    TargetUptimePlanner targetUptimePlanner,
     PositionalsController positionalsController,
     GapCloserController gapCloserController,
-    EscapeGapCloserController escapeGapCloserController)
+    EscapeGapCloserController escapeGapCloserController,
+    RedMageMeleeComboController redMageMeleeComboController)
 {
     public Positional LastPositional { get; private set; } = Positional.Any;
-    public float LastRange { get; private set; } = -1f;
+    public float LastTargetUptimeRange { get; private set; } = -1f;
     public bool? LastMovement { get; private set; }
     public string? LastMovementRangeStrategy { get; private set; }
     public string? LastForbiddenZoneCushion { get; private set; }
-    public string? LastPartyRole { get; private set; }
     public bool? LastLeylinesBetweenTheLines { get; private set; }
     public bool? LastLeylinesRetrace { get; private set; }
     public bool? LastLeylinesGoal { get; private set; }
-    public bool? LastHealerStayNearParty { get; private set; }
-    public bool? LastHealerHeal { get; private set; }
-    public bool? LastHealerEsuna { get; private set; }
-    public bool? LastHealerOutOfCombat { get; private set; }
-    public string? LastHealerRaise { get; private set; }
     public bool InitializedPreset { get; private set; }
 
     public bool Initialize()
@@ -54,23 +49,18 @@ internal sealed class BossModPresetController(
 
     public void Deactivate()
     {
+        var presetName = BossModIpc.DefaultPresetName;
         try
         {
-            var presetName = BossModIpc.DefaultPresetName;
+            this.WriteNeutralStrategies(presetName);
+        }
+        catch (Exception ex)
+        {
+            services.Log.Verbose(ex, "Could not write neutral BossMod strategies during deactivation.");
+        }
 
-            bossMod.SetMovement(presetName, false);
-            bossMod.SetMovementRangeStrategy(presetName, "Any");
-            bossMod.SetPositional(presetName, Positional.Any);
-            bossMod.SetPartyRole(presetName, "None");
-            bossMod.SetLeylinesBetweenTheLines(presetName, false);
-            bossMod.SetLeylinesRetrace(presetName, false);
-            bossMod.SetLeylinesGoal(presetName, false);
-            bossMod.SetHealerStayNearParty(presetName, false);
-            bossMod.SetHealerHeal(presetName, false);
-            bossMod.SetHealerEsuna(presetName, false);
-            bossMod.SetHealerOutOfCombat(presetName, false);
-            bossMod.SetHealerRaise(presetName, "None");
-
+        try
+        {
             if (bossMod.GetActive() == presetName)
             {
                 bossMod.ClearActive();
@@ -78,7 +68,16 @@ internal sealed class BossModPresetController(
         }
         catch (Exception ex)
         {
-            services.Log.Verbose(ex, "Could not deactivate BossMod preset.");
+            services.Log.Verbose(ex, "Could not clear active BossMod preset.");
+        }
+
+        try
+        {
+            bossMod.ClearTransientPresetStrategies(presetName);
+        }
+        catch (Exception ex)
+        {
+            services.Log.Verbose(ex, "Could not clear BossMod transient preset strategies.");
         }
     }
 
@@ -86,33 +85,25 @@ internal sealed class BossModPresetController(
     {
         try
         {
-            if (config.ManageRange)
-            {
-                if (config.HealerPartyCoverage &&
-                    rangePlanner.GetCurrentRangeRole() == RangeRole.Healer &&
-                    rangePlanner.CurrentTargetHasBossModule())
-                    this.SetRange(rangePlanner.CalculateHealerCoverageRange());
-                else
-                    this.SetRange(rangePlanner.CalculateDesiredRange());
-            }
+            this.SetTargetUptimeRange(targetUptimePlanner.CalculateTargetUptimeRange(config.ManageTargetUptime));
 
-            if (config.ManageForbiddenZoneDistance)
-            {
-                this.SetForbiddenZoneCushion(MapForbiddenZoneCushion(config.PreferredForbiddenZoneDistance));
-            }
+            this.SetForbiddenZoneCushion(config.ManageForbiddenZoneDistance
+                ? MapForbiddenZoneCushion(config.PreferredForbiddenZoneDistance)
+                : "None");
 
-            this.SetMovementRangeStrategy(MapCombatStyle(config.CombatStyle));
+            this.SetMovementRangeStrategy(config.ManageMovement
+                ? MapCombatStyle(config.CombatStyle)
+                : "Any");
 
-            if (suppressAutomatedMovement)
-            {
-                this.SetPartyRole("None");
-            }
-            else if (config.ManagePartyRoleFollow)
-            {
-                this.SetPartyRole(rangePlanner.CurrentTargetHasBossModule() ? "None" : "Tank");
-            }
 
-            positionalsController.Apply();
+            if (config.ManagePositionals)
+            {
+                positionalsController.Apply();
+            }
+            else
+            {
+                this.SetPositional(Positional.Any);
+            }
 
             this.SetMovement(config.ManageMovement && !suppressAutomatedMovement);
 
@@ -121,7 +112,6 @@ internal sealed class BossModPresetController(
                 config.ManageLeylines && !suppressAutomatedMovement && config.UseRetrace,
                 config.ManageLeylines && !suppressAutomatedMovement && config.ReturnToLeylines);
 
-            this.SetHealerAi(suppressAutomatedMovement);
             this.SetGapClosers(suppressAutomatedMovement);
         }
         catch (Exception ex)
@@ -135,22 +125,17 @@ internal sealed class BossModPresetController(
     {
         this.InitializedPreset = false;
         this.LastPositional = Positional.Any;
-        this.LastRange = -1f;
+        this.LastTargetUptimeRange = -1f;
         this.LastMovement = null;
         this.LastMovementRangeStrategy = null;
         this.LastForbiddenZoneCushion = null;
-        this.LastPartyRole = null;
         this.LastLeylinesBetweenTheLines = null;
         this.LastLeylinesRetrace = null;
         this.LastLeylinesGoal = null;
-        this.LastHealerStayNearParty = null;
-        this.LastHealerHeal = null;
-        this.LastHealerEsuna = null;
-        this.LastHealerOutOfCombat = null;
-        this.LastHealerRaise = null;
         positionalsController.Reset();
         gapCloserController.Reset();
         escapeGapCloserController.Reset();
+        redMageMeleeComboController.Reset();
         bossModSafety.Reset();
     }
 
@@ -172,16 +157,16 @@ internal sealed class BossModPresetController(
         }
     }
 
-    private void SetRange(float range)
+    private void SetTargetUptimeRange(float range)
     {
-        if (Math.Abs(this.LastRange - range) <= 0.01f)
+        if (Math.Abs(this.LastTargetUptimeRange - range) <= 0.01f)
         {
             return;
         }
 
         if (bossMod.SetRange(BossModIpc.DefaultPresetName, range))
         {
-            this.LastRange = range;
+            this.LastTargetUptimeRange = range;
         }
     }
 
@@ -228,10 +213,10 @@ internal sealed class BossModPresetController(
     {
         return style switch
         {
-            CombatStyle.Greed           => "GreedAutomatic",
-            CombatStyle.GreedGCD        => "GreedGCDExplicit",
+            CombatStyle.Greed => "GreedAutomatic",
+            CombatStyle.GreedGCD => "GreedGCDExplicit",
             CombatStyle.GreedLastMoment => "GreedLastMomentExplicit",
-            _                           => "Any"
+            _ => "Any"
         };
     }
 
@@ -246,18 +231,6 @@ internal sealed class BossModPresetController(
         };
     }
 
-    private void SetPartyRole(string role)
-    {
-        if (this.LastPartyRole == role)
-        {
-            return;
-        }
-
-        if (bossMod.SetPartyRole(BossModIpc.DefaultPresetName, role))
-        {
-            this.LastPartyRole = role;
-        }
-    }
 
     private void SetLeylines(bool useBetweenTheLines, bool useRetrace, bool returnToLeylines)
     {
@@ -280,41 +253,6 @@ internal sealed class BossModPresetController(
         }
     }
 
-    private void SetHealerAi(bool suppressAutomatedMovement)
-    {
-        var presetName = BossModIpc.DefaultPresetName;
-        var stayNearParty = !suppressAutomatedMovement &&
-                            config.HealerPartyCoverage &&
-                            rangePlanner.GetCurrentRangeRole() == RangeRole.Healer &&
-                            rangePlanner.CurrentTargetHasBossModule();
-
-        if (this.LastHealerRaise != "None" && bossMod.SetHealerRaise(presetName, "None"))
-        {
-            this.LastHealerRaise = "None";
-        }
-
-        if (this.LastHealerHeal != false && bossMod.SetHealerHeal(presetName, false))
-        {
-            this.LastHealerHeal = false;
-        }
-
-        if (this.LastHealerEsuna != false && bossMod.SetHealerEsuna(presetName, false))
-        {
-            this.LastHealerEsuna = false;
-        }
-
-        if (this.LastHealerOutOfCombat != false && bossMod.SetHealerOutOfCombat(presetName, false))
-        {
-            this.LastHealerOutOfCombat = false;
-        }
-
-        if (this.LastHealerStayNearParty != stayNearParty &&
-            bossMod.SetHealerStayNearParty(presetName, stayNearParty))
-        {
-            this.LastHealerStayNearParty = stayNearParty;
-        }
-    }
-
     private void SetGapClosers(bool suppressAutomatedMovement)
     {
         if (suppressAutomatedMovement)
@@ -322,14 +260,38 @@ internal sealed class BossModPresetController(
             return;
         }
 
-        if (config.UseEscapeGapCloser && escapeGapCloserController.TryUseEscapeGapCloser())
+        if (!config.UseGapCloser)
+        {
+            if (redMageMeleeComboController.TryUseComboJump())
+            {
+                return;
+            }
+
+            return;
+        }
+
+        if (escapeGapCloserController.TryUseEscapeGapCloser())
         {
             return;
         }
 
-        if (config.UseGapCloser)
+        if (redMageMeleeComboController.TryUseComboJump())
         {
-            gapCloserController.TryUseReengageGapCloser();
+            return;
         }
+
+        gapCloserController.TryUseReengageGapCloser();
+    }
+
+    private void WriteNeutralStrategies(string presetName)
+    {
+        bossMod.SetMovement(presetName, false);
+        bossMod.SetMovementRangeStrategy(presetName, "Any");
+        bossMod.SetRange(presetName, Configuration.InternalDisabledUptimeRange);
+        bossMod.SetForbiddenZoneCushion(presetName, "None");
+        bossMod.SetPositional(presetName, Positional.Any);
+        bossMod.SetLeylinesBetweenTheLines(presetName, false);
+        bossMod.SetLeylinesRetrace(presetName, false);
+        bossMod.SetLeylinesGoal(presetName, false);
     }
 }

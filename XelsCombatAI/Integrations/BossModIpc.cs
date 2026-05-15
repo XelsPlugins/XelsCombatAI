@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
+using Dalamud.Plugin.Services;
 
 namespace XelsCombatAI.Integrations;
 
@@ -25,34 +26,6 @@ internal sealed class BossModIpc
           }
         ],
         "BossMod.Autorotation.MiscAI.GoToPositional": [],
-        "BossMod.Autorotation.MiscAI.StayCloseToPartyRole": [
-          {
-            "Track": "range",
-            "Option": "20"
-          }
-        ],
-        "BossMod.Autorotation.xan.HealerAI": [
-          {
-            "Track": "Raise",
-            "Option": "None"
-          },
-          {
-            "Track": "Heal",
-            "Option": "Disabled"
-          },
-          {
-            "Track": "Esuna2",
-            "Option": "Disabled"
-          },
-          {
-            "Track": "Stay near party",
-            "Option": "Disabled"
-          },
-          {
-            "Track": "OutOfCombat",
-            "Option": "Disabled"
-          }
-        ],
         "BossMod.Autorotation.MiscAI.NormalMovement": [
           {
             "Track": "Destination",
@@ -72,8 +45,6 @@ internal sealed class BossModIpc
         "BossMod.Autorotation.MiscAI.StayCloseToTarget",
         "BossMod.Autorotation.MiscAI.StayWithinLeylines",
         "BossMod.Autorotation.MiscAI.GoToPositional",
-        "BossMod.Autorotation.MiscAI.StayCloseToPartyRole",
-        "BossMod.Autorotation.xan.HealerAI",
         "BossMod.Autorotation.MiscAI.NormalMovement"
     ];
 
@@ -85,9 +56,16 @@ internal sealed class BossModIpc
     private readonly ICallGateSubscriber<uint, bool> hasModuleByDataId;
     private readonly ICallGateSubscriber<string, bool, bool> disableModule;
     private readonly ICallGateSubscriber<string, string, string, string, bool> addTransientStrategy;
+    private readonly ICallGateSubscriber<string, string, string, bool> clearTransientStrategy;
+    private readonly ICallGateSubscriber<string, bool> clearTransientPresetStrategies;
+    private readonly ICallGateSubscriber<float> nextDowntimeIn;
+    private readonly ICallGateSubscriber<float> nextDowntimeEndIn;
+    private readonly IPluginLog log;
+    private DateTime nextFailureLog = DateTime.MinValue;
 
-    public BossModIpc(IDalamudPluginInterface pluginInterface)
+    public BossModIpc(IDalamudPluginInterface pluginInterface, IPluginLog log)
     {
+        this.log = log;
         this.getPreset = pluginInterface.GetIpcSubscriber<string, string?>("BossMod.Presets.Get");
         this.createPreset = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Presets.Create");
         this.getActivePreset = pluginInterface.GetIpcSubscriber<string?>("BossMod.Presets.GetActive");
@@ -96,17 +74,21 @@ internal sealed class BossModIpc
         this.hasModuleByDataId = pluginInterface.GetIpcSubscriber<uint, bool>("BossMod.HasModuleByDataId");
         this.disableModule = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Configuration.DisableModule");
         this.addTransientStrategy = pluginInterface.GetIpcSubscriber<string, string, string, string, bool>("BossMod.Presets.AddTransientStrategy");
+        this.clearTransientStrategy = pluginInterface.GetIpcSubscriber<string, string, string, bool>("BossMod.Presets.ClearTransientStrategy");
+        this.clearTransientPresetStrategies = pluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.ClearTransientPresetStrategies");
+        this.nextDowntimeIn = pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextDowntimeIn");
+        this.nextDowntimeEndIn = pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextDowntimeEndIn");
     }
 
     public bool EnsurePreset()
     {
-        var preset = this.getPreset.InvokeFunc(DefaultPresetName);
+        var preset = this.Invoke(() => this.getPreset.InvokeFunc(DefaultPresetName));
         if (preset != null && RequiredPresetModules.All(preset.Contains))
         {
             return true;
         }
 
-        return this.createPreset.InvokeFunc(PresetPayload, true);
+        return this.Invoke(() => this.createPreset.InvokeFunc(PresetPayload, true));
     }
 
     public bool IsAvailable()
@@ -116,145 +98,157 @@ internal sealed class BossModIpc
             _ = this.getPreset.InvokeFunc(DefaultPresetName);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            this.LogRecoverableFailure(ex, "BossMod preset IPC is unavailable.");
             return false;
         }
     }
 
-    public bool SetActive(string presetName) => this.setActivePreset.InvokeFunc(presetName);
+    public bool SetActive(string presetName) => this.Invoke(() => this.setActivePreset.InvokeFunc(presetName));
 
-    public string? GetActive() => this.getActivePreset.InvokeFunc();
+    public string? GetActive() => this.Invoke(() => this.getActivePreset.InvokeFunc());
 
-    public bool ClearActive() => this.clearActivePreset.InvokeFunc();
+    public bool ClearActive() => this.Invoke(() => this.clearActivePreset.InvokeFunc());
 
     public bool SetPositional(string presetName, Positional positional)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.GoToPositional",
             "Positional",
-            positional.ToString());
+            positional.ToString()));
     }
 
     public bool SetRange(string presetName, float range)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayCloseToTarget",
             "range",
-            MathF.Round(range, 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            MathF.Round(range, 1).ToString(System.Globalization.CultureInfo.InvariantCulture)));
     }
 
     public bool SetMovement(string presetName, bool enabled)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.NormalMovement",
             "Destination",
-            enabled ? "Pathfind" : "None");
+            enabled ? "Pathfind" : "None"));
     }
 
     public bool SetForbiddenZoneCushion(string presetName, string cushion)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.NormalMovement",
             "ForbiddenZoneCushion",
-            cushion);
+            cushion));
     }
 
     public bool SetMovementRangeStrategy(string presetName, string strategy)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.NormalMovement",
             "Range",
-            strategy);
-    }
-
-    public bool SetPartyRole(string presetName, string role)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.MiscAI.StayCloseToPartyRole",
-            "Role",
-            role);
-    }
-
-    public bool SetHealerStayNearParty(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.xan.HealerAI",
-            "Stay near party",
-            enabled ? "Enabled" : "Disabled");
-    }
-
-    public bool SetHealerHeal(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.xan.HealerAI",
-            "Heal",
-            enabled ? "Enabled" : "Disabled");
-    }
-
-    public bool SetHealerEsuna(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.xan.HealerAI",
-            "Esuna2",
-            enabled ? "Enabled" : "Disabled");
-    }
-
-    public bool SetHealerOutOfCombat(string presetName, bool enabled)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.xan.HealerAI",
-            "OutOfCombat",
-            enabled ? "Enabled" : "Disabled");
-    }
-
-    public bool SetHealerRaise(string presetName, string strategy)
-    {
-        return this.addTransientStrategy.InvokeFunc(
-            presetName,
-            "BossMod.Autorotation.xan.HealerAI",
-            "Raise",
-            strategy);
+            strategy));
     }
 
     public bool SetLeylinesBetweenTheLines(string presetName, bool enabled)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Use Between The Lines",
-            enabled ? "Yes" : "No");
+            enabled ? "Yes" : "No"));
     }
 
     public bool SetLeylinesRetrace(string presetName, bool enabled)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Use Retrace",
-            enabled ? "Yes" : "No");
+            enabled ? "Yes" : "No"));
     }
 
     public bool SetLeylinesGoal(string presetName, bool enabled)
     {
-        return this.addTransientStrategy.InvokeFunc(
+        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Goal",
-            enabled ? "Enabled" : "Disabled");
+            enabled ? "Enabled" : "Disabled"));
     }
 
-    public bool HasModuleByDataId(uint dataId) => this.hasModuleByDataId.InvokeFunc(dataId);
+    public bool ClearTransientStrategy(string presetName, string moduleTypeName, string trackName)
+    {
+        return this.Invoke(() => this.clearTransientStrategy.InvokeFunc(presetName, moduleTypeName, trackName));
+    }
 
-    public bool DisableModule(string moduleName, bool disabled) => this.disableModule.InvokeFunc(moduleName, disabled);
+    public bool ClearTransientPresetStrategies(string presetName)
+    {
+        return this.Invoke(() => this.clearTransientPresetStrategies.InvokeFunc(presetName));
+    }
+
+    public bool HasModuleByDataId(uint dataId) => this.Invoke(() => this.hasModuleByDataId.InvokeFunc(dataId));
+
+    public bool DisableModule(string moduleName, bool disabled) => this.Invoke(() => this.disableModule.InvokeFunc(moduleName, disabled));
+
+    public float NextDowntimeIn() => this.Invoke(() => this.nextDowntimeIn.InvokeFunc(), float.MaxValue);
+
+    public float NextDowntimeEndIn() => this.Invoke(() => this.nextDowntimeEndIn.InvokeFunc(), float.MaxValue);
+
+    private bool Invoke(Func<bool> action)
+    {
+        try
+        {
+            return action();
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return false;
+        }
+    }
+
+    private string? Invoke(Func<string?> action)
+    {
+        try
+        {
+            return action();
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return null;
+        }
+    }
+
+    private float Invoke(Func<float> action, float fallback)
+    {
+        try
+        {
+            return action();
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return fallback;
+        }
+    }
+
+    private void LogRecoverableFailure(Exception ex, string message)
+    {
+        var now = DateTime.UtcNow;
+        if (now < this.nextFailureLog)
+        {
+            return;
+        }
+
+        this.log.Verbose(ex, message);
+        this.nextFailureLog = now.AddSeconds(10);
+    }
 }

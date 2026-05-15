@@ -5,6 +5,7 @@ using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Gui.Dtr;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using XelsCombatAI.Integrations;
 
 namespace XelsCombatAI.Services;
 
@@ -18,6 +19,8 @@ internal sealed class DalamudServices(
     IDtrBar dtrBar,
     ICondition condition,
     IClientState clientState,
+    IDutyState dutyState,
+    IGameGui gameGui,
     IObjectTable objectTable,
     ITargetManager targetManager,
     IPartyList partyList)
@@ -31,16 +34,14 @@ internal sealed class DalamudServices(
     public IDtrBar DtrBar { get; } = dtrBar;
     public ICondition Condition { get; } = condition;
     public IClientState ClientState { get; } = clientState;
+    public IDutyState DutyState { get; } = dutyState;
+    public IGameGui GameGui { get; } = gameGui;
     public IObjectTable ObjectTable { get; } = objectTable;
     public ITargetManager TargetManager { get; } = targetManager;
     public IPartyList PartyList { get; } = partyList;
 
     public bool HasLoadedPlugin(params string[] names)
     {
-        return this.PluginInterface.InstalledPlugins.Any(plugin =>
-            plugin.IsLoaded &&
-            names.Any(name =>
-                string.Equals(plugin.InternalName, name, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(plugin.Name, name, StringComparison.OrdinalIgnoreCase)));
+        return ReflectionObjectSearch.HasLoadedPlugin(this.PluginInterface, names);
     }
 }
