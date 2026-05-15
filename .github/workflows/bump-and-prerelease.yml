@@ -18,8 +18,8 @@ on:
 
 jobs:
   bump-and-prerelease:
-    # Skip if this is a version bump commit (contains [skip ci])
-    if: "github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')"
+    # Skip generated release metadata commits without suppressing tag workflows.
+    if: "github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release bump]')"
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -39,7 +39,12 @@ jobs:
             LABELS="${{ inputs.release_label }}"
           else
             SHA="${{ github.sha }}"
-            LABELS=$(gh pr list --state merged --search "$SHA" --json labels --jq '.[0].labels[].name' 2>/dev/null || echo "")
+            PR_NUMBER=$(jq -r '.head_commit.message // ""' "$GITHUB_EVENT_PATH" | sed -n 's/^Merge pull request #\([0-9][0-9]*\) .*/\1/p')
+            if [ -n "$PR_NUMBER" ]; then
+              LABELS=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' 2>/dev/null || echo "")
+            else
+              LABELS=$(gh pr list --state merged --search "$SHA" --json labels --jq '.[0].labels[].name' 2>/dev/null || echo "")
+            fi
           fi
           echo "labels<<EOF" >> $GITHUB_OUTPUT
           echo "$LABELS" >> $GITHUB_OUTPUT
@@ -48,7 +53,7 @@ jobs:
       - name: Skip if no-release label
         id: check_skip
         run: |
-          if echo "${{ steps.pr.outputs.labels }}" | grep -q "no-release"; then
+          if echo "${{ steps.pr.outputs.labels }}" | grep -qx "no-release"; then
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             echo "skip=false" >> $GITHUB_OUTPUT
@@ -98,7 +103,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add XelsCombatAI/XelsCombatAI.csproj pluginmaster.json
-          git commit -m "chore: bump version to ${{ steps.version.outputs.tag }} [skip ci]"
+          git commit -m "chore: bump version to ${{ steps.version.outputs.tag }} [skip release bump]"
           git tag ${{ steps.version.outputs.tag }}
           git remote set-url origin "git@github.com:${{ github.repository }}.git"
           git push origin HEAD:master

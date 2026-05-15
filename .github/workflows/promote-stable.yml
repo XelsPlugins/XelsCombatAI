@@ -41,7 +41,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pluginmaster.json
-          git commit -m "chore: promote ${{ steps.version.outputs.tag }} to stable [skip ci]"
+          git commit -m "chore: promote ${{ steps.version.outputs.tag }} to stable [skip release bump]"
           git tag ${{ steps.version.outputs.tag }}
           git remote set-url origin "git@github.com:${{ github.repository }}.git"
           git push origin HEAD:master
