@@ -228,9 +228,9 @@ All changes flow through pull requests to `master`. Never commit directly to `ma
 | `release:major` | Bumps 2nd component, zeros 3rd+4th |
 | `no-release` | Skips version bump (docs, chores) |
 
-On merge, `bump-and-prerelease.yml` automatically updates the version files, commits them (`[skip ci]`), and pushes a `v{version}-pre` tag. `prerelease.yml` picks up the tag and publishes a GitHub pre-release — visible only to Dalamud users with **Receive plugin testing versions** enabled.
+On merge, `bump-and-prerelease.yml` automatically updates the version files, commits them (`[skip release bump]`), and pushes a `v{version}-pre` tag. `prerelease.yml` picks up the tag and publishes a GitHub pre-release — visible only to Dalamud users with **Receive plugin testing versions** enabled.
 
-The generated version/tag push uses the `RELEASE_DEPLOY_KEY` Actions secret instead of `GITHUB_TOKEN`. Keep that secret backed by a write-enabled repository deploy key, and keep deploy keys in the `Protect master` ruleset bypass list. This is required because `master` requires pull requests and code scanning, and `GITHUB_TOKEN` pushes do not trigger the tag workflow that publishes pre-releases.
+The generated version/tag push uses the `RELEASE_DEPLOY_KEY` Actions secret instead of `GITHUB_TOKEN`. Keep that secret backed by a write-enabled repository deploy key, and keep deploy keys in the `Protect master` ruleset bypass list. This is required because `master` requires pull requests and code scanning, and `GITHUB_TOKEN` pushes do not trigger the tag workflow that publishes pre-releases. Do not use GitHub's global `[skip ci]` marker for generated release commits; it suppresses the release tag workflows.
 
 To cut a stable release, run the **Promote to Stable** workflow manually from the GitHub Actions UI. It reads the current `TestingAssemblyVersion`, updates `AssemblyVersion` and the stable download URLs in `pluginmaster.json`, then pushes a `v{version}` tag (no `-pre`) which triggers `release.yml`.
 
