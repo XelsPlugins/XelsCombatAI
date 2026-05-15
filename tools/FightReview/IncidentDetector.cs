@@ -1941,7 +1941,9 @@ internal static class IncidentDetector
     private static bool HasTankLeadCandidate(XcaiFrame frame)
     {
         return frame.Planner.ChosenSource.Equals("Tank pull lead", StringComparison.Ordinal) ||
-               frame.Planner.TopCandidates.Any(candidate => candidate.Source.Equals("Tank pull lead", StringComparison.Ordinal));
+               frame.Planner.TopCandidates.Any(candidate => candidate.Source.Equals("Tank pull lead", StringComparison.Ordinal)) ||
+               frame.ActionName.Equals("Tank pull lead", StringComparison.Ordinal) ||
+               frame.AoeReason.StartsWith("following tank lead", StringComparison.Ordinal);
     }
 
     private static bool IsSlowMovementSpeed(XcaiFrame frame, float slowThreshold)

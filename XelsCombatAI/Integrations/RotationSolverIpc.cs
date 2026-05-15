@@ -43,6 +43,8 @@ internal sealed class RotationSolverIpc
     private PropertyInfo? isPvpStateEnabledProp;
     private PropertyInfo? specialTypeProp;
     private DateTime nextFailureLog = DateTime.MinValue;
+    private DateTime nextDiagnosticsProbe = DateTime.MinValue;
+    private string diagnostics = "not checked";
 
     public RotationSolverIpc(IDalamudPluginInterface pluginInterface, IPluginLog log)
     {
@@ -68,6 +70,8 @@ internal sealed class RotationSolverIpc
             "RotationSolverReborn",
             "Rotation Solver Reborn");
     }
+
+    public string Diagnostics => this.GetDiagnostics();
 
     public bool DisableAutoTrueNorth()
     {
@@ -156,6 +160,37 @@ internal sealed class RotationSolverIpc
             log.Verbose($"Could not read RSR DataCenter state: {ex.Message}");
             return null;
         }
+    }
+
+    private string GetDiagnostics()
+    {
+        var now = DateTime.UtcNow;
+        if (now < this.nextDiagnosticsProbe)
+        {
+            return this.diagnostics;
+        }
+
+        var loaded = this.IsAvailable(this.pluginInterface);
+        if (!loaded)
+        {
+            this.ResetReflectionCache();
+        }
+
+        var resolved = loaded && this.EnsureDataCenterResolved();
+        this.nextDiagnosticsProbe = now.AddSeconds(5);
+        this.diagnostics = string.Join(
+            "; ",
+            $"Loaded={loaded}",
+            $"Resolved={resolved}",
+            $"DataCenterType={this.dataCenterType != null}",
+            $"StateProperty={this.stateProp != null}",
+            $"IsManualProperty={this.isManualProp != null}",
+            $"IsAutoDutyProperty={this.isAutoDutyProp != null}",
+            $"IsHenchedProperty={this.isHenchedProp != null}",
+            $"IsTargetOnlyProperty={this.isTargetOnlyProp != null}",
+            $"IsPvPStateEnabledProperty={this.isPvpStateEnabledProp != null}",
+            $"SpecialTypeProperty={this.specialTypeProp != null}");
+        return this.diagnostics;
     }
 
     private bool EnsureDataCenterResolved()
@@ -294,6 +329,7 @@ internal sealed class RotationSolverIpc
         this.isTargetOnlyProp = null;
         this.isPvpStateEnabledProp = null;
         this.specialTypeProp = null;
+        this.nextDiagnosticsProbe = DateTime.MinValue;
     }
 
     private enum OtherCommandType : byte

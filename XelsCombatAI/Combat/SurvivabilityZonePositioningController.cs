@@ -279,7 +279,11 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
         var zField = wposType?.GetField("Z", InstanceFlags);
         if (goalZones == null || wposType == null || xField == null || zField == null)
         {
-            this.lastReason = "BMR survivability zone reflection members unavailable";
+            this.lastReason = $"BMR survivability zone reflection members unavailable: {FormatMissing(
+                (goalZones == null, "AIHints.GoalZones"),
+                (wposType == null, "BossMod.WPos"),
+                (xField == null, "BossMod.WPos.X"),
+                (zField == null, "BossMod.WPos.Z"))}";
             return false;
         }
 
@@ -289,6 +293,20 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
         this.wposXField = xField;
         this.wposZField = zField;
         return true;
+    }
+
+    private static string FormatMissing(params (bool Missing, string Name)[] members)
+    {
+        var missing = new List<string>();
+        foreach (var member in members)
+        {
+            if (member.Missing)
+            {
+                missing.Add(member.Name);
+            }
+        }
+
+        return string.Join(", ", missing);
     }
 
     private SurvivabilityZoneGoalPlan? FindBestPlan(IBattleChara player)

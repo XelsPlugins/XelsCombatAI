@@ -40,14 +40,13 @@ internal sealed class CombatLogWriter(string rootDirectory, IPluginLog log)
     private string CreateFightFilePath(CombatHistory history, string reason)
     {
         var started = history.CombatStartUtc == DateTime.MinValue ? DateTime.UtcNow : history.CombatStartUtc;
-        var first = history.FirstFrame;
         var last = history.LastFrame;
         var name = string.Join(
             "_",
             started.ToString("yyyyMMdd-HHmmss'Z'"),
-            $"job{first?.PlayerClassJobId ?? 0}",
-            $"territory{first?.TerritoryType ?? 0}",
-            $"cfcid{first?.ContentFinderConditionId ?? 0}",
+            $"job{history.PlayerClassJobId}",
+            $"territory{history.TerritoryType}",
+            $"cfcid{history.ContentFinderConditionId}",
             $"lasttarget{last?.TargetBaseId ?? 0}",
             Sanitize(reason));
 

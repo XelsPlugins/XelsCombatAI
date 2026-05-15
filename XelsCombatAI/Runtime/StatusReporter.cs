@@ -1,6 +1,6 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Reflection;
 using System.Text;
 
@@ -10,7 +10,7 @@ internal static class StatusReporter
 {
     public static string Build(RuntimeStatus status)
     {
-        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={status.LastPositional}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, TargetUptime={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, Facing={FormatFacingSummary(status.Facing)}, Planner={status.MovementPlanner.ChosenSource}/{status.MovementPlanner.SwitchReason}, Mobility={status.MobilityDecision.State}/{status.MobilityDecision.IntentLabel}, TrashPull={status.AoePackPositioning.TrashPull.Phase}/{status.AoePackPositioning.TrashPull.LeadRejectionReason}, AoEPack={status.AoePackPositioning.LastReason}, HealerCoverage={status.HealerCoveragePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, AggroSafety={status.AggroSafety.LastReason}, RedMageMelee={status.RedMageMeleeCombo.Mode}/{status.RedMageMeleeCombo.LastReason}, Initialized={status.InitializedPreset}";
+        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, LastPositional={status.LastPositional}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, TargetUptime={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, Facing={FormatFacingSummary(status.Facing)}, Mobility={status.MobilityDecision.State}/{status.MobilityDecision.IntentLabel}, TrashPull={status.AoePackPositioning.TrashPull.Phase}/{status.AoePackPositioning.TrashPull.LeadRejectionReason}, AoEPack={status.AoePackPositioning.LastReason}, HealerCoverage={status.HealerCoveragePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, AggroSafety={status.AggroSafety.LastReason}, RedMageMelee={status.RedMageMeleeCombo.Mode}/{status.RedMageMeleeCombo.LastReason}, Initialized={status.InitializedPreset}";
     }
 
     public static string BuildDebug(Configuration config, RuntimeStatus status)
@@ -37,6 +37,8 @@ internal static class StatusReporter
         Append(builder, "DependencyWarning", status.DependencyWarning ?? "OK");
         Append(builder, "TrueNorthWarning", status.TrueNorthWarning ?? "OK");
         Append(builder, "RsrTrueNorthDisabled", status.RsrTrueNorthDisabled);
+        Append(builder, "RotationSolverIpcDiagnostics", status.RotationSolverIpcDiagnostics);
+        Append(builder, "ReflectionHealth", BuildReflectionHealthSummary(status));
         Append(builder, "InitializedPreset", status.InitializedPreset);
         Append(builder, "AutomatedMovementSuppressed", status.AutomatedMovementSuppressed);
         builder.AppendLine();
@@ -132,51 +134,15 @@ internal static class StatusReporter
         Append(builder, "BossModControllerTarget", status.BossModMovement.ControllerTarget);
         Append(builder, "BossModMovementOverride", status.BossModMovement.MovementOverride);
         Append(builder, "BossModHintSummary", status.BossModMovement.HintSummary);
+        Append(builder, "RotationSolverIpc", status.RotationSolverIpcDiagnostics);
         Append(builder, "RotationSolverAction", status.AoePackPositioning.RsrReflectionDiagnostics);
+        Append(builder, "RotationSolverRedMageMelee", status.RotationSolverRedMageMeleeDiagnostics);
         Append(builder, "AoePackGoalMembers", status.AoePackPositioning.LastReason);
         Append(builder, "PassageGoalMembers", status.PassageOfArmsPositioning.LastReason);
         Append(builder, "HealerCoverageGoalMembers", status.HealerCoveragePositioning.LastReason);
         Append(builder, "SurvivabilityZoneGoalMembers", status.SurvivabilityZonePositioning.LastReason);
         Append(builder, "AggroSafetyGoalMembers", status.AggroSafety.LastReason);
         Append(builder, "ArenaEdge", status.ArenaEdgeReason);
-        builder.AppendLine();
-
-        AppendSection(builder, "Movement Intent Planner");
-        Append(builder, "IntentId", status.MovementPlanner.IntentId);
-        Append(builder, "ChosenSource", status.MovementPlanner.ChosenSource);
-        Append(builder, "Destination", status.MovementPlanner.Destination);
-        Append(builder, "AcceptanceRadius", status.MovementPlanner.AcceptanceRadius);
-        Append(builder, "HoldRemainingMs", status.MovementPlanner.HoldRemainingMs);
-        Append(builder, "SwitchReason", status.MovementPlanner.SwitchReason);
-        Append(builder, "SuppressionReason", status.MovementPlanner.SuppressionReason);
-        Append(builder, "GeneratedCount", status.MovementPlanner.GeneratedCount);
-        Append(builder, "AcceptedCount", status.MovementPlanner.AcceptedCount);
-        Append(builder, "RejectedByReason", string.Join(",", status.MovementPlanner.RejectedByReason.Select(entry => $"{entry.Key}:{entry.Value}")));
-        Append(builder, "ScoreBreakdown", status.MovementPlanner.ScoreBreakdown);
-        Append(builder, "PathStatus", status.MovementPlanner.PathStatus);
-        Append(builder, "PathDistance", status.MovementPlanner.PathDistance);
-        Append(builder, "PathDetourRatio", status.MovementPlanner.PathDetourRatio);
-        Append(builder, "PathWaypointCount", status.MovementPlanner.PathWaypointCount);
-        Append(builder, "PathCacheAgeMs", status.MovementPlanner.PathCacheAgeMilliseconds);
-        Append(builder, "FirstWaypoint", status.MovementPlanner.FirstWaypoint);
-        Append(builder, "FirstWaypointDistance", status.MovementPlanner.FirstWaypointDistance);
-        Append(builder, "FirstWaypointYawDelta", status.MovementPlanner.FirstWaypointYawDelta);
-        Append(builder, "VnavmeshReady", status.MovementPlanner.Vnavmesh.Ready);
-        Append(builder, "VnavmeshAutoLoad", status.MovementPlanner.Vnavmesh.AutoLoad);
-        Append(builder, "VnavmeshPathfindInProgress", status.MovementPlanner.Vnavmesh.PathfindInProgress);
-        Append(builder, "VnavmeshPathfindQueued", status.MovementPlanner.Vnavmesh.PathfindQueued);
-        Append(builder, "VnavmeshProbeSource", status.MovementPlanner.VnavmeshProbeSource);
-        Append(builder, "VnavmeshDestination", status.MovementPlanner.VnavmeshDestination);
-        Append(builder, "LineOfSight", status.MovementPlanner.LineOfSight);
-        Append(builder, "BmrForcedMovement", status.MovementPlanner.BmrForcedMovement);
-        Append(builder, "BmrGoalZones", status.MovementPlanner.BmrGoalZones);
-        Append(builder, "BmrForbiddenZones", status.MovementPlanner.BmrForbiddenZones);
-        Append(builder, "BmrTemporaryObstacles", status.MovementPlanner.BmrTemporaryObstacles);
-        Append(builder, "BmrTeleporters", status.MovementPlanner.BmrTeleporters);
-        Append(builder, "BmrDynamicGeometry", status.MovementPlanner.BmrDynamicGeometry);
-        Append(builder, "BmrMoveRequested", status.MovementPlanner.BmrMoveRequested);
-        Append(builder, "BmrMoveImminent", status.MovementPlanner.BmrMoveImminent);
-        Append(builder, "TopCandidates", FormatPlannerCandidates(status.MovementPlanner.TopCandidates));
         builder.AppendLine();
 
         AppendSection(builder, "AoE Pack Positioning");
@@ -305,11 +271,40 @@ internal static class StatusReporter
         return $"{source}/{facing.Reason}/{state}";
     }
 
-    private static string FormatPlannerCandidates(System.Collections.Generic.IReadOnlyList<MovementCandidateScore> candidates)
+    private static string BuildReflectionHealthSummary(RuntimeStatus status)
     {
-        return candidates.Count == 0
-            ? "<none>"
-            : string.Join(" | ", candidates.Select(candidate =>
-                $"{candidate.Source}:{(candidate.Accepted ? "accepted" : candidate.RejectionReason)}:{candidate.TotalScore.ToString("0.0", CultureInfo.InvariantCulture)}@{FormatValue(candidate.Destination)}"));
+        var issues = new List<string>();
+        AddReflectionIssue(issues, "BossModSafety", status.ReflectedGapSafetyDiagnostics);
+        AddReflectionIssue(issues, "BossModGoalHook", status.AoeGoalHookDiagnostics);
+        AddReflectionIssue(issues, "BossModMovementDiagnostics", status.BossModMovement.NavigationStats);
+        AddReflectionIssue(issues, "BossModHintDiagnostics", status.BossModMovement.HintSummary);
+        AddReflectionIssue(issues, "RotationSolverIpc", status.RotationSolverIpcDiagnostics);
+        AddReflectionIssue(issues, "RotationSolverAction", status.AoePackPositioning.RsrReflectionDiagnostics);
+        AddReflectionIssue(issues, "RotationSolverRedMageMelee", status.RotationSolverRedMageMeleeDiagnostics);
+        AddReflectionIssue(issues, "AoePackGoal", status.AoePackPositioning.LastReason);
+        AddReflectionIssue(issues, "PassageGoal", status.PassageOfArmsPositioning.LastReason);
+        AddReflectionIssue(issues, "HealerCoverageGoal", status.HealerCoveragePositioning.LastReason);
+        AddReflectionIssue(issues, "SurvivabilityZoneGoal", status.SurvivabilityZonePositioning.LastReason);
+        AddReflectionIssue(issues, "AggroSafetyGoal", status.AggroSafety.LastReason);
+        AddReflectionIssue(issues, "ArenaEdgeGoal", status.ArenaEdgeReason);
+        return issues.Count == 0 ? "OK" : string.Join(" | ", issues);
     }
+
+    private static void AddReflectionIssue(ICollection<string> issues, string name, string diagnostics)
+    {
+        var lower = diagnostics.ToLowerInvariant();
+        if (lower.Contains("broken", StringComparison.Ordinal) ||
+            lower.Contains("missing ", StringComparison.Ordinal) ||
+            lower.Contains("not found", StringComparison.Ordinal) ||
+            lower.Contains("members unavailable", StringComparison.Ordinal) ||
+            lower.Contains("types unavailable", StringComparison.Ordinal) ||
+            lower.Contains("resolve failed", StringComparison.Ordinal) ||
+            lower.Contains("diagnostics failed", StringComparison.Ordinal) ||
+            lower.Contains("capture failed", StringComparison.Ordinal) ||
+            lower.Contains("query failed", StringComparison.Ordinal))
+        {
+            issues.Add(name);
+        }
+    }
+
 }

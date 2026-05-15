@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Numerics;
 using System.Reflection;
+using System.Linq;
 using Dalamud.Game.ClientState.Conditions;
 
 namespace XelsCombatAI.Combat;
@@ -18,6 +19,17 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
     private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private static readonly MethodInfo ScoreCircleMethod = typeof(ArenaEdgePositioningController).GetMethod(nameof(ScoreCircle), BindingFlags.Static | BindingFlags.NonPublic)!;
     private static readonly MethodInfo ScoreRectMethod = typeof(ArenaEdgePositioningController).GetMethod(nameof(ScoreRect), BindingFlags.Static | BindingFlags.NonPublic)!;
+    private static readonly Vector2[] BoundaryProbeDirections =
+    [
+        Vector2.UnitX,
+        -Vector2.UnitX,
+        Vector2.UnitY,
+        -Vector2.UnitY,
+        Vector2.Normalize(new Vector2(1f, 1f)),
+        Vector2.Normalize(new Vector2(1f, -1f)),
+        Vector2.Normalize(new Vector2(-1f, 1f)),
+        Vector2.Normalize(new Vector2(-1f, -1f))
+    ];
 
     private FieldInfo? centerField;
     private FieldInfo? boundsField;
@@ -26,11 +38,18 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
     private FieldInfo? radiusField;
     private FieldInfo? forcedMovementField;
     private FieldInfo? forbiddenZonesField;
+    private FieldInfo? pathfindMapCenterField;
+    private FieldInfo? pathfindMapBoundsField;
+    private ConstructorInfo? wdirConstructor;
+    private MethodInfo? boundsContainsMethod;
     private Type? resolvedHintsType;
     private Delegate? lastGoalDelegate;
+    private Delegate? lastRecoveryGoalDelegate;
     private object? lastBounds;
+    private object? lastRecoveryBounds;
     private float lastCenterX;
     private float lastCenterZ;
+    private Vector2 lastRecoveryPoint;
     private string hookState = "unresolved";
     private string lastReason = "not evaluated";
     private DateTime goalLingerUntil = DateTime.MinValue;
@@ -84,7 +103,11 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
 
         if (!this.EnsureResolved(hints.GetType()))
         {
-            this.lastReason = "BMR arena edge reflection members unavailable";
+            if (!this.lastReason.StartsWith("BMR arena edge reflection members unavailable", StringComparison.Ordinal))
+            {
+                this.lastReason = "BMR arena edge reflection members unavailable";
+            }
+
             return;
         }
 
@@ -99,7 +122,10 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         var centerX = ReadFloat(this.wposXField!.GetValue(center));
         var centerZ = ReadFloat(this.wposZField!.GetValue(center));
         var radius = ReadFloat(this.radiusField!.GetValue(bounds));
+        var pathfindBounds = this.CreatePathfindBoundsSnapshot(hints);
+        var customRecoveryActive = this.TryFindCustomBoundsRecoveryPoint(pathfindBounds, bounds, centerX, centerZ, player.Position, out var recoveryPoint);
         var edgeDistance = this.GetEdgeDistance(bounds, centerX, centerZ, player.Position);
+        var nearEdge = customRecoveryActive || edgeDistance <= ActivationDistance;
         var now = DateTime.UtcNow;
         if (this.BoundsShapeChanged(centerX, centerZ, radius))
         {
@@ -115,20 +141,36 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
             return;
         }
 
-        if (now < this.suppressComfortUntil)
+        if (nearEdge)
+        {
+            this.goalLingerUntil = now.Add(GoalLinger);
+        }
+
+        if (now < this.suppressComfortUntil && !nearEdge)
         {
             this.lastReason = "post-mechanic edge cooldown";
             return;
         }
 
-        if (edgeDistance <= ActivationDistance)
-        {
-            this.goalLingerUntil = now.Add(GoalLinger);
-        }
-
-        if (edgeDistance > ActivationDistance && now > this.goalLingerUntil)
+        if (!nearEdge && now > this.goalLingerUntil)
         {
             this.lastReason = "away from arena edge";
+            return;
+        }
+
+        if (customRecoveryActive)
+        {
+            if (this.lastRecoveryGoalDelegate == null ||
+                !ReferenceEquals(this.lastRecoveryBounds, bounds) ||
+                Vector2.DistanceSquared(this.lastRecoveryPoint, recoveryPoint) > 0.25f)
+            {
+                this.lastRecoveryGoalDelegate = this.CreateRecoveryGoalDelegate(recoveryPoint);
+                this.lastRecoveryBounds = bounds;
+                this.lastRecoveryPoint = recoveryPoint;
+            }
+
+            contributions.Add(new(this.lastRecoveryGoalDelegate, BossModGoalPriority.Convenience, "Arena edge recovery"));
+            this.lastReason = "custom arena edge recovery";
             return;
         }
 
@@ -164,11 +206,18 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         this.radiusField = null;
         this.forcedMovementField = null;
         this.forbiddenZonesField = null;
+        this.pathfindMapCenterField = null;
+        this.pathfindMapBoundsField = null;
+        this.wdirConstructor = null;
+        this.boundsContainsMethod = null;
         this.resolvedHintsType = null;
         this.lastGoalDelegate = null;
+        this.lastRecoveryGoalDelegate = null;
         this.lastBounds = null;
+        this.lastRecoveryBounds = null;
         this.lastCenterX = 0f;
         this.lastCenterZ = 0f;
+        this.lastRecoveryPoint = default;
         this.lastReason = "reset";
         this.goalLingerUntil = DateTime.MinValue;
         this.suppressComfortUntil = DateTime.MinValue;
@@ -201,7 +250,9 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
             this.wposZField != null &&
             this.radiusField != null &&
             this.forcedMovementField != null &&
-            this.forbiddenZonesField != null)
+            this.forbiddenZonesField != null &&
+            this.pathfindMapCenterField != null &&
+            this.pathfindMapBoundsField != null)
         {
             return true;
         }
@@ -214,8 +265,37 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         var radius = bounds?.FieldType.GetField("Radius", InstanceFlags);
         var forcedMovement = hintsType.GetField("ForcedMovement", InstanceFlags);
         var forbiddenZones = hintsType.GetField("ForbiddenZones", InstanceFlags);
+        var wdirType = hintsType.Assembly.GetType("BossMod.WDir");
+        var wdirConstructor = wdirType?.GetConstructor([typeof(float), typeof(float)]);
+        var boundsContainsMethod = wdirType == null
+            ? null
+            : bounds?.FieldType.GetMethods(InstanceFlags)
+                .FirstOrDefault(method =>
+                {
+                    if (method.Name != "Contains")
+                    {
+                        return false;
+                    }
+
+                    var parameters = method.GetParameters();
+                    if (parameters.Length != 1)
+                    {
+                        return false;
+                    }
+
+                    var parameterType = parameters[0].ParameterType;
+                    return parameterType == wdirType || (parameterType.IsByRef && parameterType.GetElementType() == wdirType);
+                });
         if (center == null || bounds == null || xField == null || zField == null || radius == null || forcedMovement == null || forbiddenZones == null)
         {
+            this.lastReason = $"BMR arena edge reflection members unavailable: {FormatMissing(
+                (center == null, "AIHints.PathfindMapCenter"),
+                (bounds == null, "AIHints.PathfindMapBounds"),
+                (xField == null, "BossMod.WPos.X"),
+                (zField == null, "BossMod.WPos.Z"),
+                (radius == null, "ArenaBounds.Radius"),
+                (forcedMovement == null, "AIHints.ForcedMovement"),
+                (forbiddenZones == null, "AIHints.ForbiddenZones"))}";
             return false;
         }
 
@@ -226,10 +306,30 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
         this.radiusField = radius;
         this.forcedMovementField = forcedMovement;
         this.forbiddenZonesField = forbiddenZones;
+        this.pathfindMapCenterField = center;
+        this.pathfindMapBoundsField = bounds;
+        this.wdirConstructor = wdirConstructor;
+        this.boundsContainsMethod = boundsContainsMethod;
         this.resolvedHintsType = hintsType;
         this.lastGoalDelegate = null;
+        this.lastRecoveryGoalDelegate = null;
         this.lastBounds = null;
+        this.lastRecoveryBounds = null;
         return true;
+    }
+
+    private static string FormatMissing(params (bool Missing, string Name)[] members)
+    {
+        var missing = new List<string>();
+        foreach (var member in members)
+        {
+            if (member.Missing)
+            {
+                missing.Add(member.Name);
+            }
+        }
+
+        return string.Join(", ", missing);
     }
 
     private bool BossModMechanicSafetyActive(object hints)
@@ -312,6 +412,162 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
 
         var delegateType = typeof(Func<,>).MakeGenericType(wposType, typeof(float));
         goal = Expression.Lambda(delegateType, call, parameter).Compile();
+        return true;
+    }
+
+    private BossModPathfindBoundsSnapshot? CreatePathfindBoundsSnapshot(object hints)
+    {
+        if (this.pathfindMapCenterField == null ||
+            this.pathfindMapBoundsField == null ||
+            this.wposXField == null ||
+            this.wposZField == null ||
+            this.wdirConstructor == null ||
+            this.boundsContainsMethod == null)
+        {
+            return null;
+        }
+
+        return BossModPathfindBoundsSnapshot.TryCreate(
+            hints,
+            this.pathfindMapCenterField,
+            this.pathfindMapBoundsField,
+            this.wposXField,
+            this.wposZField,
+            this.wdirConstructor,
+            this.boundsContainsMethod,
+            out var snapshot)
+            ? snapshot
+            : null;
+    }
+
+    private bool TryFindCustomBoundsRecoveryPoint(
+        BossModPathfindBoundsSnapshot? bounds,
+        object rawBounds,
+        float centerX,
+        float centerZ,
+        Vector3 playerPosition,
+        out Vector2 recoveryPoint)
+    {
+        recoveryPoint = default;
+        if (bounds == null || !IsCustomBounds(rawBounds))
+        {
+            return false;
+        }
+
+        var player = new Vector2(playerPosition.X, playerPosition.Z);
+        var center = new Vector2(centerX, centerZ);
+        if (!IsNearCustomBoundary(bounds, player, center))
+        {
+            return false;
+        }
+
+        var towardCenter = center - player;
+        if (towardCenter.LengthSquared() <= 0.01f)
+        {
+            return false;
+        }
+
+        towardCenter = Vector2.Normalize(towardCenter);
+        Vector2? firstInside = null;
+        for (var distance = 1f; distance <= 10f; distance += 0.5f)
+        {
+            var candidate = player + towardCenter * distance;
+            if (!bounds.Contains(candidate))
+            {
+                continue;
+            }
+
+            firstInside ??= candidate;
+            if (IsInsideCustomBoundsWithMargin(bounds, candidate, EdgeBand))
+            {
+                recoveryPoint = candidate;
+                return true;
+            }
+        }
+
+        if (firstInside.HasValue)
+        {
+            recoveryPoint = firstInside.Value;
+            return true;
+        }
+
+        if (bounds.Contains(center))
+        {
+            recoveryPoint = center;
+            return true;
+        }
+
+        return false;
+    }
+
+    private Delegate CreateRecoveryGoalDelegate(Vector2 point)
+    {
+        var wposType = this.wposXField!.DeclaringType!;
+        var parameter = Expression.Parameter(wposType, "p");
+        var x = Expression.Convert(Expression.Field(parameter, this.wposXField), typeof(float));
+        var z = Expression.Convert(Expression.Field(parameter, this.wposZField!), typeof(float));
+        var dx = Expression.Subtract(x, Expression.Constant(point.X));
+        var dz = Expression.Subtract(z, Expression.Constant(point.Y));
+        var distSq = Expression.Add(Expression.Multiply(dx, dx), Expression.Multiply(dz, dz));
+        const float RecoveryRadius = 2.5f;
+        var score = Expression.Condition(
+            Expression.LessThanOrEqual(distSq, Expression.Constant(RecoveryRadius * RecoveryRadius)),
+            Expression.Constant(GoalZoneScorePolicy.WeakPreference),
+            Expression.Constant(0f));
+        var delegateType = typeof(Func<,>).MakeGenericType(wposType, typeof(float));
+        return Expression.Lambda(delegateType, score, parameter).Compile();
+    }
+
+    private static bool IsCustomBounds(object bounds)
+    {
+        var type = bounds.GetType();
+        return type.Name.Contains("Custom", StringComparison.Ordinal) ||
+               type.GetField("Vertices", InstanceFlags) != null;
+    }
+
+    private static bool IsNearCustomBoundary(BossModPathfindBoundsSnapshot bounds, Vector2 point, Vector2 center)
+    {
+        if (!bounds.Contains(point))
+        {
+            return true;
+        }
+
+        var awayFromCenter = point - center;
+        if (awayFromCenter.LengthSquared() > 0.01f)
+        {
+            awayFromCenter = Vector2.Normalize(awayFromCenter);
+            if (!bounds.Contains(point + awayFromCenter * ActivationDistance))
+            {
+                return true;
+            }
+        }
+
+        foreach (var direction in BoundaryProbeDirections)
+        {
+            if (!bounds.Contains(point + direction * ActivationDistance))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsInsideCustomBoundsWithMargin(BossModPathfindBoundsSnapshot bounds, Vector2 point, float margin)
+    {
+        if (!bounds.Contains(point))
+        {
+            return false;
+        }
+
+        foreach (var direction in BoundaryProbeDirections)
+        {
+            if (!bounds.Contains(point + direction * margin))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 

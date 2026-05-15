@@ -42,6 +42,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
     private const byte StarterManaThreshold = 50;
     private const byte ContinuationManaThreshold = 15;
     private static readonly TimeSpan ExitWindow = TimeSpan.FromSeconds(4);
+    private static readonly TimeSpan UnsafeExitStayCloseWindow = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ComboTrackWindow = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan JumpAttemptInterval = TimeSpan.FromMilliseconds(250);
 
@@ -58,6 +59,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
     private ulong exitTargetObjectId;
     private ulong stayCloseTargetObjectId;
     private bool stayCloseAfterUnsafeExit;
+    private DateTime stayCloseUntilUtc = DateTime.MinValue;
     private RedMageComboTrack activeComboTrack = RedMageComboTrack.None;
     private DateTime activeComboTrackUntilUtc = DateTime.MinValue;
     private Vector3? lastCandidateDestination;
@@ -108,6 +110,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         this.exitTargetObjectId = 0;
         this.stayCloseTargetObjectId = 0;
         this.stayCloseAfterUnsafeExit = false;
+        this.stayCloseUntilUtc = DateTime.MinValue;
         this.activeComboTrack = RedMageComboTrack.None;
         this.activeComboTrackUntilUtc = DateTime.MinValue;
         this.lastCandidateDestination = null;
@@ -345,6 +348,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
             this.exitTargetObjectId = 0;
             this.stayCloseAfterUnsafeExit = false;
             this.stayCloseTargetObjectId = 0;
+            this.stayCloseUntilUtc = DateTime.MinValue;
             this.lastJumpLanding = destination;
             this.UpdateStatus(decision, "Displacement out");
             return true;
@@ -501,6 +505,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         var actionId = hasRsrAction ? ResolveActionId(nextAction!) : 0;
         var actionName = hasRsrAction ? nextAction!.ActionName : "<none>";
         var affectedTargets = hasRsrAction ? nextAction!.AffectedTargetCount : 0;
+        var hasRsrMeleeIntent = rotationSolverActions.TryGetRedMageMeleeIntent(out var rsrMeleeIntent, out _);
         if (exitPending && currentSurface <= ExitAttemptMaxSurfaceRange)
         {
             decision = new(
@@ -519,6 +524,37 @@ internal sealed class RedMageMeleeComboController : IDisposable
                 "Displacement out");
             this.UpdateStatus(decision, "Displacement out");
             return true;
+        }
+
+        if (hasRsrMeleeIntent && rsrMeleeIntent != null)
+        {
+            if (this.TryBuildRsrMeleeIntentDecision(
+                    player,
+                    target,
+                    currentSurface,
+                    whiteMana,
+                    blackMana,
+                    manaStacks,
+                    actionName,
+                    actionId,
+                    affectedTargets,
+                    rsrMeleeIntent,
+                    out decision))
+            {
+                return true;
+            }
+
+            if (rsrMeleeIntent.SuppressLocalFallback)
+            {
+                if (this.TryBuildStayCloseDecision(player, target, currentSurface, whiteMana, blackMana, manaStacks, actionName, actionId, affectedTargets, rsrMeleeIntent.Reason, out decision))
+                {
+                    return true;
+                }
+
+                this.ClearStayCloseIfRanged(target.GameObjectId, currentSurface);
+                this.UpdateStatus(true, "ranged", rsrMeleeIntent.Reason, whiteMana, blackMana, manaStacks, actionName, actionId, affectedTargets);
+                return false;
+            }
         }
 
         var hasStarterMana = whiteMana >= StarterManaThreshold && blackMana >= StarterManaThreshold;
@@ -660,6 +696,53 @@ internal sealed class RedMageMeleeComboController : IDisposable
         return false;
     }
 
+    private bool TryBuildRsrMeleeIntentDecision(
+        IBattleChara player,
+        IBattleChara target,
+        float currentSurface,
+        byte whiteMana,
+        byte blackMana,
+        byte manaStacks,
+        string fallbackActionName,
+        uint fallbackActionId,
+        int fallbackAffectedTargets,
+        RsrRedMageMeleeIntent intent,
+        out RedMageComboDecision decision)
+    {
+        if (intent.Track == RsrRedMageMeleeTrack.None)
+        {
+            decision = default;
+            return false;
+        }
+
+        var mode = intent.Track == RsrRedMageMeleeTrack.AoE
+            ? RedMageComboMode.MoveInAoeCone
+            : RedMageComboMode.MoveInSingleTarget;
+        var desiredSurface = intent.Track == RsrRedMageMeleeTrack.AoE
+            ? MoulinetConeSurfaceRange
+            : SingleTargetMeleeSurfaceRange;
+        var acceptanceRadius = intent.Track == RsrRedMageMeleeTrack.AoE
+            ? AoEMoveInAcceptanceRadius
+            : MoveInAcceptanceRadius;
+
+        decision = new(
+            mode,
+            player,
+            target,
+            currentSurface,
+            desiredSurface,
+            acceptanceRadius,
+            whiteMana,
+            blackMana,
+            manaStacks,
+            intent.ActionId != 0 ? intent.ActionName : fallbackActionName,
+            intent.ActionId != 0 ? intent.ActionId : fallbackActionId,
+            intent.AffectedTargets > 0 ? intent.AffectedTargets : fallbackAffectedTargets,
+            intent.Reason);
+        this.UpdateStatus(decision, decision.Reason);
+        return true;
+    }
+
     private bool TryBuildStayCloseDecision(
         IBattleChara player,
         IBattleChara target,
@@ -673,14 +756,18 @@ internal sealed class RedMageMeleeComboController : IDisposable
         string reason,
         out RedMageComboDecision decision)
     {
-        if (!this.stayCloseAfterUnsafeExit || this.stayCloseTargetObjectId != target.GameObjectId || currentSurface > StayCloseMaxSurfaceRange)
+        if (!this.stayCloseAfterUnsafeExit)
         {
             decision = default;
-            if (currentSurface > RangedSurfaceRange - 1f)
-            {
-                this.ClearTransientStates();
-            }
+            return false;
+        }
 
+        if (this.stayCloseTargetObjectId != target.GameObjectId ||
+            DateTime.UtcNow > this.stayCloseUntilUtc ||
+            currentSurface > StayCloseMaxSurfaceRange)
+        {
+            this.ClearTransientStates();
+            decision = default;
             return false;
         }
 
@@ -708,6 +795,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         this.exitTargetObjectId = 0;
         this.stayCloseAfterUnsafeExit = true;
         this.stayCloseTargetObjectId = targetObjectId;
+        this.stayCloseUntilUtc = DateTime.UtcNow.Add(UnsafeExitStayCloseWindow);
         this.status = this.status with
         {
             Mode = "staying after unsafe exit",
@@ -721,6 +809,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         this.exitTargetObjectId = 0;
         this.stayCloseAfterUnsafeExit = false;
         this.stayCloseTargetObjectId = 0;
+        this.stayCloseUntilUtc = DateTime.MinValue;
         this.activeComboTrack = RedMageComboTrack.None;
         this.activeComboTrackUntilUtc = DateTime.MinValue;
     }
@@ -840,6 +929,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
             this.exitUntilUtc = DateTime.UtcNow.Add(ExitWindow);
             this.stayCloseAfterUnsafeExit = false;
             this.stayCloseTargetObjectId = 0;
+            this.stayCloseUntilUtc = DateTime.MinValue;
             this.status = this.status with
             {
                 Enabled = true,

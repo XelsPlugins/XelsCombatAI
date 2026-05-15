@@ -47,7 +47,70 @@ internal static class XcaiLogReader
             Console.Error.WriteLine($"Warning: header frame count is {header.FrameCount}, parsed {frames.Count}.");
         }
 
+        header = NormalizeHeader(header, frames);
         return new XcaiLog(Path.GetFullPath(path), header, frames);
+    }
+
+    private static XcaiHeader NormalizeHeader(XcaiHeader header, IReadOnlyList<XcaiFrame> frames)
+    {
+        var playerClassJobId = header.PlayerClassJobId != 0
+            ? header.PlayerClassJobId
+            : FirstNonZero(frames, frame => frame.PlayerClassJobId);
+        var territoryType = header.TerritoryType != 0
+            ? header.TerritoryType
+            : FirstNonZero(frames, frame => frame.TerritoryType);
+        var contentFinderConditionId = header.ContentFinderConditionId != 0
+            ? header.ContentFinderConditionId
+            : FirstNonZero(frames, frame => frame.ContentFinderConditionId);
+        var bossModActiveModule = IsNone(header.BossModActiveModule)
+            ? LastNonNone(frames, frame => frame.BossModActiveModule)
+            : header.BossModActiveModule;
+        var bossModActiveZoneModule = IsNone(header.BossModActiveZoneModule)
+            ? LastNonNone(frames, frame => frame.BossModActiveZoneModule)
+            : header.BossModActiveZoneModule;
+
+        return header with
+        {
+            PlayerClassJobId = playerClassJobId,
+            TerritoryType = territoryType,
+            ContentFinderConditionId = contentFinderConditionId,
+            BossModActiveModule = bossModActiveModule,
+            BossModActiveZoneModule = bossModActiveZoneModule
+        };
+    }
+
+    private static uint FirstNonZero(IEnumerable<XcaiFrame> frames, Func<XcaiFrame, uint> selector)
+    {
+        foreach (var frame in frames)
+        {
+            var value = selector(frame);
+            if (value != 0)
+            {
+                return value;
+            }
+        }
+
+        return 0;
+    }
+
+    private static string LastNonNone(IReadOnlyList<XcaiFrame> frames, Func<XcaiFrame, string> selector)
+    {
+        for (var i = frames.Count - 1; i >= 0; i--)
+        {
+            var value = selector(frames[i]);
+            if (!IsNone(value))
+            {
+                return value;
+            }
+        }
+
+        return "<none>";
+    }
+
+    private static bool IsNone(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ||
+               value.Equals("<none>", StringComparison.Ordinal);
     }
 
     private static XcaiHeader ParseHeader(JsonElement root)

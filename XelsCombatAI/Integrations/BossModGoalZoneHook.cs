@@ -213,7 +213,6 @@ internal sealed class BossModGoalZoneHook : IDisposable
     public string LastGoalPriority => this.draw?.LastGoalPriority ?? "None";
     public string LastGoalSources => this.draw?.LastGoalSources ?? "<none>";
     public BossModMovementDiagnostics MovementDiagnostics => this.draw?.MovementDiagnostics ?? BossModMovementDiagnostics.Empty;
-    public MovementPlannerDiagnostics PlannerDiagnostics => MovementPlannerDiagnostics.Empty;
     public string Diagnostics => string.Join(
         "; ",
         $"Status={this.status}",
@@ -866,7 +865,8 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private bool IsTrashPackPlannerMovement()
         {
             return this.lastGoalSources.Contains("Pack engagement", StringComparison.Ordinal) ||
-                   this.lastGoalSources.Contains("AoE pack", StringComparison.Ordinal);
+                   this.lastGoalSources.Contains("AoE pack", StringComparison.Ordinal) ||
+                   this.lastGoalSources.Contains("Tank pull lead", StringComparison.Ordinal);
         }
 
         private void SetContributorBossModMovementState(bool moveRequested, bool moveImminent)

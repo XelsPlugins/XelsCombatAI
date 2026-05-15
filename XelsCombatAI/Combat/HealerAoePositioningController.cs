@@ -42,6 +42,7 @@ internal sealed class HealerAoePositioningController(
     private const float CoverageRadiusSquared = CoverageRadius * CoverageRadius;
     private const float MaxConvenienceMoveDistance = 6f;
     private const float MaxTankCoverageRestoreDistance = 4.5f;
+    private const float MaxSingleMemberFullCoverageMoveDistance = 6f;
     private const int MinimumCoverageGain = 2;
     private const float PreferredScore = GoalZoneScorePolicy.NormalPreference;
     private const float TankCoverageBonus = 0.25f;
@@ -180,9 +181,14 @@ internal sealed class HealerAoePositioningController(
                                     plan.BestCoversTank;
         var strongCoverageGain = coverageGain >= MinimumCoverageGain ||
                                  plan.CurrentCoveredCount == 0 && coverageGain > 0;
+        var restoresFullCoverage = ShouldRestoreSingleMissingCoverage(
+            plan.CurrentCoveredCount,
+            plan.BestCoveredCount,
+            plan.TotalMembers,
+            plan.DistanceToCenter);
         var boundedTankRestore = restoresTankCoverage &&
                                  plan.DistanceToCenter <= MaxTankCoverageRestoreDistance;
-        var shouldMove = strongCoverageGain || boundedTankRestore;
+        var shouldMove = strongCoverageGain || restoresFullCoverage || boundedTankRestore;
 
         if (this.lastPlan == null || !this.lastPlan.SameSource(plan))
         {
@@ -190,10 +196,10 @@ internal sealed class HealerAoePositioningController(
             this.lastPlan = plan;
         }
 
-        if (shouldMove && this.BossModMechanicSafetyActive(hints))
+        if (shouldMove && this.BossModHardSafetyActive(hints))
         {
             shouldMove = false;
-            this.lastReason = "mechanic safety active";
+            this.lastReason = "forced mechanic movement active";
         }
         else if (shouldMove && plan.DistanceToCenter > MaxConvenienceMoveDistance)
         {
@@ -219,7 +225,7 @@ internal sealed class HealerAoePositioningController(
 
         if (shouldMove)
         {
-            contributions.Add(new(this.lastGoalDelegate!, BossModGoalPriority.Convenience, "Healer coverage zone"));
+            contributions.Add(new(this.lastGoalDelegate!, BossModGoalPriority.Uptime, "Healer coverage zone"));
             this.lastReason = restoresTankCoverage
                 ? $"tank out of coverage; covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}"
                 : $"covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}";
@@ -375,7 +381,13 @@ internal sealed class HealerAoePositioningController(
         var zField = wposType?.GetField("Z", InstanceFlags);
         if (goalZones == null || forcedMovement == null || forbiddenZones == null || wposType == null || xField == null || zField == null)
         {
-            this.lastReason = "BMR healer coverage reflection members unavailable";
+            this.lastReason = $"BMR healer coverage reflection members unavailable: {FormatMissing(
+                (goalZones == null, "AIHints.GoalZones"),
+                (forcedMovement == null, "AIHints.ForcedMovement"),
+                (forbiddenZones == null, "AIHints.ForbiddenZones"),
+                (wposType == null, "BossMod.WPos"),
+                (xField == null, "BossMod.WPos.X"),
+                (zField == null, "BossMod.WPos.Z"))}";
             return false;
         }
 
@@ -389,19 +401,51 @@ internal sealed class HealerAoePositioningController(
         return true;
     }
 
-    private bool BossModMechanicSafetyActive(object hints)
+    private static string FormatMissing(params (bool Missing, string Name)[] members)
     {
-        if (this.bmrMoveRequested || this.bmrMoveImminent)
+        var missing = new List<string>();
+        foreach (var member in members)
         {
-            return true;
+            if (member.Missing)
+            {
+                missing.Add(member.Name);
+            }
         }
 
-        if (this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 })
-        {
-            return true;
-        }
+        return string.Join(", ", missing);
+    }
 
-        return VectorLengthSquared(this.forcedMovementField?.GetValue(hints)) > 0.01f;
+    internal static bool ShouldRestoreSingleMissingCoverage(
+        int currentCoveredCount,
+        int bestCoveredCount,
+        int totalMembers,
+        float distanceToCenter)
+    {
+        return totalMembers > 0 &&
+               bestCoveredCount == totalMembers &&
+               bestCoveredCount > currentCoveredCount &&
+               distanceToCenter <= MaxSingleMemberFullCoverageMoveDistance;
+    }
+
+    internal static bool ShouldYieldCoverageForSafety(
+        bool forcedMovementActive,
+        bool forbiddenSafetyActive,
+        bool bmrMoveRequested,
+        bool bmrMoveImminent)
+    {
+        _ = forbiddenSafetyActive;
+        _ = bmrMoveRequested;
+        _ = bmrMoveImminent;
+        return forcedMovementActive;
+    }
+
+    private bool BossModHardSafetyActive(object hints)
+    {
+        return ShouldYieldCoverageForSafety(
+            VectorLengthSquared(this.forcedMovementField?.GetValue(hints)) > 0.01f,
+            this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 },
+            this.bmrMoveRequested,
+            this.bmrMoveImminent);
     }
 
     private static float VectorLengthSquared(object? value)

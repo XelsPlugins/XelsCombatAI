@@ -18,24 +18,16 @@ internal sealed class GapCloserController(
     MobilityDecisionEvaluator mobilityEvaluator,
     DashStyleController dashStyleController,
     FacingController facingController,
-    Func<TrashPullDiagnostics> trashPullDiagnostics,
-    Func<MovementPlannerDiagnostics> movementPlannerDiagnostics)
+    Func<TrashPullDiagnostics> trashPullDiagnostics)
 {
     private const float BossLikeHitboxRadius = 4f;
     private const float DirectionalDashBetterLandingThreshold = 0.75f;
     private const float ConservativeTrashGapCloserRangeReserve = 2.5f;
     private const float ConservativeTrashMinimumConfidence = 0.55f;
     private const int ConservativeTrashMinimumTargets = 3;
-    private const float TrashRouteDashMinimumDistance = 6f;
-    private const float TrashRouteDashMinimumGain = 4f;
-    private const float TrashRouteDashMinimumDirectionDot = 0.55f;
     private const float FriendlyAnchorMinimumMoveDistance = 6f;
     private const float FriendlyAnchorMinimumUptimeGain = 4f;
     private readonly record struct DirectionalDashFacingCandidate(float Rotation, Vector3 Destination);
-    private readonly record struct TrashRouteDashContext(bool Active, Vector3 Anchor, string Source)
-    {
-        public static TrashRouteDashContext Inactive { get; } = new(false, default, "<none>");
-    }
 
     private DateTime nextGapCloserAttempt = DateTime.MinValue;
     private string lastGapCloserSafety = "not checked";
@@ -88,8 +80,7 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        var routeDash = this.ResolveTrashRouteDashContext(player);
-        if (!routeDash.Active && this.TryUsePairedReturn(player, target as IBattleNpc))
+        if (this.TryUsePairedReturn(player, target as IBattleNpc))
         {
             return true;
         }
@@ -114,11 +105,9 @@ internal sealed class GapCloserController(
         }
 
         var distanceToHitbox = Geometry.DistanceToHitbox(player.Position, player.HitboxRadius, target.Position, target.HitboxRadius);
-        var safeMovementDestination = routeDash.Active
-            ? routeDash.Anchor
-            : (bossModSafety.TryGetSafeMovementIntent(player.Position, out var safeDestination, out _)
-                ? safeDestination
-                : (Vector3?)null);
+        var safeMovementDestination = bossModSafety.TryGetSafeMovementIntent(player.Position, out var safeDestination, out _)
+            ? safeDestination
+            : (Vector3?)null;
 
         var reengageRange = MathF.Max(CombatConstants.MeleeActionRange, jobRangeProvider.EngagementRange);
         var originalTargetObjectId = target.GameObjectId;
@@ -173,34 +162,56 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (routeDash.Active && classJobId is 29 or 30)
-        {
-            return this.TryUseNinjaRouteShukuchi(player, target as IBattleChara, routeDash);
-        }
-
         return classJobId switch
         {
-            1 or 19 when config.GapCloserPLD => this.TryUseTargetGapCloser(ActionUse.PaladinInterveneActionId, "Intervene", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash),
-            3 or 21 when config.GapCloserWAR => this.TryUseTargetGapCloser(ActionUse.WarriorOnslaughtActionId, "Onslaught", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash),
-            32 when config.GapCloserDRK => this.TryUseTargetGapCloser(ActionUse.DarkKnightShadowstrideActionId, "Shadowstride", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash),
-            37 when config.GapCloserGNB => this.TryUseTargetGapCloser(ActionUse.GunbreakerTrajectoryActionId, "Trajectory", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash),
-            2 or 20 when config.GapCloserMNK => (distanceToHitbox <= CombatConstants.GapCloserMaxRange && this.TryUseTargetGapCloser(ActionUse.MonkThunderclapActionId, "Thunderclap", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash)) ||
-                                               this.TryUseFriendlyReengageGapCloser(ActionUse.MonkThunderclapActionId, "Thunderclap", CombatConstants.GapCloserMaxRange, target as IBattleChara, safeMovementDestination, styleOpportunity, routeDash),
-            4 or 22 when config.GapCloserDRG => this.TryUseTargetGapCloser(ActionUse.DragoonWingedGlideActionId, "Winged Glide", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash),
-            29 or 30 when config.GapCloserNIN => this.TryUseNinjaShukuchi(target, safeMovementDestination, styleOpportunity, routeDash),
-            34 when config.GapCloserSAM => this.TryUseTargetGapCloser(ActionUse.SamuraiGyotenActionId, "Gyoten", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash),
-            38 when config.GapCloserDNC => this.TryUseForwardGapCloser(ActionUse.DancerEnAvantActionId, "En Avant", distanceToHitbox, reengageRange, safeMovementDestination, styleOpportunity, routeDash),
-            39 when config.GapCloserRPR => (!routeDash.Active && this.TryUseReaperRegress(ref this.lastGapCloserSafety, distanceToHitbox, safeMovementDestination, styleOpportunity)) || this.TryUseForwardGapCloser(ActionUse.ReaperHellsIngressActionId, "Hell's Ingress", distanceToHitbox, MathF.Max(reengageRange, CombatConstants.MeleeActionRange + 1f), safeMovementDestination, styleOpportunity, routeDash),
-            41 when config.GapCloserVPR => (distanceToHitbox <= CombatConstants.GapCloserMaxRange && this.TryUseTargetGapCloser(ActionUse.ViperSlitherActionId, "Slither", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash)) ||
-                                          this.TryUseFriendlyReengageGapCloser(ActionUse.ViperSlitherActionId, "Slither", CombatConstants.GapCloserMaxRange, target as IBattleChara, safeMovementDestination, styleOpportunity, routeDash),
-            24 when config.GapCloserWHM => this.TryUseForwardGapCloser(ActionUse.WhiteMageAetherialShiftActionId, "Aetherial Shift", distanceToHitbox, reengageRange, safeMovementDestination, styleOpportunity, routeDash),
-            25 when config.GapCloserBLM => this.TryUseFriendlyReengageGapCloser(ActionUse.BlackMageAetherialManipulationActionId, "Aetherial Manipulation", 25f, target as IBattleChara, safeMovementDestination, styleOpportunity, routeDash),
-            35 when config.GapCloserRDM => this.TryUseTargetGapCloser(ActionUse.RedMageCorpsACorpsActionId, "Corps-a-corps", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash),
-            40 when config.GapCloserSGE => (distanceToHitbox <= 25f && this.TryUseTargetGapCloser(ActionUse.SageIcarusActionId, "Icarus", distanceToHitbox, target, safeMovementDestination, styleOpportunity, routeDash)) ||
-                                           this.TryUseFriendlyReengageGapCloser(ActionUse.SageIcarusActionId, "Icarus", 25f, target as IBattleChara, safeMovementDestination, styleOpportunity, routeDash),
-            42 when config.GapCloserPCT => this.TryUseForwardGapCloser(ActionUse.PictomancerSmudgeActionId, "Smudge", distanceToHitbox, reengageRange, safeMovementDestination, styleOpportunity, routeDash),
+            1 or 19 when config.GapCloserPLD => this.TryUseTargetGapCloser(ActionUse.PaladinInterveneActionId, "Intervene", distanceToHitbox, target, safeMovementDestination, styleOpportunity),
+            3 or 21 when config.GapCloserWAR => this.TryUseTargetGapCloser(ActionUse.WarriorOnslaughtActionId, "Onslaught", distanceToHitbox, target, safeMovementDestination, styleOpportunity),
+            32 when config.GapCloserDRK => this.TryUseTargetGapCloser(ActionUse.DarkKnightShadowstrideActionId, "Shadowstride", distanceToHitbox, target, safeMovementDestination, styleOpportunity),
+            37 when config.GapCloserGNB => this.TryUseTargetGapCloser(ActionUse.GunbreakerTrajectoryActionId, "Trajectory", distanceToHitbox, target, safeMovementDestination, styleOpportunity),
+            2 or 20 when config.GapCloserMNK => (distanceToHitbox <= CombatConstants.GapCloserMaxRange && this.TryUseTargetGapCloser(ActionUse.MonkThunderclapActionId, "Thunderclap", distanceToHitbox, target, safeMovementDestination, styleOpportunity)) ||
+                                               this.TryUseFriendlyReengageGapCloser(ActionUse.MonkThunderclapActionId, "Thunderclap", CombatConstants.GapCloserMaxRange, target as IBattleChara, safeMovementDestination, styleOpportunity),
+            4 or 22 when config.GapCloserDRG => this.TryUseTargetGapCloser(ActionUse.DragoonWingedGlideActionId, "Winged Glide", distanceToHitbox, target, safeMovementDestination, styleOpportunity),
+            29 or 30 when config.GapCloserNIN => this.TryUseNinjaShukuchi(target, safeMovementDestination, styleOpportunity),
+            34 when config.GapCloserSAM => this.TryUseTargetGapCloser(ActionUse.SamuraiGyotenActionId, "Gyoten", distanceToHitbox, target, safeMovementDestination, styleOpportunity),
+            38 when config.GapCloserDNC => this.TryUseForwardGapCloser(ActionUse.DancerEnAvantActionId, "En Avant", distanceToHitbox, reengageRange, safeMovementDestination, styleOpportunity),
+            39 when config.GapCloserRPR => this.TryUseReaperRegress(ref this.lastGapCloserSafety, distanceToHitbox, safeMovementDestination, styleOpportunity) || this.TryUseForwardGapCloser(ActionUse.ReaperHellsIngressActionId, "Hell's Ingress", distanceToHitbox, MathF.Max(reengageRange, CombatConstants.MeleeActionRange + 1f), safeMovementDestination, styleOpportunity),
+            41 when config.GapCloserVPR => (distanceToHitbox <= CombatConstants.GapCloserMaxRange && this.TryUseTargetGapCloser(ActionUse.ViperSlitherActionId, "Slither", distanceToHitbox, target, safeMovementDestination, styleOpportunity)) ||
+                                          this.TryUseFriendlyReengageGapCloser(ActionUse.ViperSlitherActionId, "Slither", CombatConstants.GapCloserMaxRange, target as IBattleChara, safeMovementDestination, styleOpportunity),
+            24 when config.GapCloserWHM => this.TryUseForwardGapCloser(ActionUse.WhiteMageAetherialShiftActionId, "Aetherial Shift", distanceToHitbox, reengageRange, safeMovementDestination, styleOpportunity),
+            25 when config.GapCloserBLM => this.TryUseFriendlyReengageGapCloser(ActionUse.BlackMageAetherialManipulationActionId, "Aetherial Manipulation", 25f, target as IBattleChara, safeMovementDestination, styleOpportunity),
+            35 when config.GapCloserRDM => this.TryUseTargetGapCloser(ActionUse.RedMageCorpsACorpsActionId, "Corps-a-corps", distanceToHitbox, target, safeMovementDestination, styleOpportunity),
+            40 when config.GapCloserSGE => (distanceToHitbox <= 25f && this.TryUseTargetGapCloser(ActionUse.SageIcarusActionId, "Icarus", distanceToHitbox, target, safeMovementDestination, styleOpportunity)) ||
+                                           this.TryUseFriendlyReengageGapCloser(ActionUse.SageIcarusActionId, "Icarus", 25f, target as IBattleChara, safeMovementDestination, styleOpportunity),
+            42 when config.GapCloserPCT => this.TryUseForwardGapCloser(ActionUse.PictomancerSmudgeActionId, "Smudge", distanceToHitbox, reengageRange, safeMovementDestination, styleOpportunity),
             _ => false
         };
+    }
+
+    private bool TryCommitGapCloserTarget(IGameObject target, out string reason)
+    {
+        reason = string.Empty;
+        if (target is not IBattleNpc battleNpc ||
+            battleNpc.BattleNpcKind != BattleNpcSubKind.Combatant ||
+            battleNpc.GameObjectId == 0 ||
+            battleNpc.IsDead ||
+            battleNpc.CurrentHp <= 0)
+        {
+            reason = "gap closer target is no longer valid";
+            return false;
+        }
+
+        if (services.TargetManager.Target?.GameObjectId != battleNpc.GameObjectId)
+        {
+            services.TargetManager.Target = battleNpc;
+        }
+
+        if (services.TargetManager.Target?.GameObjectId == battleNpc.GameObjectId)
+        {
+            return true;
+        }
+
+        reason = "could not select gap closer target";
+        return false;
     }
 
     private unsafe bool TryUsePairedReturn(IBattleChara player, IBattleNpc? currentTarget)
@@ -421,7 +432,7 @@ internal sealed class GapCloserController(
         return used;
     }
 
-    private unsafe bool TryUseFriendlyReengageGapCloser(uint actionId, string actionName, float maxRange, IBattleChara? currentTarget, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity, TrashRouteDashContext routeDash)
+    private unsafe bool TryUseFriendlyReengageGapCloser(uint actionId, string actionName, float maxRange, IBattleChara? currentTarget, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity)
     {
         var player = services.ObjectTable.LocalPlayer;
         if (player == null)
@@ -446,23 +457,17 @@ internal sealed class GapCloserController(
             var styleCandidates = new List<DashStyleCandidate<IBattleChara>>();
             foreach (var ally in this.EnumerateFriendlyReengageTargets(player, currentTarget, maxRange))
             {
-                if (!this.TryValidateTrashRouteDashCandidate(player.Position, ally.Position, routeDash, out var routeReason))
-                {
-                    this.lastGapCloserSafety = routeReason;
-                    continue;
-                }
-
                 if (!mobilityEvaluator.TryValidateDashDestination(
                     player,
                     ally.Position,
                     currentTarget,
                     safeMovementDestination,
-                    routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+                    MobilityIntent.Uptime,
                     actionName,
                     actionId,
                     0f,
                     requireSafetyProgress: false,
-                    requireUptimeProgress: !routeDash.Active,
+                    requireUptimeProgress: true,
                     requireVnavReachable: false,
                     out var decision))
                 {
@@ -470,7 +475,7 @@ internal sealed class GapCloserController(
                     continue;
                 }
 
-                if (!ShouldUseFriendlyAnchorDash(routeDash.Active, decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
+                if (!ShouldUseFriendlyAnchorDash(decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
                 {
                     this.lastGapCloserSafety = anchorReason;
                     mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, anchorReason);
@@ -498,6 +503,14 @@ internal sealed class GapCloserController(
                     return false;
                 }
 
+                if (!this.TryCommitGapCloserTarget(currentTarget, out var targetCommitReason))
+                {
+                    this.lastGapCloserSafety = targetCommitReason;
+                    this.lastSafeLandingPosition = null;
+                    mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, targetCommitReason);
+                    return false;
+                }
+
                 this.lastSafeLandingPosition = selected.Destination;
                 var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, selected.Source.GameObjectId);
                 mobilityEvaluator.RecordActionResult(selected.Decision, used, used ? "action used" : "action failed");
@@ -522,23 +535,17 @@ internal sealed class GapCloserController(
 
         foreach (var ally in this.EnumerateFriendlyReengageTargets(player, currentTarget, maxRange))
         {
-            if (!this.TryValidateTrashRouteDashCandidate(player.Position, ally.Position, routeDash, out var routeReason))
-            {
-                this.lastGapCloserSafety = routeReason;
-                continue;
-            }
-
             if (!mobilityEvaluator.TryValidateDashDestination(
                 player,
                 ally.Position,
                 currentTarget,
                 safeMovementDestination,
-                routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+                MobilityIntent.Uptime,
                 actionName,
                 actionId,
                 0f,
                 requireSafetyProgress: false,
-                requireUptimeProgress: !routeDash.Active,
+                requireUptimeProgress: true,
                 requireVnavReachable: false,
                 out var decision))
             {
@@ -546,11 +553,19 @@ internal sealed class GapCloserController(
                 continue;
             }
 
-            if (!ShouldUseFriendlyAnchorDash(routeDash.Active, decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
+            if (!ShouldUseFriendlyAnchorDash(decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
             {
                 this.lastGapCloserSafety = anchorReason;
                 mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, anchorReason);
                 continue;
+            }
+
+            if (!this.TryCommitGapCloserTarget(currentTarget, out var targetCommitReason))
+            {
+                this.lastGapCloserSafety = targetCommitReason;
+                this.lastSafeLandingPosition = null;
+                mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, targetCommitReason);
+                return false;
             }
 
             this.lastSafeLandingPosition = ally.Position;
@@ -569,7 +584,6 @@ internal sealed class GapCloserController(
     }
 
     internal static bool ShouldUseFriendlyAnchorDash(
-        bool routeDashActive,
         float moveDistance,
         float safetyGain,
         float uptimeGain,
@@ -577,8 +591,7 @@ internal sealed class GapCloserController(
         out string reason)
     {
         reason = string.Empty;
-        if (routeDashActive ||
-            safetyGain > 0.1f ||
+        if (safetyGain > 0.1f ||
             pathGain > 0.1f)
         {
             return true;
@@ -599,7 +612,7 @@ internal sealed class GapCloserController(
         return true;
     }
 
-    private unsafe bool TryUseTargetGapCloser(uint actionId, string actionName, float distanceToHitbox, IGameObject target, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity, TrashRouteDashContext routeDash)
+    private unsafe bool TryUseTargetGapCloser(uint actionId, string actionName, float distanceToHitbox, IGameObject target, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity)
     {
         var player = services.ObjectTable.LocalPlayer;
         if (player == null)
@@ -620,25 +633,17 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (!this.TryValidateTrashRouteDashCandidate(player.Position, destination, routeDash, out var routeReason))
-        {
-            this.lastGapCloserSafety = routeReason;
-            this.lastSafeLandingPosition = null;
-            mobilityEvaluator.RecordIdle(MobilityIntent.PathRecovery, actionName, routeReason);
-            return false;
-        }
-
         if (!mobilityEvaluator.TryValidateDashDestination(
             player,
             destination,
             target as IBattleChara,
             safeMovementDestination,
-            routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+            MobilityIntent.Uptime,
             actionName,
             actionId,
             0f,
             requireSafetyProgress: false,
-            requireUptimeProgress: !routeDash.Active,
+            requireUptimeProgress: true,
             requireVnavReachable: false,
             out var decision))
         {
@@ -650,6 +655,14 @@ internal sealed class GapCloserController(
         if (!this.AcceptStyleOpportunity(styleOpportunity, decision, ref this.lastGapCloserSafety))
         {
             this.lastSafeLandingPosition = null;
+            return false;
+        }
+
+        if (!this.TryCommitGapCloserTarget(target, out var targetCommitReason))
+        {
+            this.lastGapCloserSafety = targetCommitReason;
+            this.lastSafeLandingPosition = null;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, targetCommitReason);
             return false;
         }
 
@@ -667,7 +680,7 @@ internal sealed class GapCloserController(
         return used;
     }
 
-    private unsafe bool TryUseForwardGapCloser(uint actionId, string actionName, float distanceToHitbox, float requiredLandingRange, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity, TrashRouteDashContext routeDash)
+    private unsafe bool TryUseForwardGapCloser(uint actionId, string actionName, float distanceToHitbox, float requiredLandingRange, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity)
     {
         var player = services.ObjectTable.LocalPlayer;
         var target = services.TargetManager.Target;
@@ -687,7 +700,7 @@ internal sealed class GapCloserController(
         var destinationDistanceToHitbox = Geometry.DistanceToHitbox(destination, player.HitboxRadius, target.Position, target.HitboxRadius);
         if (destinationDistanceToHitbox >= distanceToHitbox || destinationDistanceToHitbox > requiredLandingRange)
         {
-            if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, null, null, routeDash))
+            if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, null, null))
             {
                 return false;
             }
@@ -696,34 +709,21 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (!this.TryValidateTrashRouteDashCandidate(player.Position, destination, routeDash, out var routeReason))
-        {
-            if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, null, null, routeDash))
-            {
-                return false;
-            }
-
-            this.lastGapCloserSafety = routeReason;
-            this.lastSafeLandingPosition = null;
-            mobilityEvaluator.RecordIdle(MobilityIntent.PathRecovery, actionName, routeReason);
-            return false;
-        }
-
         if (!mobilityEvaluator.TryValidateDashDestination(
             player,
             destination,
             target as IBattleChara,
             safeMovementDestination,
-            routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+            MobilityIntent.Uptime,
             actionName,
             actionId,
             0f,
             requireSafetyProgress: false,
-            requireUptimeProgress: !routeDash.Active,
+            requireUptimeProgress: true,
             requireVnavReachable: false,
             out var decision))
         {
-            if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, null, null, routeDash))
+            if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, null, null))
             {
                 return false;
             }
@@ -733,7 +733,7 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, destination, decision, routeDash))
+        if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, destination, decision))
         {
             return false;
         }
@@ -758,57 +758,7 @@ internal sealed class GapCloserController(
         return used;
     }
 
-    private unsafe bool TryUseNinjaRouteShukuchi(IBattleChara player, IBattleChara? target, TrashRouteDashContext routeDash)
-    {
-        if (!ActionUse.CanUseAction(ActionUse.NinjaShukuchiActionId))
-        {
-            this.lastGapCloserSafety = "action unavailable";
-            return false;
-        }
-
-        var destination = routeDash.Anchor;
-        if (Geometry.Distance2D(player.Position, destination) > CombatConstants.GapCloserMaxRange)
-        {
-            this.lastGapCloserSafety = "trash route Shukuchi destination out of range";
-            mobilityEvaluator.RecordIdle(MobilityIntent.PathRecovery, "Shukuchi", this.lastGapCloserSafety);
-            return false;
-        }
-
-        if (!this.TryValidateTrashRouteDashCandidate(player.Position, destination, routeDash, out var routeReason))
-        {
-            this.lastGapCloserSafety = routeReason;
-            mobilityEvaluator.RecordIdle(MobilityIntent.PathRecovery, "Shukuchi", routeReason);
-            return false;
-        }
-
-        if (!mobilityEvaluator.TryValidateDashDestination(
-            player,
-            destination,
-            target,
-            routeDash.Anchor,
-            MobilityIntent.PathRecovery,
-            "Shukuchi",
-            ActionUse.NinjaShukuchiActionId,
-            MathF.Max(config.MinimumGapCloserDistance, TrashRouteDashMinimumDistance),
-            requireSafetyProgress: false,
-            requireUptimeProgress: false,
-            requireVnavReachable: false,
-            out var decision))
-        {
-            this.lastGapCloserSafety = decision.RiskReason;
-            return false;
-        }
-
-        var location = destination;
-        var used = ActionManager.Instance()->UseActionLocation(ActionType.Action, ActionUse.NinjaShukuchiActionId, player.GameObjectId, &location);
-        mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
-        this.lastGapCloserSafety = used
-            ? $"used Shukuchi ({decision.IntentLabel}, trash route)"
-            : $"failed to use Shukuchi ({decision.IntentLabel}, trash route)";
-        return used;
-    }
-
-    private unsafe bool TryUseNinjaShukuchi(IGameObject target, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity, TrashRouteDashContext routeDash)
+    private unsafe bool TryUseNinjaShukuchi(IGameObject target, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity)
     {
         var player = services.ObjectTable.LocalPlayer;
         if (player == null)
@@ -822,13 +772,20 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (!this.TryFindSafeShukuchiDestination(player, target as IBattleChara, target.Position, target.HitboxRadius, safeMovementDestination, styleOpportunity, routeDash, out var destination, out var decision, out var styleReason))
+        if (!this.TryFindSafeShukuchiDestination(player, target as IBattleChara, target.Position, target.HitboxRadius, safeMovementDestination, styleOpportunity, out var destination, out var decision, out var styleReason))
         {
             return false;
         }
 
         if (!this.AcceptStyleOpportunity(styleOpportunity, decision, ref this.lastGapCloserSafety))
         {
+            return false;
+        }
+
+        if (!this.TryCommitGapCloserTarget(target, out var targetCommitReason))
+        {
+            this.lastGapCloserSafety = targetCommitReason;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, "Shukuchi", targetCommitReason);
             return false;
         }
 
@@ -856,8 +813,7 @@ internal sealed class GapCloserController(
         float currentDistanceToHitbox,
         Vector3? safeMovementDestination,
         Vector3? currentDestination,
-        MobilityDecisionDiagnostics? currentDecision,
-        TrashRouteDashContext routeDash)
+        MobilityDecisionDiagnostics? currentDecision)
     {
         if (target == null)
         {
@@ -875,8 +831,7 @@ internal sealed class GapCloserController(
                        dashDistance,
                        requiredLandingRange,
                        currentDistanceToHitbox,
-                       safeMovementDestination,
-                       routeDash);
+                       safeMovementDestination);
         }
 
         var currentMaxMeleeError = currentDestination.HasValue
@@ -891,23 +846,17 @@ internal sealed class GapCloserController(
                 continue;
             }
 
-            if (!this.TryValidateTrashRouteDashCandidate(player.Position, candidate.Destination, routeDash, out var routeReason))
-            {
-                this.lastGapCloserSafety = routeReason;
-                continue;
-            }
-
             if (!mobilityEvaluator.TryValidateDashDestination(
                 player,
                 candidate.Destination,
                 target,
                 safeMovementDestination,
-                routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+                MobilityIntent.Uptime,
                 actionName,
                 actionId,
                 0f,
                 requireSafetyProgress: false,
-                requireUptimeProgress: !routeDash.Active,
+                requireUptimeProgress: true,
                 requireVnavReachable: false,
                 out var decision))
             {
@@ -958,8 +907,7 @@ internal sealed class GapCloserController(
         float dashDistance,
         float requiredLandingRange,
         float currentDistanceToHitbox,
-        Vector3? safeMovementDestination,
-        TrashRouteDashContext routeDash)
+        Vector3? safeMovementDestination)
     {
         var toTarget = target.Position - player.Position;
         toTarget.Y = 0f;
@@ -976,23 +924,17 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (!this.TryValidateTrashRouteDashCandidate(player.Position, destination, routeDash, out var routeReason))
-        {
-            this.lastGapCloserSafety = routeReason;
-            return false;
-        }
-
         if (!mobilityEvaluator.TryValidateDashDestination(
             player,
             destination,
             target,
             safeMovementDestination,
-            routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+            MobilityIntent.Uptime,
             actionName,
             actionId,
             0f,
             requireSafetyProgress: false,
-            requireUptimeProgress: !routeDash.Active,
+            requireUptimeProgress: true,
             requireVnavReachable: false,
             out var decision))
         {
@@ -1019,7 +961,6 @@ internal sealed class GapCloserController(
         float targetHitboxRadius,
         Vector3? safeMovementDestination,
         DashStyleReengageOpportunity styleOpportunity,
-        TrashRouteDashContext routeDash,
         out Vector3 destination,
         out MobilityDecisionDiagnostics selectedDecision,
         out string styleReason)
@@ -1034,23 +975,17 @@ internal sealed class GapCloserController(
                     continue;
                 }
 
-                if (!this.TryValidateTrashRouteDashCandidate(player.Position, candidate, routeDash, out var routeReason))
-                {
-                    this.lastGapCloserSafety = routeReason;
-                    continue;
-                }
-
                 if (mobilityEvaluator.TryValidateDashDestination(
                     player,
                     candidate,
                     target,
                     safeMovementDestination,
-                    routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+                    MobilityIntent.Uptime,
                     "Shukuchi",
                     ActionUse.NinjaShukuchiActionId,
                     0f,
                     requireSafetyProgress: false,
-                    requireUptimeProgress: !routeDash.Active,
+                    requireUptimeProgress: true,
                     requireVnavReachable: false,
                     out var decision))
                 {
@@ -1099,23 +1034,17 @@ internal sealed class GapCloserController(
                 continue;
             }
 
-            if (!this.TryValidateTrashRouteDashCandidate(player.Position, candidate, routeDash, out var routeReason))
-            {
-                this.lastGapCloserSafety = routeReason;
-                continue;
-            }
-
             if (mobilityEvaluator.TryValidateDashDestination(
                 player,
                 candidate,
                 target,
                 safeMovementDestination,
-                routeDash.Active ? MobilityIntent.PathRecovery : MobilityIntent.Uptime,
+                MobilityIntent.Uptime,
                 "Shukuchi",
                 ActionUse.NinjaShukuchiActionId,
                 0f,
                 requireSafetyProgress: false,
-                requireUptimeProgress: !routeDash.Active,
+                requireUptimeProgress: true,
                 requireVnavReachable: false,
                 out var decision))
             {
@@ -1154,94 +1083,6 @@ internal sealed class GapCloserController(
 
         lastSafety = $"{activeStyle.Reason}: style gain under 3y";
         return false;
-    }
-
-    private TrashRouteDashContext ResolveTrashRouteDashContext(IBattleChara player)
-    {
-        var trash = trashPullDiagnostics();
-        if (trash.Phase is not (TrashPullPhase.Gathering or TrashPullPhase.Stabilizing) ||
-            trash.Confidence < ConservativeTrashMinimumConfidence)
-        {
-            return TrashRouteDashContext.Inactive;
-        }
-
-        var planner = movementPlannerDiagnostics();
-        if (!planner.Destination.HasValue ||
-            !IsTrashRoutePlannerSource(planner.ChosenSource) ||
-            planner.BmrForbiddenZones > 0 ||
-            planner.BmrMoveRequested ||
-            planner.BmrMoveImminent ||
-            planner.BmrForcedMovement is { } forced && forced.LengthSquared() > 0.01f ||
-            !IsFinite(planner.Destination.Value))
-        {
-            return TrashRouteDashContext.Inactive;
-        }
-
-        return new(true, planner.Destination.Value, planner.ChosenSource);
-    }
-
-    private bool TryValidateTrashRouteDashCandidate(
-        Vector3 playerPosition,
-        Vector3 destination,
-        TrashRouteDashContext routeDash,
-        out string reason)
-    {
-        reason = string.Empty;
-        if (!routeDash.Active)
-        {
-            return true;
-        }
-
-        var currentDistance = Geometry.Distance2D(playerPosition, routeDash.Anchor);
-        var landingDistance = Geometry.Distance2D(destination, routeDash.Anchor);
-        var routeGain = currentDistance - landingDistance;
-        if (routeGain < TrashRouteDashMinimumGain)
-        {
-            reason = $"trash route dash rejected: route gain {routeGain:0.0}y toward {routeDash.Source}";
-            return false;
-        }
-
-        if (!TryDirectionDot(playerPosition, destination, routeDash.Anchor, out var dot))
-        {
-            reason = $"trash route dash rejected: no route direction toward {routeDash.Source}";
-            return false;
-        }
-
-        if (dot < TrashRouteDashMinimumDirectionDot)
-        {
-            reason = $"trash route dash rejected: direction {dot:0.00} toward {routeDash.Source}";
-            return false;
-        }
-
-        return true;
-    }
-
-    private static bool IsTrashRoutePlannerSource(string source)
-    {
-        return source.Equals("Tank pull lead", StringComparison.Ordinal);
-    }
-
-    private static bool TryDirectionDot(Vector3 from, Vector3 destination, Vector3 routeAnchor, out float dot)
-    {
-        var dash = destination - from;
-        var route = routeAnchor - from;
-        dash.Y = 0f;
-        route.Y = 0f;
-        if (dash.LengthSquared() <= 0.0001f || route.LengthSquared() <= 0.0001f)
-        {
-            dot = 0f;
-            return false;
-        }
-
-        dot = Vector3.Dot(Vector3.Normalize(dash), Vector3.Normalize(route));
-        return true;
-    }
-
-    private static bool IsFinite(Vector3 value)
-    {
-        return float.IsFinite(value.X) &&
-               float.IsFinite(value.Y) &&
-               float.IsFinite(value.Z);
     }
 
     private bool ShouldConserveTrashPullGapCloser(IBattleChara player, IGameObject target, float distanceToHitbox, uint classJobId, out string reason)

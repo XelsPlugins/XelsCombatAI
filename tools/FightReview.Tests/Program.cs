@@ -19,10 +19,14 @@ var tests = new (string Name, Action Body)[]
     ("trash pull diagnostics parsing", TrashPullDiagnosticsParsing),
     ("2D BMR pathfind center parsing", PathfindCenter2dParsing),
     ("BOM-prefixed JSONL", BomPrefixedJsonl),
+    ("header metadata falls back to frames", HeaderMetadataFallsBackToFrames),
     ("schema v2 rejection", SchemaV2Rejected),
     ("configuration logging defaults/reset", ConfigurationLoggingDefaultsAndReset),
     ("configuration tank lead defaults/reset", ConfigurationTankLeadDefaultsAndReset),
     ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
+    ("healer coverage restores single missing member", HealerCoverageRestoresSingleMissingMember),
+    ("healer coverage combines with forbidden zones", HealerCoverageCombinesWithForbiddenZones),
+    ("pack movement combines with forbidden zones", PackMovementCombinesWithForbiddenZones),
     ("multi-target large trash remains trash context", MultiTargetLargeTrashRemainsTrashContext),
     ("trash pull tracker phase transitions", TrashPullTrackerPhaseTransitions),
     ("trash pull tracker remote settled pack remains catch-up", TrashPullTrackerRemoteSettledPackRemainsCatchUp),
@@ -67,6 +71,7 @@ var tests = new (string Name, Action Body)[]
     ("trash late pack engagement ignores BMR safety", TrashLatePackEngagementIgnoresBmrSafety),
     ("trash late pack engagement ignores in-range single target", TrashLatePackEngagementIgnoresInRangeSingleTarget),
     ("missed tank lead detector", MissedTankLeadDetector),
+    ("missed tank lead ignores legacy direct goal", MissedTankLeadIgnoresLegacyDirectGoal),
     ("tank lead clamp detector", TankLeadClampDetector),
     ("straggler focus during gathering detector", StragglerFocusDuringGatheringDetector),
     ("tank lead corner failure detector", TankLeadCornerFailureDetector),
@@ -130,6 +135,25 @@ static void BomPrefixedJsonl()
 
     var log = XcaiLogReader.Read(path);
     AssertEqual(2, log.Frames.Count, "BOM frame count");
+}
+
+static void HeaderMetadataFallsBackToFrames()
+{
+    using var temp = TempDirectory.Create();
+    var path = Path.Combine(temp.Path, "header-fallback.jsonl");
+    File.WriteAllText(
+        path,
+        """
+        {"Type":"header","SchemaVersion":3,"PluginVersion":"tests","CombatStartUtc":"2026-01-01T00:00:00Z","CombatEndUtc":"2026-01-01T00:00:01Z","DurationSeconds":1,"FrameCount":2,"PlayerClassJobId":0,"TerritoryType":0,"ContentFinderConditionId":0,"BossModActiveModule":"<none>","BossModActiveZoneModule":"<none>","Config":{"CombatStyle":"Greed"}}
+        {"Type":"frame","Frame":{"TimestampUtc":"2026-01-01T00:00:00Z","T":0,"InCombat":false,"IsDead":false,"PlayerClassJobId":0,"TerritoryType":0,"ContentFinderConditionId":0,"PlayerRotation":0,"TargetBaseId":0,"TargetObjectId":0,"TargetRotation":0,"TargetRadius":0,"TargetUptimeRange":-1,"AutomatedMovementSuppressed":false,"ManualMovementInput":"available","BossModActiveModule":"<none>","BossModActiveZoneModule":"<none>","Reason":"reset","TrashPull":{}}}
+        {"Type":"frame","Frame":{"TimestampUtc":"2026-01-01T00:00:01Z","T":1,"InCombat":true,"IsDead":false,"PlayerClassJobId":20,"TerritoryType":1314,"ContentFinderConditionId":1064,"PlayerRotation":0,"TargetBaseId":19045,"TargetObjectId":1,"TargetRotation":0,"TargetRadius":4.5,"TargetUptimeRange":2.6,"AutomatedMovementSuppressed":false,"ManualMovementInput":"available","BossModActiveModule":"D121TrenoCatoblepas","BossModActiveZoneModule":"<none>","Reason":"active","TrashPull":{}}}
+        """);
+
+    var log = XcaiLogReader.Read(path);
+    AssertEqual((uint)20, log.Header.PlayerClassJobId, "fallback job");
+    AssertEqual((uint)1314, log.Header.TerritoryType, "fallback territory");
+    AssertEqual((uint)1064, log.Header.ContentFinderConditionId, "fallback cfcid");
+    AssertEqual("D121TrenoCatoblepas", log.Header.BossModActiveModule, "fallback module");
 }
 
 static void ArtifactWriterEmitsAgentImprovementPacket()
@@ -291,7 +315,6 @@ static void FriendlyAnchorDashRequiresMeaningfulGain()
 {
     AssertFalse(
         GapCloserController.ShouldUseFriendlyAnchorDash(
-            routeDashActive: false,
             moveDistance: 3.1f,
             safetyGain: 0f,
             uptimeGain: 2.4f,
@@ -302,7 +325,6 @@ static void FriendlyAnchorDashRequiresMeaningfulGain()
 
     AssertFalse(
         GapCloserController.ShouldUseFriendlyAnchorDash(
-            routeDashActive: false,
             moveDistance: 8f,
             safetyGain: 0f,
             uptimeGain: 2f,
@@ -313,7 +335,6 @@ static void FriendlyAnchorDashRequiresMeaningfulGain()
 
     AssertTrue(
         GapCloserController.ShouldUseFriendlyAnchorDash(
-            routeDashActive: false,
             moveDistance: 8f,
             safetyGain: 0f,
             uptimeGain: 5f,
@@ -323,7 +344,6 @@ static void FriendlyAnchorDashRequiresMeaningfulGain()
 
     AssertTrue(
         GapCloserController.ShouldUseFriendlyAnchorDash(
-            routeDashActive: false,
             moveDistance: 3f,
             safetyGain: 1f,
             uptimeGain: 0f,
@@ -333,23 +353,96 @@ static void FriendlyAnchorDashRequiresMeaningfulGain()
 
     AssertTrue(
         GapCloserController.ShouldUseFriendlyAnchorDash(
-            routeDashActive: false,
             moveDistance: 3f,
             safetyGain: 0f,
             uptimeGain: 0f,
             pathGain: 1f,
             out _),
         "path recovery anchor can still be short");
+}
+
+static void HealerCoverageRestoresSingleMissingMember()
+{
+    AssertTrue(
+        HealerAoePositioningController.ShouldRestoreSingleMissingCoverage(
+            currentCoveredCount: 6,
+            bestCoveredCount: 7,
+            totalMembers: 7,
+            distanceToCenter: 5.5f),
+        "short move to restore full healer coverage should be worthwhile");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldRestoreSingleMissingCoverage(
+            currentCoveredCount: 5,
+            bestCoveredCount: 6,
+            totalMembers: 7,
+            distanceToCenter: 3f),
+        "single-member partial coverage gain should remain a convenience skip");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldRestoreSingleMissingCoverage(
+            currentCoveredCount: 6,
+            bestCoveredCount: 7,
+            totalMembers: 7,
+            distanceToCenter: 8f),
+        "full coverage restore should stay distance bounded");
+}
+
+static void HealerCoverageCombinesWithForbiddenZones()
+{
+    AssertFalse(
+        HealerAoePositioningController.ShouldYieldCoverageForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: true,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false),
+        "healer coverage should be allowed to bias safe mechanic gaps");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldYieldCoverageForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: false,
+            bmrMoveRequested: true,
+            bmrMoveImminent: true),
+        "existing BMR movement should not suppress coverage scoring");
 
     AssertTrue(
-        GapCloserController.ShouldUseFriendlyAnchorDash(
-            routeDashActive: true,
-            moveDistance: 3f,
-            safetyGain: 0f,
-            uptimeGain: 0f,
-            pathGain: 0f,
-            out _),
-        "route anchor can still be short");
+        HealerAoePositioningController.ShouldYieldCoverageForSafety(
+            forcedMovementActive: true,
+            forbiddenSafetyActive: true,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false),
+        "forced mechanic movement remains authoritative");
+}
+
+static void PackMovementCombinesWithForbiddenZones()
+{
+    AssertFalse(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: true,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false,
+            bossModuleContext: true),
+        "pack movement should be allowed to bias safe mechanic gaps");
+
+    AssertFalse(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: false,
+            bmrMoveRequested: true,
+            bmrMoveImminent: true,
+            bossModuleContext: false),
+        "existing BMR movement should not suppress pack scoring");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: true,
+            forbiddenSafetyActive: false,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false,
+            bossModuleContext: false),
+        "forced mechanic movement remains authoritative");
 }
 
 static void MultiTargetLargeTrashRemainsTrashContext()
@@ -1016,6 +1109,22 @@ static void MissedTankLeadDetector()
             leadDestination: new Vec3(6, 0, 0)));
 
     AssertHasIncident(IncidentDetector.Detect(Log(frame)), "missed-tank-lead");
+}
+
+static void MissedTankLeadIgnoresLegacyDirectGoal()
+{
+    var frame = Frame(
+        0,
+        chosenSource: "<none>",
+        actionName: "Tank pull lead",
+        aoeReason: "following tank lead; behind=9.0y; clamped behind tank",
+        packTargetCount: 4,
+        trashPull: TrashPull(
+            leadCandidateActive: true,
+            behindDistance: 9,
+            leadDestination: new Vec3(6, 0, 0)));
+
+    AssertNoIncident(IncidentDetector.Detect(Log(frame)), "missed-tank-lead");
 }
 
 static void TankLeadClampDetector()

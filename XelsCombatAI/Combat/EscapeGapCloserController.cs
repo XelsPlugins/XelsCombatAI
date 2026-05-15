@@ -8,8 +8,18 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace XelsCombatAI.Combat;
 
-internal sealed class EscapeGapCloserController(Configuration config, DalamudServices services, BossModReflectionSafety bossModSafety, MobilityDecisionEvaluator mobilityEvaluator, GapCloserController gapCloserController, DashStyleController dashStyleController, FacingController facingController)
+internal sealed class EscapeGapCloserController(
+    Configuration config,
+    DalamudServices services,
+    BossModReflectionSafety bossModSafety,
+    MobilityDecisionEvaluator mobilityEvaluator,
+    GapCloserController gapCloserController,
+    DashStyleController dashStyleController,
+    FacingController facingController,
+    Func<BossModMovementDiagnostics> bossModMovementDiagnostics)
 {
+    private const float GreedGcdAssistUrgencySeconds = 2.5f;
+    private const float GreedLastMomentAssistUrgencySeconds = 1.0f;
     private DateTime nextEscapeGapCloserAttempt = DateTime.MinValue;
     private DateTime escapeDangerDetectedAt = DateTime.MinValue;
     private string lastEscapeGapCloserSafety = "not checked";
@@ -87,6 +97,15 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         if (!currentSafe && !hasSafeMovementIntent)
         {
             this.lastEscapeGapCloserSafety = intentReason;
+            return false;
+        }
+
+        if (currentSafe && !this.ShouldAssistSafeBossModMovement(out var safeAssistReason))
+        {
+            this.escapeDangerDetectedAt = DateTime.MinValue;
+            this.lastEscapeGapCloserSafety = safeAssistReason;
+            this.lastSafeEscapeDestination = null;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Safety, "Gap closer", safeAssistReason);
             return false;
         }
 
@@ -775,6 +794,62 @@ internal sealed class EscapeGapCloserController(Configuration config, DalamudSer
         {
             yield return candidate;
         }
+    }
+
+    private bool ShouldAssistSafeBossModMovement(out string reason)
+    {
+        if (config.CombatStyle == CombatStyle.Normal)
+        {
+            reason = "current position safe; normal timing walks";
+            return false;
+        }
+
+        if (config.CombatStyle == CombatStyle.Greed)
+        {
+            reason = "greedy timing allows safe movement dash";
+            return true;
+        }
+
+        var movement = bossModMovementDiagnostics();
+        if (!TryGetBossModMovementUrgency(movement, out var urgencySeconds))
+        {
+            reason = $"{config.CombatStyle}: waiting for BMR movement timing";
+            return false;
+        }
+
+        var threshold = config.CombatStyle == CombatStyle.GreedLastMoment
+            ? GreedLastMomentAssistUrgencySeconds
+            : GreedGcdAssistUrgencySeconds;
+        if (urgencySeconds > threshold)
+        {
+            reason = $"{config.CombatStyle}: BMR movement in {urgencySeconds:0.0}s";
+            return false;
+        }
+
+        reason = $"{config.CombatStyle}: BMR movement due in {urgencySeconds:0.0}s";
+        return true;
+    }
+
+    private static bool TryGetBossModMovementUrgency(BossModMovementDiagnostics movement, out float urgencySeconds)
+    {
+        urgencySeconds = float.MaxValue;
+        var found = false;
+        AddUrgency(movement.NavigationDetails.ForceMovementIn, ref urgencySeconds, ref found);
+        AddUrgency(movement.NavigationDetails.LeewaySeconds, ref urgencySeconds, ref found);
+        return found;
+    }
+
+    private static void AddUrgency(float? value, ref float urgencySeconds, ref bool found)
+    {
+        if (!value.HasValue ||
+            !float.IsFinite(value.Value) ||
+            value.Value < 0f)
+        {
+            return;
+        }
+
+        urgencySeconds = MathF.Min(urgencySeconds, value.Value);
+        found = true;
     }
 
     private void RecordEscapeActionUsed(uint actionId, string actionName, string? styleReason)

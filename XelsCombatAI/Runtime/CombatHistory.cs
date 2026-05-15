@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Text;
@@ -44,6 +43,11 @@ internal sealed class CombatHistory
     public DateTime CombatStartUtc => this.combatStart;
     public CombatHistoryFrame? FirstFrame => this.count == 0 ? null : this.frames[this.head];
     public CombatHistoryFrame? LastFrame => this.count == 0 ? null : this.frames[(this.head + this.count - 1) % MaxFrames];
+    public uint PlayerClassJobId => this.FirstNonZero(frame => frame.PlayerClassJobId);
+    public uint TerritoryType => this.FirstNonZero(frame => frame.TerritoryType);
+    public uint ContentFinderConditionId => this.FirstNonZero(frame => frame.ContentFinderConditionId);
+    public string BossModActiveModule => this.LastNonNone(frame => frame.BossModActiveModule);
+    public string BossModActiveZoneModule => this.LastNonNone(frame => frame.BossModActiveZoneModule);
 
     public bool ShouldRecord(bool inCombat)
     {
@@ -111,6 +115,8 @@ internal sealed class CombatHistory
             Henched: aoe.RsrHenchedActive,
             RsrStatus: aoe.RsrStatus,
             RsrReflectionDiagnostics: aoe.RsrReflectionDiagnostics,
+            RotationSolverIpcDiagnostics: status.RotationSolverIpcDiagnostics,
+            RotationSolverRedMageMeleeDiagnostics: status.RotationSolverRedMageMeleeDiagnostics,
             RsrSnapshotMode: aoe.RsrSnapshotMode,
             RsrLastRestore: aoe.RsrLastRestoreStatus,
             Targets: aoe.PriorityTargetCount,
@@ -151,7 +157,6 @@ internal sealed class CombatHistory
             BossModMovementOverride: status.BossModMovement.MovementOverride,
             BossModHintSummary: status.BossModMovement.HintSummary,
             BossModMovement: status.BossModMovement,
-            MovementPlanner: status.MovementPlanner,
             ManualMovementInput: status.ManualMovementInput,
             Facing: status.Facing,
             RedMageMeleeCombo: status.RedMageMeleeCombo,
@@ -183,12 +188,11 @@ internal sealed class CombatHistory
             return sb.ToString();
         }
 
-        var first = this.frames[this.head]!;
         var last = this.frames[(this.head + this.count - 1) % MaxFrames]!;
         sb.AppendLine($"Start={this.combatStart:O}  Duration={last.T:0.0}s  Frames={this.count}");
         sb.AppendLine();
         sb.AppendLine("[Header]");
-        sb.AppendLine($"Job={first.PlayerClassJobId}  TargetUptime={config.ManageTargetUptime}  PickAoeTarget={config.PickBetterAoeTarget}  KeepTrashTarget={config.KeepTrashTargetSelected}  LeadTrashPulls={config.LeadTrashPullsWithTank}  ManagePositionals={config.ManagePositionals}  ManageTrueNorth={config.ManageTrueNorth}  SocialTurning={config.ManageSocialTurning}  RedMageMelee={config.UseRedMageMeleeComboMovement}  CombatStyle={config.CombatStyle}  RsrSnapshot={this.lastSeenRsrSnapshotMode}");
+        sb.AppendLine($"Job={this.PlayerClassJobId}  TargetUptime={config.ManageTargetUptime}  PickAoeTarget={config.PickBetterAoeTarget}  KeepTrashTarget={config.KeepTrashTargetSelected}  LeadTrashPulls={config.LeadTrashPullsWithTank}  ManagePositionals={config.ManagePositionals}  ManageTrueNorth={config.ManageTrueNorth}  SocialTurning={config.ManageSocialTurning}  RedMageMelee={config.UseRedMageMeleeComboMovement}  CombatStyle={config.CombatStyle}  RsrSnapshot={this.lastSeenRsrSnapshotMode}");
         sb.AppendLine();
         sb.AppendLine("[Frames]");
 
@@ -227,18 +231,6 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "BMRController", frame.BossModControllerTarget, prev?.BossModControllerTarget);
             AppendIfChanged(sb, "BMRMove", frame.BossModMovementOverride, prev?.BossModMovementOverride);
             AppendIfChanged(sb, "BMRHints", frame.BossModHintSummary, prev?.BossModHintSummary);
-            AppendIfChanged(sb, "PlannerIntent", frame.MovementPlanner.IntentId, prev?.MovementPlanner.IntentId);
-            AppendIfChanged(sb, "PlannerSource", frame.MovementPlanner.ChosenSource, prev?.MovementPlanner.ChosenSource);
-            AppendIfChanged(sb, "PlannerDest", FormatVector(frame.MovementPlanner.Destination), prev == null ? null : FormatVector(prev.MovementPlanner.Destination));
-            AppendIfChanged(sb, "PlannerSwitch", frame.MovementPlanner.SwitchReason, prev?.MovementPlanner.SwitchReason);
-            AppendIfChanged(sb, "PlannerSuppress", frame.MovementPlanner.SuppressionReason, prev?.MovementPlanner.SuppressionReason);
-            AppendIfChanged(sb, "PlannerCounts", $"{frame.MovementPlanner.AcceptedCount}/{frame.MovementPlanner.GeneratedCount}", prev == null ? null : $"{prev.MovementPlanner.AcceptedCount}/{prev.MovementPlanner.GeneratedCount}");
-            AppendIfChanged(sb, "PlannerPath", frame.MovementPlanner.PathStatus, prev?.MovementPlanner.PathStatus);
-            AppendIfChanged(sb, "PlannerScore", frame.MovementPlanner.ScoreBreakdown, prev?.MovementPlanner.ScoreBreakdown);
-            AppendIfChanged(sb, "PlannerRejects", FormatPlannerRejects(frame.MovementPlanner.RejectedByReason), prev == null ? null : FormatPlannerRejects(prev.MovementPlanner.RejectedByReason));
-            AppendIfChanged(sb, "BMRGeometry", FormatBmrGeometry(frame.MovementPlanner), prev == null ? null : FormatBmrGeometry(prev.MovementPlanner));
-            AppendIfChanged(sb, "RouteMemory", FormatRouteMemory(frame.MovementPlanner.RouteMemory), prev == null ? null : FormatRouteMemory(prev.MovementPlanner.RouteMemory));
-            AppendIfChanged(sb, "TargetLOS", FormatLineOfSight(frame.MovementPlanner.LineOfSight), prev == null ? null : FormatLineOfSight(prev.MovementPlanner.LineOfSight));
             AppendIfChanged(sb, "SafetyBuffer", frame.SafetyBuffer, prev?.SafetyBuffer);
             AppendIfChanged(sb, "TargetUptime", $"{frame.TargetUptimeRange:0.0}", prev == null ? null : $"{prev.TargetUptimeRange:0.0}");
             AppendIfChanged(sb, "Positional", frame.LastPositional, prev?.LastPositional);
@@ -261,6 +253,8 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "RsrRestore", frame.RsrLastRestore, prev?.RsrLastRestore);
             AppendIfChanged(sb, "RsrSnapshot", frame.RsrSnapshotMode, prev?.RsrSnapshotMode);
             AppendIfChanged(sb, "RsrReflect", frame.RsrReflectionDiagnostics, prev?.RsrReflectionDiagnostics);
+            AppendIfChanged(sb, "RsrIpc", frame.RotationSolverIpcDiagnostics, prev?.RotationSolverIpcDiagnostics);
+            AppendIfChanged(sb, "RsrRdmReflect", frame.RotationSolverRedMageMeleeDiagnostics, prev?.RotationSolverRedMageMeleeDiagnostics);
             AppendIfChanged(sb, "Targets", frame.Targets, prev?.Targets);
             if (frame.CurrentHits != 0 || frame.BestHits != 0 || prev?.CurrentHits != 0 || prev?.BestHits != 0)
                 AppendIfChanged(sb, "Hits", $"{frame.CurrentHits}/{frame.BestHits}", $"{prev?.CurrentHits}/{prev?.BestHits}");
@@ -374,11 +368,11 @@ internal sealed class CombatHistory
                 CombatEndUtc: last.TimestampUtc,
                 DurationSeconds: last.T,
                 FrameCount: this.count,
-                PlayerClassJobId: this.FirstFrame?.PlayerClassJobId ?? 0,
-                TerritoryType: this.FirstFrame?.TerritoryType ?? 0,
-                ContentFinderConditionId: this.FirstFrame?.ContentFinderConditionId ?? 0,
-                BossModActiveModule: last.BossModActiveModule,
-                BossModActiveZoneModule: last.BossModActiveZoneModule,
+                PlayerClassJobId: this.PlayerClassJobId,
+                TerritoryType: this.TerritoryType,
+                ContentFinderConditionId: this.ContentFinderConditionId,
+                BossModActiveModule: this.BossModActiveModule,
+                BossModActiveZoneModule: this.BossModActiveZoneModule,
                 Config: CombatHistoryConfigSnapshot.From(config),
                 RsrSnapshotMode: this.lastSeenRsrSnapshotMode.ToString()),
             JsonOptions));
@@ -442,42 +436,6 @@ internal sealed class CombatHistory
             : "<none>";
     }
 
-    private static string FormatPlannerRejects(IReadOnlyDictionary<string, int> rejected)
-    {
-        return rejected.Count == 0
-            ? "<none>"
-            : string.Join(",", rejected.OrderBy(entry => entry.Key, StringComparer.Ordinal).Select(entry => $"{entry.Key}:{entry.Value}"));
-    }
-
-    private static string FormatLineOfSight(MovementLineOfSightDiagnostics lineOfSight)
-    {
-        if (!lineOfSight.Checked)
-        {
-            return $"unchecked/{lineOfSight.Reason}";
-        }
-
-        var state = lineOfSight.Blocked ? "blocked" : "clear";
-        var blockedDistance = lineOfSight.BlockedDistance.HasValue
-            ? lineOfSight.BlockedDistance.Value.ToString("0.0", CultureInfo.InvariantCulture)
-            : "<none>";
-        return $"{state}/combat={lineOfSight.CombatClear}/nav={lineOfSight.NavigationClear}/blocked={blockedDistance}/{lineOfSight.Reason}";
-    }
-
-    private static string FormatRouteMemory(TrashRouteMemoryDiagnostics routeMemory)
-    {
-        if (!routeMemory.Active)
-        {
-            return $"{routeMemory.State}/{routeMemory.Reason}";
-        }
-
-        return $"{routeMemory.Source}/{routeMemory.State}/dest={FormatVector(routeMemory.LocalDestination)}/offset={routeMemory.OffsetSide}:{routeMemory.OffsetDistance:0.0}/vnav={routeMemory.VnavStatus}/budget={routeMemory.QueryBudgetUsed}/{routeMemory.QueryBudgetLimit}/{routeMemory.InvalidationReason}";
-    }
-
-    private static string FormatBmrGeometry(MovementPlannerDiagnostics planner)
-    {
-        return $"goals={planner.BmrGoalZones}/forbid={planner.BmrForbiddenZones}/obs={planner.BmrTemporaryObstacles}/tele={planner.BmrTeleporters}/active={planner.BmrDynamicGeometry}";
-    }
-
     private static MobilityDecisionDiagnostics FreshMobilityDecision(DateTime now, MobilityDecisionDiagnostics decision)
     {
         return decision.TimestampUtc != DateTime.MinValue &&
@@ -505,6 +463,35 @@ internal sealed class CombatHistory
         var candidate = FormatVector(status.CandidateDestination);
         var landing = FormatVector(status.LastJumpLanding);
         return $"enabled={status.Enabled}/mode={status.Mode}/reason={status.LastReason}/mana={status.WhiteMana}:{status.BlackMana}/stacks={status.ManaStacks}/next={status.NextActionName}({status.NextActionId})/targets={status.AffectedTargets}/candidate={candidate}/jump={landing}";
+    }
+
+    private uint FirstNonZero(Func<CombatHistoryFrame, uint> selector)
+    {
+        for (var i = 0; i < this.count; i++)
+        {
+            var value = selector(this.frames[(this.head + i) % MaxFrames]!);
+            if (value != 0)
+            {
+                return value;
+            }
+        }
+
+        return 0;
+    }
+
+    private string LastNonNone(Func<CombatHistoryFrame, string> selector)
+    {
+        for (var i = this.count - 1; i >= 0; i--)
+        {
+            var value = selector(this.frames[(this.head + i) % MaxFrames]!);
+            if (!string.IsNullOrWhiteSpace(value) &&
+                !value.Equals("<none>", StringComparison.Ordinal))
+            {
+                return value;
+            }
+        }
+
+        return "<none>";
     }
 
     private sealed record CombatHistoryJsonHeader(

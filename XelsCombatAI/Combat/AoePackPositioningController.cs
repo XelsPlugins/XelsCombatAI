@@ -308,10 +308,12 @@ internal sealed class AoePackPositioningController(
         var forcedSafetyActive = this.BossModForcedMovementActive(hints);
         var forbiddenSafetyActive = this.BossModForbiddenSafetyActive(hints);
         var mechanicSafetyActive = forcedSafetyActive || forbiddenSafetyActive;
-        var shouldYieldToMechanicSafety = forcedSafetyActive ||
-                                          this.bmrMoveRequested ||
-                                          this.bmrMoveImminent ||
-                                          bossModuleContext && forbiddenSafetyActive;
+        var shouldYieldToMechanicSafety = ShouldYieldPackMovementForSafety(
+            forcedSafetyActive,
+            forbiddenSafetyActive,
+            this.bmrMoveRequested,
+            this.bmrMoveImminent,
+            bossModuleContext);
         var trashDiagnostics = this.UpdateTrashPullState(targets, allPackTargets, inAoeSituation, bossModuleContext, shouldYieldToMechanicSafety);
         if (config.KeepTrashTargetSelected)
         {
@@ -337,7 +339,7 @@ internal sealed class AoePackPositioningController(
             this.lastAction = null;
             this.lastCurrentHits = 0;
             this.lastBestHits = 0;
-            this.lastReason = mechanicSafetyActive ? "mechanic safety active" : "BMR movement active";
+            this.lastReason = mechanicSafetyActive ? "forced mechanic movement active" : "BMR movement active";
             return;
         }
 
@@ -880,6 +882,20 @@ internal sealed class AoePackPositioningController(
         }
 
         return hitboxBossLikeContext || previousBossLikeCombatActive;
+    }
+
+    internal static bool ShouldYieldPackMovementForSafety(
+        bool forcedMovementActive,
+        bool forbiddenSafetyActive,
+        bool bmrMoveRequested,
+        bool bmrMoveImminent,
+        bool bossModuleContext)
+    {
+        _ = forbiddenSafetyActive;
+        _ = bmrMoveRequested;
+        _ = bmrMoveImminent;
+        _ = bossModuleContext;
+        return forcedMovementActive;
     }
 
     private void ApplyRsrTargeting(ulong primaryId, IReadOnlyCollection<TargetSnapshot>? priorityTargets = null, bool forcePreferred = false)
