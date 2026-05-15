@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
           fetch-depth: 0
 
       - name: Read testing version
@@ -43,5 +43,6 @@ jobs:
           git add pluginmaster.json
           git commit -m "chore: promote ${{ steps.version.outputs.tag }} to stable [skip ci]"
           git tag ${{ steps.version.outputs.tag }}
-          git push origin master
+          git remote set-url origin "git@github.com:${{ github.repository }}.git"
+          git push origin HEAD:master
           git push origin ${{ steps.version.outputs.tag }}

@@ -3,11 +3,23 @@ name: Bump Version and Pre-release
 on:
   push:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      release_label:
+        description: Version bump to apply.
+        required: true
+        default: release:patch
+        type: choice
+        options:
+          - release:patch
+          - release:minor
+          - release:major
+          - no-release
 
 jobs:
   bump-and-prerelease:
     # Skip if this is a version bump commit (contains [skip ci])
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: "github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')"
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -15,16 +27,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
           fetch-depth: 0
 
-      - name: Get merged PR labels
+      - name: Get release labels
         id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          SHA="${{ github.sha }}"
-          LABELS=$(gh pr list --state merged --search "$SHA" --json labels --jq '.[0].labels[].name' 2>/dev/null || echo "")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            LABELS="${{ inputs.release_label }}"
+          else
+            SHA="${{ github.sha }}"
+            LABELS=$(gh pr list --state merged --search "$SHA" --json labels --jq '.[0].labels[].name' 2>/dev/null || echo "")
+          fi
           echo "labels<<EOF" >> $GITHUB_OUTPUT
           echo "$LABELS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -84,5 +100,6 @@ jobs:
           git add XelsCombatAI/XelsCombatAI.csproj pluginmaster.json
           git commit -m "chore: bump version to ${{ steps.version.outputs.tag }} [skip ci]"
           git tag ${{ steps.version.outputs.tag }}
-          git push origin master
+          git remote set-url origin "git@github.com:${{ github.repository }}.git"
+          git push origin HEAD:master
           git push origin ${{ steps.version.outputs.tag }}
