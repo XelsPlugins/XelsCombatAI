@@ -2,9 +2,9 @@
   <PropertyGroup>
     <Authors>xeltor</Authors>
     <Company></Company>
-    <Version>2.3.0.1</Version>
-    <Description>Updates a dedicated BossMod Reborn preset during combat using Avarice and current combat state.</Description>
-    <PackageProjectUrl></PackageProjectUrl>
+    <Description>Human-like BossMod Reborn movement and positioning policy for a custom Dalamud plugin feed.</Description>
+    <PackageProjectUrl>https://github.com/XelsPlugins/XelsCombatAI</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/XelsPlugins/XelsCombatAI</RepositoryUrl>
   </PropertyGroup>
 
   <PropertyGroup>
