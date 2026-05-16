@@ -231,6 +231,7 @@ PR previews are published by `.github/workflows/pr-preview.yml` through `XelsPlu
 - `DownloadLinkTesting`
 
 Preview and release feed updates require the `XELS_DALAMUD_FEED_TOKEN` Actions secret to be available to this repository. The token must have contents write access to `XelsPlugins/XelsDalamudRepo`.
+Generated release notes belong on GitHub release and prerelease pages. The custom plugin feed should only carry version, API, and public download metadata.
 
 Stable releases are published only by manually running `.github/workflows/release.yml`. Stable releases use immutable `vX.Y.Z` tags and may update central feed stable fields:
 
