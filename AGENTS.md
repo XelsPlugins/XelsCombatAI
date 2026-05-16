@@ -76,12 +76,10 @@ A change is not aligned if it primarily:
 - `XelsCombatAI/Models/` - small shared enums and simple types.
 - `XelsCombatAI/GlobalUsings.cs` - global imports for internal XCAI namespaces.
 - `scripts/package-release.sh` - release build and zip packaging script.
-- `.github/workflows/ci.yml` - build check on every PR (required status check for branch protection).
-- `.github/workflows/bump-and-prerelease.yml` - bumps version on merge, pushes `v*-pre` tag.
-- `.github/workflows/prerelease.yml` - builds and uploads a GitHub pre-release on `v*-pre` tags.
-- `.github/workflows/promote-stable.yml` - manual `workflow_dispatch` to promote testing → stable.
-- `.github/workflows/release.yml` - builds and uploads a stable GitHub release on `v*` tags (no `-pre`).
-- `pluginmaster.json` - custom plugin repository metadata.
+- `.github/workflows/validate.yml` - thin wrapper calling `Xeltor/XelsDalamud.Workflows` validation.
+- `.github/workflows/pr-preview.yml` - thin wrapper calling reusable PR preview release automation.
+- `.github/workflows/release.yml` - thin wrapper calling reusable manual stable release automation.
+- `pluginmaster.json` - historical local feed metadata. The active feed lives in `Xeltor/XelsDalamudRepo`.
 - `external/` - read-only external reference workspace. See `external/AGENTS.md`; its instructions override this file inside that directory.
 
 ## Build And Validation
@@ -215,40 +213,36 @@ After larger changes, include in the final response:
 
 ## Release And Metadata
 
-### Automated release pipeline
+All changes flow through pull requests to `main`. Never commit directly to `main` after branch protection is enabled.
 
-All changes flow through pull requests to `master`. Never commit directly to `master` after branch protection is enabled.
+Commit messages and PR titles must use Conventional Commits:
 
-**PR labels** control which version component is bumped on merge:
+- `fix:` and `perf:` create a patch release.
+- `feat:` creates a minor release.
+- `!` or `BREAKING CHANGE:` creates a major release.
+- `docs:`, `style:`, `refactor:`, `test:`, `build:`, `ci:`, and `chore:` do not create a user-facing release bump unless breaking.
 
-| Label | Effect |
-|-------|--------|
-| `release:patch` | Bumps 4th component — default if no label |
-| `release:minor` | Bumps 3rd component, zeros 4th |
-| `release:major` | Bumps 2nd component, zeros 3rd+4th |
-| `no-release` | Skips version bump (docs, chores) |
+PR previews are published by `.github/workflows/pr-preview.yml` through `Xeltor/XelsDalamud.Workflows`. Preview releases use mutable `pr-<PR_NUMBER>` tags and may only update central feed testing fields:
 
-On merge, `bump-and-prerelease.yml` automatically updates the version files, commits them (`[skip release bump]`), and pushes a `v{version}-pre` tag. `prerelease.yml` picks up the tag and publishes a GitHub pre-release — visible only to Dalamud users with **Receive plugin testing versions** enabled.
+- `TestingAssemblyVersion`
+- `TestingChangelog`
+- `TestingDalamudApiLevel`
+- `DownloadLinkTesting`
 
-The generated version/tag push uses the `RELEASE_DEPLOY_KEY` Actions secret instead of `GITHUB_TOKEN`. Keep that secret backed by a write-enabled repository deploy key, and keep deploy keys in the `Protect master` ruleset bypass list. This is required because `master` requires pull requests and code scanning, and `GITHUB_TOKEN` pushes do not trigger the tag workflow that publishes pre-releases. Do not use GitHub's global `[skip ci]` marker for generated release commits; it suppresses the release tag workflows.
+Stable releases are published only by manually running `.github/workflows/release.yml`. Stable releases use immutable `vX.Y.Z` tags and may update central feed stable fields:
 
-To cut a stable release, run the **Promote to Stable** workflow manually from the GitHub Actions UI. It reads the current `TestingAssemblyVersion`, updates `AssemblyVersion` and the stable download URLs in `pluginmaster.json`, then pushes a `v{version}` tag (no `-pre`) which triggers `release.yml`.
+- `AssemblyVersion`
+- `DownloadLinkInstall`
+- `DownloadLinkUpdate`
+- stable changelog/release metadata
 
-### Version file sync
+Do not manually edit versions unless explicitly instructed. Do not use timestamp versions or CI run numbers as stable public versions. Do not publish to the official Dalamud repo.
 
-The automation keeps these in sync, but if you touch them manually they must match:
+The active custom feed is `Xeltor/XelsDalamudRepo`. Keep this repository listed in that repo's `repos.txt`. `pluginmaster.json` in this repository is historical metadata and should not be treated as the active feed.
 
-- `XelsCombatAI/XelsCombatAI.csproj` → `<Version>` (build version)
-- `pluginmaster.json` → `AssemblyVersion` (stable), `TestingAssemblyVersion` (testing)
+When changing plugin description, tags, icon URL, name, or Dalamud API metadata, check `XelsCombatAI/XelsCombatAI.json` and the generated feed output.
 
-Download URLs in `pluginmaster.json` must point to specific tag releases (not `/latest/`) so stable and testing can coexist independently.
-
-When changing plugin description, tags, icon URL, name, or Dalamud API metadata, check both:
-
-- `XelsCombatAI/XelsCombatAI.json`
-- `pluginmaster.json`
-
-`scripts/package-release.sh` writes `artifacts/XelsCombatAI.zip`. Treat `artifacts/`, `bin/`, and `obj/` as generated output.
+`scripts/package-release.sh` writes `artifacts/XelsCombatAI.zip`. The reusable release workflow uses `Xeltor/XelsDalamud.Workflows/scripts/package-plugin.py`. Treat `artifacts/`, `bin/`, and `obj/` as generated output.
 
 ## External References And Generated Files
 
