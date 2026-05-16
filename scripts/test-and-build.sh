@@ -5,7 +5,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_PROJECT="$ROOT/XelsCombatAI/XelsCombatAI.csproj"
 TOOL_PROJECT="$ROOT/tools/FightReview/FightReview.csproj"
 TOOL_TEST_PROJECT="$ROOT/tools/FightReview.Tests/FightReview.Tests.csproj"
-PACKAGE_SCRIPT="$ROOT/scripts/package-release.sh"
+WORKFLOWS_DIR="${XELS_DALAMUD_WORKFLOWS_DIR:-$ROOT/../XelsDalamud.Workflows}"
+PACKAGE_SCRIPT="$WORKFLOWS_DIR/scripts/package-plugin.py"
+PACKAGE_OUT="$ROOT/artifacts"
 
 RUN_TOOLS=1
 RUN_TOOL_TESTS=1
@@ -22,7 +24,7 @@ Options:
   --skip-plugin      Build and test only FightReview tooling.
   --skip-tool-tests  Build FightReview but do not run FightReview.Tests.
   --format           Verify C# formatting.
-  --package          Build the release zip with scripts/package-release.sh.
+  --package          Build the release zip with XelsDalamud.Workflows/scripts/package-plugin.py.
   -h, --help         Show this help text.
 EOF
 }
@@ -71,6 +73,10 @@ done
 
 if [[ "$RUN_PLUGIN" -eq 0 && "$RUN_TOOLS" -eq 0 ]]; then
   fail "--skip-plugin and --skip-tools cannot be used together."
+fi
+
+if [[ "$RUN_PACKAGE" -eq 1 && "$RUN_PLUGIN" -eq 0 ]]; then
+  fail "--package requires the plugin build. Do not combine --package with --skip-plugin."
 fi
 
 if [[ "$(uname -s)" == "Linux" ]]; then
@@ -140,7 +146,14 @@ if [[ "$RUN_FORMAT" -eq 1 ]]; then
 fi
 
 if [[ "$RUN_PACKAGE" -eq 1 ]]; then
-  run "$PACKAGE_SCRIPT"
+  [[ -f "$PACKAGE_SCRIPT" ]] || fail "Reusable package script was not found at '$PACKAGE_SCRIPT'. Clone XelsDalamud.Workflows beside this repo or set XELS_DALAMUD_WORKFLOWS_DIR."
+  rm -rf "$PACKAGE_OUT"
+  run python "$PACKAGE_SCRIPT" \
+    --project "$PLUGIN_PROJECT" \
+    --configuration Release \
+    --internal-name XelsCombatAI \
+    --output-dir "$PACKAGE_OUT" \
+    --no-build
 fi
 
 printf '\nValidation completed.\n'

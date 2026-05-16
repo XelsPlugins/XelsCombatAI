@@ -75,11 +75,11 @@ A change is not aligned if it primarily:
 - `XelsCombatAI/Services/` - injected Dalamud service container/wrappers.
 - `XelsCombatAI/Models/` - small shared enums and simple types.
 - `XelsCombatAI/GlobalUsings.cs` - global imports for internal XCAI namespaces.
-- `scripts/package-release.sh` - release build and zip packaging script.
+- `scripts/test-and-build.sh` - local validation helper. Its `--package` mode delegates to the reusable package script from `XelsDalamud.Workflows`.
 - `.github/workflows/validate.yml` - thin wrapper calling `XelsPlugins/XelsDalamud.Workflows` validation.
 - `.github/workflows/pr-preview.yml` - thin wrapper calling reusable PR preview release automation.
 - `.github/workflows/release.yml` - thin wrapper calling reusable manual stable release automation.
-- `pluginmaster.json` - historical local feed metadata. The active feed lives in `XelsPlugins/XelsDalamudRepo`.
+- The active plugin feed lives in `XelsPlugins/XelsDalamudRepo`; do not add a local `pluginmaster.json` to this repository.
 - `external/` - read-only external reference workspace. See `external/AGENTS.md`; its instructions override this file inside that directory.
 
 ## Build And Validation
@@ -88,8 +88,9 @@ Use these commands from the repository root:
 
 ```bash
 dotnet restore XelsCombatAI/XelsCombatAI.csproj
+dotnet build XelsCombatAI/XelsCombatAI.csproj -c Debug -p:EnableWindowsTargeting=true
 dotnet build XelsCombatAI/XelsCombatAI.csproj -c Release -p:EnableWindowsTargeting=true
-scripts/package-release.sh
+scripts/test-and-build.sh --skip-tools --package
 dotnet format XelsCombatAI/XelsCombatAI.csproj --verify-no-changes
 ```
 
@@ -99,9 +100,9 @@ Notes:
 - On Linux, set `DALAMUD_HOME` to a directory containing Dalamud dev assemblies before building.
 - Builds reference ECommons at `external/ECommons/ECommons/ECommons.csproj`.
 - GitHub Actions and `external/fetch-sources.sh` should keep that repo-local external checkout populated.
-- There is currently no test project. Prefer `dotnet build` as the minimum validation after code changes.
+- `tools/FightReview.Tests` is a custom executable test harness, not a `dotnet test` project. The reusable validation workflow skips it; run `scripts/test-and-build.sh` when tool or review-log behavior changes.
 - Run `dotnet restore` when dependency, SDK, target framework, or project-file changes could affect restore output.
-- Run `scripts/package-release.sh` only for release/package changes or when packaging behavior may have changed.
+- Run `scripts/test-and-build.sh --skip-tools --package` for release/package changes or when packaging behavior may have changed. This requires `XelsDalamud.Workflows` cloned beside this repo, or `XELS_DALAMUD_WORKFLOWS_DIR` set to that checkout.
 - Run `dotnet format --verify-no-changes` for broad C# edits when the local SDK supports it. If it cannot run cleanly because of environment issues, report that explicitly.
 - Before finishing code changes, run the most relevant available validation command and report any command that could not be run.
 
@@ -238,11 +239,11 @@ Stable releases are published only by manually running `.github/workflows/releas
 
 Do not manually edit versions unless explicitly instructed. Do not use timestamp versions or CI run numbers as stable public versions. Do not publish to the official Dalamud repo.
 
-The active custom feed is `XelsPlugins/XelsDalamudRepo`. Keep this repository listed in that repo's `repos.txt`. `pluginmaster.json` in this repository is historical metadata and should not be treated as the active feed.
+The active custom feed is `XelsPlugins/XelsDalamudRepo`. Keep this repository listed in that repo's `repos.txt`. Do not add, update, or restore a local `pluginmaster.json`; feed entries are generated centrally.
 
 When changing plugin description, tags, icon URL, name, or Dalamud API metadata, check `XelsCombatAI/XelsCombatAI.json` and the generated feed output.
 
-`scripts/package-release.sh` writes `artifacts/XelsCombatAI.zip`. The reusable release workflow uses `XelsPlugins/XelsDalamud.Workflows/scripts/package-plugin.py`. Treat `artifacts/`, `bin/`, and `obj/` as generated output.
+The reusable release workflow uses `XelsPlugins/XelsDalamud.Workflows/scripts/package-plugin.py` and writes `artifacts/XelsCombatAI.zip`. Local packaging should use the same script through `scripts/test-and-build.sh --skip-tools --package`. Treat `artifacts/`, `bin/`, and `obj/` as generated output.
 
 ## External References And Generated Files
 
