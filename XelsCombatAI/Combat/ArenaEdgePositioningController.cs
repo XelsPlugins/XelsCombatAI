@@ -134,13 +134,6 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
 
         this.RecordObservedBounds(bounds, centerX, centerZ, radius);
 
-        if (this.BossModMechanicSafetyActive(hints))
-        {
-            this.suppressComfortUntil = now.Add(PostMechanicEdgeCooldown);
-            this.lastReason = "mechanic safety active";
-            return;
-        }
-
         if (nearEdge)
         {
             this.goalLingerUntil = now.Add(GoalLinger);
@@ -169,7 +162,7 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
                 this.lastRecoveryPoint = recoveryPoint;
             }
 
-            contributions.Add(new(this.lastRecoveryGoalDelegate, BossModGoalPriority.Convenience, "Arena edge recovery", recoveryPoint));
+            contributions.Add(new(this.lastRecoveryGoalDelegate, BossModGoalPriority.Convenience, "Arena edge recovery"));
             this.lastReason = "custom arena edge recovery";
             return;
         }
@@ -192,7 +185,7 @@ internal sealed class ArenaEdgePositioningController(Configuration config, Dalam
 
         if (this.lastGoalDelegate != null)
         {
-            contributions.Add(new(this.lastGoalDelegate, BossModGoalPriority.Convenience, "Arena edge avoidance", new Vector2(centerX, centerZ)));
+            contributions.Add(new(this.lastGoalDelegate, BossModGoalPriority.Convenience, "Arena edge avoidance"));
             this.lastReason = "near arena edge";
         }
     }

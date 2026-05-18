@@ -1,8 +1,4 @@
 {
-  "BossmodReborn": {
-    "url": "https://github.com/FFXIV-CombatReborn/BossmodReborn.git",
-    "branch": "main"
-  },
   "Avarice": {
     "url": "https://github.com/PunishXIV/Avarice.git",
     "branch": "master"
@@ -34,10 +30,6 @@
   "FFXIVClientStructs": {
     "url": "https://github.com/aers/FFXIVClientStructs.git",
     "branch": "main"
-  },
-  "ECommons": {
-    "url": "https://github.com/NightmareXIV/ECommons.git",
-    "branch": "master"
   },
   "Lumina": {
     "url": "https://github.com/NotAdam/Lumina.git",

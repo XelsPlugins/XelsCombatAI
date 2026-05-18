@@ -4,7 +4,9 @@
 
 These instructions apply to `external/`.
 
-This directory is a read-only reference workspace for external plugins that Xel's Combat AI integrates with through IPC, shared data, or reflected runtime behavior.
+This directory is a read-only reference workspace for external plugins and upstream projects that Xel's Combat AI inspects for IPC, shared data, API contracts, or reflected runtime behavior.
+
+Compile-time dependencies are intentionally not kept here. They live as pinned git submodules under `third_party/` so builds are reproducible while this workspace can stay refreshable for discovery.
 
 Root repository instructions apply only for how to use this subtree as reference material. Do not apply root C# style, formatting, validation, or refactor rules to external checkouts.
 
@@ -12,7 +14,7 @@ Root repository instructions apply only for how to use this subtree as reference
 
 - Do not edit, format, refactor, delete, or rename external plugin files.
 - Do not stage or commit external plugin source, binaries, build outputs, repository metadata, or nested `.git` directories.
-- Do not add external plugin code to project files, package manifests, release artifacts, or build scripts.
+- Do not add external reference code to project files, package manifests, release artifacts, or build scripts. Compile-time dependencies belong under `third_party/`.
 - Use these files only to inspect IPC contracts, payload shapes, public API behavior, reflected member names, and integration details.
 - Prefer current external source evidence over memory when working with BossMod Reborn, Avarice, RotationSolver Reborn, or Dalamud integration behavior.
 - When using external evidence in a change, summarize the contract that was verified rather than copying upstream code into this repository.
@@ -27,8 +29,8 @@ Root repository instructions apply only for how to use this subtree as reference
 - `FFXIVClientStructs/` is the source for game structs, enums, native interop shapes, and unsafe client memory types exposed through Dalamud.
 - `Lumina/` is the source for game data access and Excel sheet behavior used through `IDataManager`.
 - `FfxivDatamining/` is raw game data reference material for IDs, sheets, statuses, actions, maps, and UI resources. Treat it as data evidence, not runtime API behavior.
-- `BossmodReborn/`, `Avarice/`, `RotationSolverReborn/`, and `VNavmesh/` are integration references for IPC names, strategy payloads, shared data, reflected members, and optional movement services.
-- `ECommons/` is a helper-library reference for patterns used by this repository's local ECommons dependency. Prefer direct Dalamud APIs when Xel's Combat AI already uses them directly.
+- `Avarice/`, `RotationSolverReborn/`, and `VNavmesh/` are integration references for IPC names, strategy payloads, shared data, reflected members, and optional movement services.
+- BossMod Reborn and ECommons are build dependencies under `third_party/`; use those submodules when verifying their APIs.
 
 ## Research Workflow
 
@@ -39,6 +41,6 @@ Root repository instructions apply only for how to use this subtree as reference
 
 ## Refreshing References
 
-- `sources.json` is the source of truth for external repository URLs and tracked branches.
+- `sources.json` is the source of truth for external reference repository URLs and tracked branches.
 - Run `external/fetch-sources.sh` from anywhere in the repository to clone or refresh the ignored reference checkouts.
-- Reference checkouts should track the latest remote branch heads, not pinned commits.
+- Reference checkouts should track the latest remote branch heads, not pinned commits. Build dependency versions are tracked by `.gitmodules` and the gitlink commits under `third_party/`.

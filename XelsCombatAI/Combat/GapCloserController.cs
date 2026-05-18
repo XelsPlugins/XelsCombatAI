@@ -151,9 +151,10 @@ internal sealed class GapCloserController(
 
         var friendlyReengageTarget = relayReturnTarget ?? target as IBattleChara;
         var hasFriendlyReengageOption = classJobId is 2 or 20 or 25 or 40 or 41;
+        var allowStyleReengageInsideEngagementRange = this.ShouldAllowStyleReengageInsideEngagementRange(target, styleOpportunity);
         if (relayReturnTarget == null &&
-            (distanceToHitbox <= reengageRange ||
-            (distanceToHitbox > CombatConstants.GapCloserMaxRange && !hasFriendlyReengageOption)))
+            ((distanceToHitbox <= reengageRange && !allowStyleReengageInsideEngagementRange) ||
+             (distanceToHitbox > CombatConstants.GapCloserMaxRange && !hasFriendlyReengageOption)))
         {
             this.lastGapCloserSafety = distanceToHitbox <= reengageRange
                 ? $"target within {reengageRange:0.#}y engagement range"
@@ -208,6 +209,13 @@ internal sealed class GapCloserController(
             42 when config.GapCloserPCT => this.TryUseForwardGapCloser(ActionUse.PictomancerSmudgeActionId, "Smudge", distanceToHitbox, reengageRange, target, safeMovementDestination, styleOpportunity),
             _ => false
         };
+    }
+
+    private bool ShouldAllowStyleReengageInsideEngagementRange(IGameObject target, DashStyleReengageOpportunity styleOpportunity)
+    {
+        return styleOpportunity.Active &&
+               target is IBattleNpc battleNpc &&
+               bossMod.HasModuleByDataId(battleNpc.BaseId);
     }
 
     private bool TryResolveRsrAlignedReengageTarget(out IBattleNpc? target, out string reason)

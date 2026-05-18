@@ -62,6 +62,9 @@ internal sealed class AoePackPositioningController(
     private FieldInfo? goalZonesField;
     private FieldInfo? forcedMovementField;
     private FieldInfo? forbiddenZonesField;
+    private FieldInfo? temporaryObstaclesField;
+    private FieldInfo? forbiddenDirectionsField;
+    private FieldInfo? imminentSpecialModeField;
     private FieldInfo? pathfindMapCenterField;
     private FieldInfo? pathfindMapBoundsField;
     private FieldInfo? potentialTargetsField;
@@ -100,6 +103,7 @@ internal sealed class AoePackPositioningController(
     private Vector2 pendingCandidate;
     private int pendingCandidateHits;
     private uint pendingCandidateActionId;
+    private ulong pendingCandidatePrimaryId;
     private DateTime pendingCandidateSince = DateTime.MinValue;
     private uint lastInjectedActionId;
     private ulong lastInjectedPrimaryId;
@@ -194,6 +198,9 @@ internal sealed class AoePackPositioningController(
         this.goalZonesField = null;
         this.forcedMovementField = null;
         this.forbiddenZonesField = null;
+        this.temporaryObstaclesField = null;
+        this.forbiddenDirectionsField = null;
+        this.imminentSpecialModeField = null;
         this.pathfindMapCenterField = null;
         this.pathfindMapBoundsField = null;
         this.potentialTargetsField = null;
@@ -228,6 +235,7 @@ internal sealed class AoePackPositioningController(
         this.pendingCandidate = default;
         this.pendingCandidateHits = 0;
         this.pendingCandidateActionId = 0;
+        this.pendingCandidatePrimaryId = 0;
         this.pendingCandidateSince = DateTime.MinValue;
         this.lastInjectedActionId = 0;
         this.lastInjectedPrimaryId = 0;
@@ -310,10 +318,20 @@ internal sealed class AoePackPositioningController(
         var inAoeSituation = targets.Count >= 2 && !bossModuleContext;
         var forcedSafetyActive = this.BossModForcedMovementActive(hints);
         var forbiddenSafetyActive = this.BossModForbiddenSafetyActive(hints);
-        var mechanicSafetyActive = forcedSafetyActive || forbiddenSafetyActive;
+        var temporaryObstacleSafetyActive = this.BossModTemporaryObstacleSafetyActive(hints);
+        var forbiddenDirectionSafetyActive = this.BossModForbiddenDirectionSafetyActive(hints);
+        var specialModeSafetyActive = this.BossModSpecialModeSafetyActive(hints);
+        var mechanicSafetyActive = forcedSafetyActive ||
+                                   forbiddenSafetyActive ||
+                                   temporaryObstacleSafetyActive ||
+                                   forbiddenDirectionSafetyActive ||
+                                   specialModeSafetyActive;
         var shouldYieldToMechanicSafety = ShouldYieldPackMovementForSafety(
             forcedSafetyActive,
             forbiddenSafetyActive,
+            temporaryObstacleSafetyActive,
+            forbiddenDirectionSafetyActive,
+            specialModeSafetyActive,
             this.bmrMoveRequested,
             this.bmrMoveImminent,
             bossModuleContext);
@@ -342,7 +360,7 @@ internal sealed class AoePackPositioningController(
             this.lastAction = null;
             this.lastCurrentHits = 0;
             this.lastBestHits = 0;
-            this.lastReason = mechanicSafetyActive ? "forced mechanic movement active" : "BMR movement active";
+            this.lastReason = mechanicSafetyActive ? "BossMod mechanic safety active" : "BMR movement active";
             return;
         }
 
@@ -675,14 +693,17 @@ internal sealed class AoePackPositioningController(
         }
 
         var now = DateTime.UtcNow;
-        // Always track the latest best position, but only reset the debounce timer when hit count changes.
-        // Position drift within the same hit count (e.g. cone rotating slightly as mobs shuffle) is noise.
-        this.pendingCandidate = bestScore.Position;
+        var pendingCandidateMoved = this.pendingCandidateSince != DateTime.MinValue &&
+                                    Vector2.Distance(bestScore.Position, this.pendingCandidate) > CandidateMovementThreshold;
         if (this.pendingCandidateSince == DateTime.MinValue ||
             action.AdjustedActionId != this.pendingCandidateActionId ||
-            bestScore.Hits != this.pendingCandidateHits)
+            bestPrimaryId != this.pendingCandidatePrimaryId ||
+            bestScore.Hits != this.pendingCandidateHits ||
+            pendingCandidateMoved)
         {
+            this.pendingCandidate = bestScore.Position;
             this.pendingCandidateActionId = action.AdjustedActionId;
+            this.pendingCandidatePrimaryId = bestPrimaryId;
             this.pendingCandidateHits = bestScore.Hits;
             this.pendingCandidateSince = now;
         }
@@ -716,7 +737,10 @@ internal sealed class AoePackPositioningController(
 
         if (candidateStable)
         {
-            this.UpdateAoeSuggestion(bestPlan, action, this.pendingCandidate, this.lastCurrentHits, this.lastBestHits, player.Position.Y, now);
+            var committedCandidate = this.lastInjectedGoalDelegate != null
+                ? this.lastInjectedCandidate
+                : this.pendingCandidate;
+            this.UpdateAoeSuggestion(bestPlan, action, committedCandidate, this.lastCurrentHits, this.lastBestHits, player.Position.Y, now);
         }
         else
         {
@@ -731,9 +755,10 @@ internal sealed class AoePackPositioningController(
             return;
         }
 
-        contributions.Add(new(this.lastInjectedGoalDelegate, BossModGoalPriority.ImmediateAction, "AoE pack", this.pendingCandidate, MechanicWhisperConfidence.Confident));
+        var contributionCandidate = this.lastInjectedCandidate;
+        contributions.Add(new(this.lastInjectedGoalDelegate, BossModGoalPriority.ImmediateAction, "AoE pack", contributionCandidate, MechanicWhisperConfidence.Confident));
         this.lastInjected = true;
-        this.lastOverlay ??= bestPlan.CreateOverlay(action, this.pendingCandidate, this.lastCurrentHits, this.lastBestHits, player.Position.Y);
+        this.lastOverlay ??= bestPlan.CreateOverlay(action, contributionCandidate, this.lastCurrentHits, this.lastBestHits, player.Position.Y);
         this.lastReason = candidateStable && candidateChanged ? "goal injected" : "goal stable";
 
         // Reactive RSR targeting: Henched only after a goal is injected (improvement found).
@@ -773,6 +798,22 @@ internal sealed class AoePackPositioningController(
     private bool BossModForbiddenSafetyActive(object hints)
     {
         return this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 };
+    }
+
+    private bool BossModTemporaryObstacleSafetyActive(object hints)
+    {
+        return this.temporaryObstaclesField?.GetValue(hints) is ICollection { Count: > 0 };
+    }
+
+    private bool BossModForbiddenDirectionSafetyActive(object hints)
+    {
+        return this.forbiddenDirectionsField?.GetValue(hints) is ICollection { Count: > 0 };
+    }
+
+    private bool BossModSpecialModeSafetyActive(object hints)
+    {
+        var value = this.imminentSpecialModeField?.GetValue(hints)?.ToString();
+        return value != null && IsBlockingSpecialMode(value);
     }
 
     private bool BossModForcedMovementActive(object hints)
@@ -908,14 +949,29 @@ internal sealed class AoePackPositioningController(
     internal static bool ShouldYieldPackMovementForSafety(
         bool forcedMovementActive,
         bool forbiddenSafetyActive,
+        bool temporaryObstacleSafetyActive,
+        bool forbiddenDirectionSafetyActive,
+        bool specialModeSafetyActive,
         bool bmrMoveRequested,
         bool bmrMoveImminent,
         bool bossModuleContext)
     {
         _ = bmrMoveRequested;
         _ = bmrMoveImminent;
+        _ = bossModuleContext;
+        _ = forbiddenSafetyActive;
+        _ = temporaryObstacleSafetyActive;
+        _ = forbiddenDirectionSafetyActive;
         return forcedMovementActive ||
-               forbiddenSafetyActive && !bossModuleContext;
+               specialModeSafetyActive;
+    }
+
+    private static bool IsBlockingSpecialMode(string value)
+    {
+        return value.Contains("Pyretic", StringComparison.Ordinal) ||
+               value.Contains("NoMovement", StringComparison.Ordinal) ||
+               value.Contains("Freezing", StringComparison.Ordinal) ||
+               value.Contains("Misdirection", StringComparison.Ordinal);
     }
 
     private void ApplyRsrTargeting(ulong primaryId, IReadOnlyCollection<TargetSnapshot>? priorityTargets = null, bool forcePreferred = false)
@@ -1161,6 +1217,7 @@ internal sealed class AoePackPositioningController(
         this.pendingCandidate = default;
         this.pendingCandidateHits = 0;
         this.pendingCandidateActionId = 0;
+        this.pendingCandidatePrimaryId = 0;
         this.pendingCandidateSince = DateTime.MinValue;
         this.lastInjectedActionId = 0;
         this.lastInjectedPrimaryId = 0;
@@ -1366,6 +1423,12 @@ internal sealed class AoePackPositioningController(
             return false;
         }
 
+        if (ShouldSkipProactiveAoeReposition(currentHits, candidate.Hits, targets.Count, out var proactiveSkipReason))
+        {
+            this.lastReason = proactiveSkipReason;
+            return false;
+        }
+
         var moveDistance = Vector2.Distance(playerPos, candidate.Position);
         if (ShouldSkipMarginalAoeReposition(currentHits, candidate.Hits, targets.Count, moveDistance, out var marginalSkipReason))
         {
@@ -1378,16 +1441,56 @@ internal sealed class AoePackPositioningController(
                                this.lastInjectedPrimaryId != primary.InstanceId ||
                                this.lastInjectedHits != candidate.Hits ||
                                Vector2.Distance(candidate.Position, this.lastInjectedCandidate) > CandidateMovementThreshold;
+        var canReuseLastProactiveCandidate = this.lastInjectedGoalDelegate != null &&
+                                             this.lastInjectedActionId == 0 &&
+                                             this.lastInjectedPrimaryId == primary.InstanceId;
+        var now = DateTime.UtcNow;
+        if (candidateChanged)
+        {
+            var pendingCandidateMoved = this.pendingCandidateSince != DateTime.MinValue &&
+                                        Vector2.Distance(candidate.Position, this.pendingCandidate) > CandidateMovementThreshold;
+            if (this.pendingCandidateSince == DateTime.MinValue ||
+                this.pendingCandidateActionId != 0 ||
+                this.pendingCandidatePrimaryId != primary.InstanceId ||
+                this.pendingCandidateHits != candidate.Hits ||
+                pendingCandidateMoved)
+            {
+                this.pendingCandidate = candidate.Position;
+                this.pendingCandidateActionId = 0;
+                this.pendingCandidatePrimaryId = primary.InstanceId;
+                this.pendingCandidateHits = candidate.Hits;
+                this.pendingCandidateSince = now;
+            }
+
+            var candidateAge = now - this.pendingCandidateSince;
+            if (candidateAge < CandidateDebounce && !canReuseLastProactiveCandidate)
+            {
+                this.ExpireAoeSuggestion(now);
+                this.lastReason = string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"AoE prep candidate stabilising {Math.Max(0d, candidateAge.TotalSeconds):0.00}/{CandidateDebounce.TotalSeconds:0.00}s");
+                // Keep the pending prep candidate alive instead of falling through to pack-center movement,
+                // which would clear this debounce state and cause suggestion churn.
+                return true;
+            }
+
+            if (candidateAge < CandidateDebounce)
+            {
+                candidateChanged = false;
+            }
+        }
+
         if (candidateChanged)
         {
             this.lastInjectedGoalDelegate = plan.CreateGoalDelegate(this.resolvedWPosType!, this.wposXField!, this.wposZField!, currentHits);
-            this.lastInjectedCandidate = candidate.Position;
-            this.lastInjectedHits = candidate.Hits;
+            this.lastInjectedCandidate = this.pendingCandidate;
+            this.lastInjectedHits = this.pendingCandidateHits;
             this.lastInjectedActionId = 0;
             this.lastInjectedPrimaryId = primary.InstanceId;
         }
 
-        contributions.Add(new(this.lastInjectedGoalDelegate!, BossModGoalPriority.Uptime, "AoE pack prep", candidate.Position, MechanicWhisperConfidence.Confident));
+        var contributionCandidate = this.lastInjectedCandidate;
+        contributions.Add(new(this.lastInjectedGoalDelegate!, BossModGoalPriority.Uptime, "AoE pack prep", contributionCandidate, MechanicWhisperConfidence.Confident));
         this.lastAction = null;
         this.lastInjected = true;
         var y = player.Position.Y;
@@ -1395,16 +1498,16 @@ internal sealed class AoePackPositioningController(
             0,
             "Pack AoE prep",
             RsrAoeShape.Circle.ToString(),
-            new Vector3(candidate.Position.X, y, candidate.Position.Y),
+            new Vector3(contributionCandidate.X, y, contributionCandidate.Y),
             new Vector3(primary.Position.X, y, primary.Position.Y),
             radius,
             0f,
             currentHits,
-            candidate.Hits,
-            this.CreateOverlayTargets(targets, y, candidate.Position, hit: false));
+            this.lastInjectedHits,
+            this.CreateOverlayTargets(targets, y, contributionCandidate, hit: false));
         this.lastReason = string.Create(
             CultureInfo.InvariantCulture,
-            $"pre-positioning for pack AoE ({currentHits}/{targets.Count} -> {candidate.Hits}/{targets.Count})");
+            $"pre-positioning for pack AoE ({currentHits}/{targets.Count} -> {this.lastInjectedHits}/{targets.Count})");
 
         return true;
     }
@@ -1751,6 +1854,27 @@ internal sealed class AoePackPositioningController(
         return true;
     }
 
+    internal static bool ShouldSkipProactiveAoeReposition(int currentHits, int bestHits, int targetCount, out string reason)
+    {
+        reason = string.Empty;
+        var gain = bestHits - currentHits;
+        if (gain <= 0 || targetCount <= 1)
+        {
+            return false;
+        }
+
+        var goodEnoughHits = GoodEnoughTrashAoeHits(targetCount);
+        if (currentHits < goodEnoughHits || gain > 1)
+        {
+            return false;
+        }
+
+        reason = string.Create(
+            CultureInfo.InvariantCulture,
+            $"already good AoE prep coverage ({currentHits}/{targetCount}); skipped +{gain} hit");
+        return true;
+    }
+
     private static int GoodEnoughTrashAoeHits(int targetCount)
     {
         if (targetCount <= 1)
@@ -1855,6 +1979,9 @@ internal sealed class AoePackPositioningController(
             this.goalZonesField != null &&
             this.forcedMovementField != null &&
             this.forbiddenZonesField != null &&
+            this.temporaryObstaclesField != null &&
+            this.forbiddenDirectionsField != null &&
+            this.imminentSpecialModeField != null &&
             this.pathfindMapCenterField != null &&
             this.pathfindMapBoundsField != null &&
             this.potentialTargetsField != null &&
@@ -1875,6 +2002,9 @@ internal sealed class AoePackPositioningController(
         var goalZones = hintsType.GetField("GoalZones", InstanceFlags);
         var forcedMovement = hintsType.GetField("ForcedMovement", InstanceFlags);
         var forbiddenZones = hintsType.GetField("ForbiddenZones", InstanceFlags);
+        var temporaryObstacles = hintsType.GetField("TemporaryObstacles", InstanceFlags);
+        var forbiddenDirections = hintsType.GetField("ForbiddenDirections", InstanceFlags);
+        var imminentSpecialMode = hintsType.GetField("ImminentSpecialMode", InstanceFlags);
         var pathfindMapCenter = hintsType.GetField("PathfindMapCenter", InstanceFlags);
         var pathfindMapBounds = hintsType.GetField("PathfindMapBounds", InstanceFlags);
         var potentialTargets = hintsType.GetField("PotentialTargets", InstanceFlags);
@@ -1909,12 +2039,34 @@ internal sealed class AoePackPositioningController(
                     var parameterType = parameters[0].ParameterType;
                     return parameterType == wdirType || (parameterType.IsByRef && parameterType.GetElementType() == wdirType);
                 });
-        if (goalZones == null || forcedMovement == null || forbiddenZones == null || pathfindMapCenter == null || pathfindMapBounds == null || potentialTargets == null || priorityTargets == null || wposType == null || wdirType == null || actorField == null || positionField == null || hitboxField == null || instanceField == null || xField == null || zField == null || wdirConstructor == null || boundsContainsMethod == null)
+        if (goalZones == null ||
+            forcedMovement == null ||
+            forbiddenZones == null ||
+            temporaryObstacles == null ||
+            forbiddenDirections == null ||
+            imminentSpecialMode == null ||
+            pathfindMapCenter == null ||
+            pathfindMapBounds == null ||
+            potentialTargets == null ||
+            priorityTargets == null ||
+            wposType == null ||
+            wdirType == null ||
+            actorField == null ||
+            positionField == null ||
+            hitboxField == null ||
+            instanceField == null ||
+            xField == null ||
+            zField == null ||
+            wdirConstructor == null ||
+            boundsContainsMethod == null)
         {
             this.lastReason = $"BMR AoE goal reflection members unavailable: {FormatMissing(
                 (goalZones == null, "AIHints.GoalZones"),
                 (forcedMovement == null, "AIHints.ForcedMovement"),
                 (forbiddenZones == null, "AIHints.ForbiddenZones"),
+                (temporaryObstacles == null, "AIHints.TemporaryObstacles"),
+                (forbiddenDirections == null, "AIHints.ForbiddenDirections"),
+                (imminentSpecialMode == null, "AIHints.ImminentSpecialMode"),
                 (pathfindMapCenter == null, "AIHints.PathfindMapCenter"),
                 (pathfindMapBounds == null, "AIHints.PathfindMapBounds"),
                 (potentialTargets == null, "AIHints.PotentialTargets"),
@@ -1938,6 +2090,9 @@ internal sealed class AoePackPositioningController(
         this.goalZonesField = goalZones;
         this.forcedMovementField = forcedMovement;
         this.forbiddenZonesField = forbiddenZones;
+        this.temporaryObstaclesField = temporaryObstacles;
+        this.forbiddenDirectionsField = forbiddenDirections;
+        this.imminentSpecialModeField = imminentSpecialMode;
         this.pathfindMapCenterField = pathfindMapCenter;
         this.pathfindMapBoundsField = pathfindMapBounds;
         this.potentialTargetsField = potentialTargets;

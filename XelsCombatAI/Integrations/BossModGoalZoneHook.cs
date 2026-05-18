@@ -842,7 +842,13 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             this.TryAddMechanicEscapeMarginGoal(contributions);
 
-            if (contributions.Count == 0)
+            var allContributions = contributions.ToArray();
+            var castingSuppressed = this.ShouldSuppressAdvisoryMovementForCasting();
+            var activeContributions = castingSuppressed
+                ? SuppressAdvisoryMovementForCasting(allContributions)
+                : allContributions;
+
+            if (allContributions.Length == 0)
             {
                 this.mechanicWhisperStates.Clear();
                 this.lastGoalPriority = "None";
@@ -851,10 +857,15 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var highestPriority = contributions.Max(c => c.Priority);
-            var activeContributions = contributions
-                .Where(c => c.Priority == highestPriority)
-                .ToArray();
+            if (activeContributions.Length == 0)
+            {
+                this.mechanicWhisperStates.Clear();
+                this.lastGoalPriority = $"{FormatGoalPrioritySummary(allContributions)} (casting suppressed)";
+                this.lastGoalSources = "casting; advisory movement suppressed";
+                this.lastMechanicWhisperStatus = "<none>";
+                return;
+            }
+
             var mechanicWhisperGuardActive = this.ShouldApplyMechanicWhisperGuard();
             if (mechanicWhisperGuardActive)
             {
@@ -868,23 +879,26 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             if (activeContributions.Length == 0)
             {
-                this.lastGoalPriority = $"{highestPriority} (guarded)";
+                this.lastGoalPriority = $"{FormatGoalPrioritySummary(allContributions)} (guarded)";
                 this.lastGoalSources = "mechanic whisper stabilizing";
                 return;
             }
 
-            this.lastGoalPriority = mechanicWhisperGuardActive ? $"{highestPriority} (guarded)" : highestPriority.ToString();
+            var prioritySummary = FormatGoalPrioritySummary(activeContributions);
+            this.lastGoalPriority = mechanicWhisperGuardActive
+                ? $"{prioritySummary} (guarded)"
+                : castingSuppressed
+                    ? $"{prioritySummary} (casting suppressed)"
+                    : prioritySummary;
             this.lastGoalSources = string.Join(", ", activeContributions.Select(c => c.Label).Distinct(StringComparer.Ordinal));
 
-            var advisoryContributions = activeContributions
-                .Where(c => c.ScoreMode == BossModGoalScoreMode.Advisory)
-                .ToArray();
+            var advisoryContributions = SelectAdvisoryGoalContributions(activeContributions);
             if (advisoryContributions.Length > 0)
             {
                 goalZones.Add(CreateAdvisoryGoalDelegate(advisoryContributions));
             }
 
-            foreach (var rawContribution in activeContributions.Where(c => c.ScoreMode == BossModGoalScoreMode.Raw))
+            foreach (var rawContribution in SelectRawGoalContributions(activeContributions))
             {
                 goalZones.Add(rawContribution.Goal);
             }
@@ -938,7 +952,8 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 BossModGoalPriority.DefensiveMechanic,
                 "Mechanic exit margin",
                 candidate,
-                MechanicWhisperConfidence.Confident));
+                MechanicWhisperConfidence.Confident,
+                ScoreMode: BossModGoalScoreMode.Raw));
         }
 
         private bool ShouldApplyMechanicWhisperGuard()
@@ -950,6 +965,76 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             return CountField(this.hints, "ForbiddenZones", Flags) > 0;
+        }
+
+        private static BossModGoalContribution[] SelectAdvisoryGoalContributions(IReadOnlyList<BossModGoalContribution> contributions)
+        {
+            return contributions
+                .Where(c => c.ScoreMode == BossModGoalScoreMode.Advisory)
+                .ToArray();
+        }
+
+        private bool ShouldSuppressAdvisoryMovementForCasting()
+        {
+            var player = this.services.ObjectTable.LocalPlayer;
+            return CasterMovementPolicy.ShouldSuppressAdvisoryMovement(player);
+        }
+
+        private static BossModGoalContribution[] SuppressAdvisoryMovementForCasting(IReadOnlyList<BossModGoalContribution> contributions)
+        {
+            return contributions
+                .Where(c => c.ScoreMode == BossModGoalScoreMode.Raw)
+                .ToArray();
+        }
+
+        private static BossModGoalContribution[] SelectRawGoalContributions(IReadOnlyList<BossModGoalContribution> contributions)
+        {
+            var rawContributions = contributions
+                .Where(c => c.ScoreMode == BossModGoalScoreMode.Raw)
+                .ToArray();
+            if (rawContributions.Length == 0)
+            {
+                return [];
+            }
+
+            var highestPriority = rawContributions.Max(c => c.Priority);
+            return rawContributions
+                .Where(c => c.Priority == highestPriority)
+                .ToArray();
+        }
+
+        private static string FormatGoalPrioritySummary(IReadOnlyList<BossModGoalContribution> contributions)
+        {
+            if (contributions.Count == 0)
+            {
+                return "None";
+            }
+
+            var rawContributions = SelectRawGoalContributions(contributions);
+            var advisoryContributions = SelectAdvisoryGoalContributions(contributions);
+            if (rawContributions.Length > 0 && advisoryContributions.Length > 0)
+            {
+                return $"{FormatPriorityRange(advisoryContributions)} advisory + {rawContributions[0].Priority} raw";
+            }
+
+            if (rawContributions.Length > 0)
+            {
+                return $"{rawContributions[0].Priority} raw";
+            }
+
+            return $"{FormatPriorityRange(advisoryContributions)} advisory";
+        }
+
+        private static string FormatPriorityRange(IReadOnlyList<BossModGoalContribution> contributions)
+        {
+            if (contributions.Count == 0)
+            {
+                return "None";
+            }
+
+            var min = contributions.Min(c => c.Priority);
+            var max = contributions.Max(c => c.Priority);
+            return min == max ? min.ToString() : $"{min}-{max}";
         }
 
         private BossModGoalContribution[] FilterMechanicWhispers(BossModGoalContribution[] contributions)
@@ -966,7 +1051,8 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 activeKeys.Add(key);
                 if (!contribution.Candidate.HasValue)
                 {
-                    decisions.Add($"{contribution.Label}:blocked/no-candidate");
+                    decisions.Add($"{contribution.Label}:accepted/no-candidate");
+                    filtered.Add(contribution);
                     continue;
                 }
 
@@ -1993,20 +2079,26 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
         private static Delegate CreateAdvisoryGoalDelegate(IReadOnlyList<BossModGoalContribution> contributions)
         {
-            var goals = contributions.Select(c => c.Goal).ToArray();
-            var invoke = Require(goals[0].GetType().GetMethod("Invoke"), $"{goals[0].GetType().FullName}.Invoke");
+            var invoke = Require(contributions[0].Goal.GetType().GetMethod("Invoke"), $"{contributions[0].Goal.GetType().FullName}.Invoke");
             var parameters = invoke.GetParameters();
             if (parameters.Length != 1 || invoke.ReturnType != typeof(float))
             {
-                throw new InvalidOperationException($"Unexpected BossMod goal delegate signature: {goals[0].GetType().FullName}.");
+                throw new InvalidOperationException($"Unexpected BossMod goal delegate signature: {contributions[0].Goal.GetType().FullName}.");
             }
 
             var wposType = parameters[0].ParameterType;
             var parameter = Expression.Parameter(wposType, "p");
             Expression sum = Expression.Constant(0f);
-            foreach (var goal in goals)
+            var applyPriorityWeight = typeof(GoalZoneScorePolicy).GetMethod(nameof(GoalZoneScorePolicy.ApplyPriorityWeight), BindingFlags.Static | BindingFlags.Public)!;
+            foreach (var contribution in contributions)
             {
-                sum = Expression.Add(sum, Expression.Invoke(Expression.Constant(goal, goal.GetType()), parameter));
+                var contributionScore = Expression.Invoke(Expression.Constant(contribution.Goal, contribution.Goal.GetType()), parameter);
+                var weightedScore = Expression.Call(
+                    applyPriorityWeight,
+                    contributionScore,
+                    Expression.Constant(contribution.Priority),
+                    Expression.Constant(contribution.AdvisoryWeight));
+                sum = Expression.Add(sum, weightedScore);
             }
 
             var clamp = typeof(GoalZoneScorePolicy).GetMethod(nameof(GoalZoneScorePolicy.ClampAdvisoryScore), BindingFlags.Static | BindingFlags.Public)!;

@@ -98,13 +98,13 @@ if [[ "$RUN_TOOLS" -eq 1 && "$RUN_TOOL_TESTS" -eq 1 ]]; then
 fi
 
 if [[ "$NEEDS_PLUGIN_PROJECT" -eq 1 ]]; then
-  ECOMMONS_PROJECT="$ROOT/external/ECommons/ECommons/ECommons.csproj"
-  [[ -f "$ECOMMONS_PROJECT" ]] || fail "ECommons was not found at '$ECOMMONS_PROJECT'. Run external/fetch-sources.sh to clone or refresh external references."
+  ECOMMONS_PROJECT="$ROOT/third_party/ECommons/ECommons/ECommons.csproj"
+  [[ -f "$ECOMMONS_PROJECT" ]] || fail "ECommons was not found at '$ECOMMONS_PROJECT'. Run git submodule update --init --recursive."
 fi
 
 if [[ "$RUN_TOOLS" -eq 1 ]]; then
-  BMR_PROJECT="$ROOT/external/BossmodReborn/BossMod/BossModReborn.csproj"
-  [[ -f "$BMR_PROJECT" ]] || fail "BossMod Reborn checkout was not found at '$BMR_PROJECT'. Run external/fetch-sources.sh or use --skip-tools."
+  BMR_PROJECT="$ROOT/third_party/BossmodReborn/BossMod/BossModReborn.csproj"
+  [[ -f "$BMR_PROJECT" ]] || fail "BossMod Reborn checkout was not found at '$BMR_PROJECT'. Run git submodule update --init --recursive or use --skip-tools."
 
   if [[ "$RUN_TOOL_TESTS" -eq 1 ]]; then
     DEFAULT_FFXIV_GAME_PATH="$HOME/Games/steam/debian-installation/steamapps/common/FINAL FANTASY XIV Online"

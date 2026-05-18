@@ -118,9 +118,7 @@ internal sealed class TargetUptimePositioningController(
         {
             this.lastReason = forcedMovementActive
                 ? "forced mechanic movement active"
-                : forbiddenZonesActive
-                ? "BMR movement inactive"
-                : "no active mechanic exit";
+                : "target uptime preference suppressed";
             return;
         }
 
@@ -144,7 +142,9 @@ internal sealed class TargetUptimePositioningController(
         }
 
         contributions.Add(new(this.lastGoalDelegate, BossModGoalPriority.Uptime, "Target uptime", candidate, MechanicWhisperConfidence.Confident));
-        this.lastReason = "mechanic exit target uptime";
+        this.lastReason = forbiddenZonesActive || this.bmrMoveRequested || this.bmrMoveImminent
+            ? "mechanic exit target uptime"
+            : "target uptime preference";
     }
 
     public void Reset()
@@ -169,9 +169,10 @@ internal sealed class TargetUptimePositioningController(
 
     internal static bool ShouldContributeDuringMechanic(bool forbiddenZonesActive, bool forcedMovementActive, bool bmrMoveRequested, bool bmrMoveImminent)
     {
-        return forbiddenZonesActive &&
-               !forcedMovementActive &&
-               (bmrMoveRequested || bmrMoveImminent);
+        _ = forbiddenZonesActive;
+        _ = bmrMoveRequested;
+        _ = bmrMoveImminent;
+        return !forcedMovementActive;
     }
 
     internal static Vector2 ResolveCandidate(Vector2 playerPosition, Vector2 targetPosition, float targetRotation, float targetRadius, float engagementRange)

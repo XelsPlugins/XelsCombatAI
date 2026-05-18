@@ -80,7 +80,8 @@ A change is not aligned if it primarily:
 - `.github/workflows/pr-preview.yml` - thin wrapper calling reusable PR preview release automation.
 - `.github/workflows/release.yml` - thin wrapper calling reusable manual stable release automation.
 - The active plugin feed lives in `XelsPlugins/XelsDalamudRepo`; do not add a local `pluginmaster.json` to this repository.
-- `external/` - read-only external reference workspace. See `external/AGENTS.md`; its instructions override this file inside that directory.
+- `third_party/` - pinned git submodules used as compile-time dependencies. See `third_party/AGENTS.md`.
+- `external/` - refreshable external reference workspace for API, IPC, and integration discovery. See `external/AGENTS.md`; its instructions override this file inside that directory.
 
 ## Build And Validation
 
@@ -98,8 +99,10 @@ Notes:
 
 - The project targets `net10.0-windows8.0` through `Dalamud.NET.Sdk/15.0.0`.
 - On Linux, set `DALAMUD_HOME` to a directory containing Dalamud dev assemblies before building.
-- Builds reference ECommons at `external/ECommons/ECommons/ECommons.csproj`.
-- GitHub Actions and `external/fetch-sources.sh` should keep that repo-local external checkout populated.
+- Builds reference ECommons at `third_party/ECommons/ECommons/ECommons.csproj`.
+- `tools/FightReview` builds against BossMod Reborn at `third_party/BossmodReborn/BossMod/BossModReborn.csproj`.
+- Run `git submodule update --init --recursive` after cloning or when the pinned build dependencies change.
+- GitHub Actions should initialize submodules before validation.
 - `tools/FightReview.Tests` is a custom executable test harness, not a `dotnet test` project. The reusable validation workflow skips it; run `scripts/test-and-build.sh` when tool or review-log behavior changes.
 - Run `dotnet restore` when dependency, SDK, target framework, or project-file changes could affect restore output.
 - Run `scripts/test-and-build.sh --skip-tools --package` for release/package changes or when packaging behavior may have changed. This requires `XelsDalamud.Workflows` cloned beside this repo, or `XELS_DALAMUD_WORKFLOWS_DIR` set to that checkout.
@@ -135,7 +138,7 @@ Do not guess Dalamud APIs. Before using a Dalamud service, method, event, or typ
 
 - Prefer existing usage in this repository.
 - Prefer installed package metadata, IDE completion, generated bindings, or build errors over memory.
-- Use `external/` as a read-only API reference before guessing. Start with `external/Dalamud/` for framework services and generated bindings, `external/SamplePlugin/` for official plugin lifecycle patterns, `external/DalamudPackager/` for packaging behavior, and `external/DalamudPluginsD17/` for public repo metadata examples.
+- Use `external/` and `third_party/` as read-only API references before guessing. Start with `external/Dalamud/` for framework services and generated bindings, `external/SamplePlugin/` for official plugin lifecycle patterns, `external/DalamudPackager/` for packaging behavior, and `external/DalamudPluginsD17/` for public repo metadata examples.
 - For game data or native structures behind Dalamud services, inspect `external/FFXIVClientStructs/`, `external/Lumina/`, and `external/FfxivDatamining/` as applicable.
 - If a checkout is missing or stale and the answer depends on current upstream behavior, run `external/fetch-sources.sh` before drawing conclusions.
 - If unsure, inspect the current API in the installed package or say that the API needs verification.
@@ -250,9 +253,9 @@ The reusable release workflow uses `XelsPlugins/XelsDalamud.Workflows/scripts/pa
 
 ## External References And Generated Files
 
-- Do not edit files under ignored external checkouts in `external/BossmodReborn/`, `external/Avarice/`, or `external/RotationSolverReborn/`.
+- Do not edit files under third-party submodules or ignored external checkouts, including `third_party/BossmodReborn/`, `third_party/ECommons/`, `external/Avarice/`, or `external/RotationSolverReborn/`.
 - Do not commit or package external plugin source.
 - Keep external reference URLs and tracked branches in `external/sources.json`.
-- External references should track the latest remote branch heads, not pinned commits.
+- External references should track the latest remote branch heads, not pinned commits. Compile-time dependencies in `third_party/` are pinned as git submodules.
 - Use `external/fetch-sources.sh` to clone or refresh ignored reference checkouts.
 - Do not hand-edit generated build output under `artifacts/`, `bin/`, or `obj/`.
