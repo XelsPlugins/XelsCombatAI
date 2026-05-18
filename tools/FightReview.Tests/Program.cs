@@ -28,17 +28,20 @@ var tests = new (string Name, Action Body)[]
     ("gap closer follows RSR auto target", GapCloserFollowsRsrAutoTarget),
     ("hostile relay dash requires target momentum", HostileRelayDashRequiresTargetMomentum),
     ("trash gap closer rejects stale pack", TrashGapCloserRejectsStalePack),
+    ("BMR advisory scoring combines enabled preferences", BmrAdvisoryScoringCombinesEnabledPreferences),
     ("healer coverage restores single missing member", HealerCoverageRestoresSingleMissingMember),
     ("healer coverage uses stable natural centers", HealerCoverageUsesStableNaturalCenters),
+    ("healer coverage avoids boss-center candidates", HealerCoverageAvoidsBossCenterCandidates),
     ("healer coverage pre-positions for comfort", HealerCoveragePrepositionsForComfort),
     ("healer coverage catches up for party-saving AoE heals", HealerCoverageCatchesUpForPartySavingAoeHeals),
     ("healer coverage catches up from critical party isolation", HealerCoverageCatchesUpFromCriticalPartyIsolation),
     ("healer coverage combines with forbidden zones", HealerCoverageCombinesWithForbiddenZones),
-    ("pack movement combines with forbidden zones", PackMovementCombinesWithForbiddenZones),
+    ("pack movement combines with BossMod forbidden zones", PackMovementCombinesWithBossModForbiddenZones),
     ("mechanic whisper guard keeps aligned, shorter, or confident goals", MechanicWhisperGuardKeepsAlignedShorterOrConfidentGoals),
     ("mechanic escape margin follows BMR movement", MechanicEscapeMarginFollowsBmrMovement),
     ("target uptime contributes during mechanic exits", TargetUptimeContributesDuringMechanicExits),
     ("trash AoE short one-hit gain is worth moving", TrashAoeShortOneHitGainIsWorthMoving),
+    ("trash AoE prep skips good-enough one-hit churn", TrashAoePrepSkipsGoodEnoughOneHitChurn),
     ("trash AoE retains equal-hit candidate", TrashAoeRetainsEqualHitCandidate),
     ("trash target retention yields to tank pack", TrashTargetRetentionYieldsToTankPack),
     ("multi-target large trash remains trash context", MultiTargetLargeTrashRemainsTrashContext),
@@ -515,6 +518,36 @@ static void HealerCoverageRestoresSingleMissingMember()
         "full coverage restore should stay distance bounded");
 }
 
+static void BmrAdvisoryScoringCombinesEnabledPreferences()
+{
+    var comfort = GoalZoneScorePolicy.ApplyPriorityWeight(
+        GoalZoneScorePolicy.StrongPreference,
+        BossModGoalPriority.Convenience,
+        contributionWeight: 1f);
+    var uptime = GoalZoneScorePolicy.ApplyPriorityWeight(
+        GoalZoneScorePolicy.StrongPreference,
+        BossModGoalPriority.Uptime,
+        contributionWeight: 1f);
+    var party = GoalZoneScorePolicy.ApplyPriorityWeight(
+        GoalZoneScorePolicy.StrongPreference,
+        BossModGoalPriority.PartyUtility,
+        contributionWeight: 1f);
+    var defensive = GoalZoneScorePolicy.ApplyPriorityWeight(
+        GoalZoneScorePolicy.StrongPreference,
+        BossModGoalPriority.DefensiveMechanic,
+        contributionWeight: 1f);
+
+    AssertTrue(comfort < uptime && uptime < party && party < defensive, "advisory priority order should be comfort < uptime < party < defensive");
+
+    var uptimeOnly = GoalZoneScorePolicy.ClampAdvisoryScore(uptime);
+    var combined = GoalZoneScorePolicy.ClampAdvisoryScore(uptime + comfort);
+    AssertTrue(combined > uptimeOnly, "compatible advisory preferences should add instead of lower priority being discarded");
+
+    AssertTrue(
+        GoalZoneScorePolicy.ClampAdvisoryScore(999f) <= GoalZoneScorePolicy.TotalAdvisoryBudget,
+        "combined advisory scoring should remain inside the small BMR tie-break budget");
+}
+
 static void HealerCoverageUsesStableNaturalCenters()
 {
     var player = Vector2.Zero;
@@ -528,8 +561,8 @@ static void HealerCoverageUsesStableNaturalCenters()
 
     var center = HealerAoePositioningController.SelectBestCenter(player, members, tankPosition: null);
     AssertTrue(
-        Vector2.Distance(center, new Vector2(100f / 3f, 0f)) < 0.01f,
-        "coverage center should prefer the covered group centroid over standing on a party member");
+        center.X > 18f && center.X < 22f,
+        "coverage center should move just far enough to cover the group instead of taking the exact centroid");
 
     var previous = center;
     var shiftedMembers = new[]
@@ -544,6 +577,33 @@ static void HealerCoverageUsesStableNaturalCenters()
     AssertTrue(
         Vector2.Distance(retained, previous) < 0.01f,
         "equivalent coverage should retain the previous center instead of jumping to another party member");
+}
+
+static void HealerCoverageAvoidsBossCenterCandidates()
+{
+    var player = new Vector2(26f, 0f);
+    var bossCenter = Vector2.Zero;
+    var members = new[]
+    {
+        new Vector2(-1f, 0f),
+        new Vector2(0f, 0f),
+        new Vector2(1f, 0f)
+    };
+
+    var unrestricted = HealerAoePositioningController.SelectBestCenter(player, members, tankPosition: null);
+    AssertTrue(
+        unrestricted.X > 14f && unrestricted.X < player.X,
+        "unrestricted coverage center should choose a player-side healing point instead of the stacked party middle");
+
+    var restricted = HealerAoePositioningController.SelectBestCenter(
+        player,
+        members,
+        tankPosition: null,
+        previousCenter: null,
+        candidateAllowed: candidate => Vector2.DistanceSquared(candidate, bossCenter) >= 400f);
+    AssertTrue(
+        Vector2.Distance(restricted, player) < 0.01f,
+        "healer coverage should hold current position when better coverage candidates are inside boss center");
 }
 
 static void HealerCoveragePrepositionsForComfort()
@@ -564,7 +624,7 @@ static void HealerCoveragePrepositionsForComfort()
             previousCenter: null,
             out var center),
         "healer should find a more central point without dropping covered members");
-    AssertTrue(center.X < 12f, "comfort point should move toward party center");
+    AssertTrue(center.X > 14f && center.X < player.X, "comfort point should move just enough toward the party, not to the party center");
 
     AssertTrue(
         HealerAoePositioningController.ShouldImproveCoverageComfort(
@@ -687,51 +747,108 @@ static void HealerCoverageCombinesWithForbiddenZones()
         HealerAoePositioningController.ShouldYieldCoverageForSafety(
             forcedMovementActive: false,
             forbiddenSafetyActive: true,
+            bossModGoalZoneActive: false,
             bmrMoveRequested: false,
             bmrMoveImminent: false),
-        "healer coverage should be allowed to bias safe mechanic gaps");
+        "healer coverage should bias safe mechanic gaps instead of yielding to forbidden zones");
 
     AssertFalse(
         HealerAoePositioningController.ShouldYieldCoverageForSafety(
             forcedMovementActive: false,
             forbiddenSafetyActive: false,
+            bossModGoalZoneActive: false,
             bmrMoveRequested: true,
             bmrMoveImminent: true),
-        "existing BMR movement should not suppress coverage scoring");
+        "existing BMR movement without mechanic hints should not suppress coverage scoring");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldYieldCoverageForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: false,
+            bossModGoalZoneActive: true,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false),
+        "BMR goal zones should combine with healer coverage scoring");
 
     AssertTrue(
         HealerAoePositioningController.ShouldYieldCoverageForSafety(
             forcedMovementActive: true,
             forbiddenSafetyActive: true,
+            bossModGoalZoneActive: false,
             bmrMoveRequested: false,
             bmrMoveImminent: false),
         "forced mechanic movement remains authoritative");
 }
 
-static void PackMovementCombinesWithForbiddenZones()
+static void PackMovementCombinesWithBossModForbiddenZones()
 {
     AssertFalse(
         AoePackPositioningController.ShouldYieldPackMovementForSafety(
             forcedMovementActive: false,
             forbiddenSafetyActive: true,
+            temporaryObstacleSafetyActive: false,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: false,
             bmrMoveRequested: false,
             bmrMoveImminent: false,
             bossModuleContext: true),
-        "boss-context pack movement should be allowed to bias safe mechanic gaps");
+        "boss-context pack movement should bias safe mechanic gaps instead of yielding to forbidden zones");
 
-    AssertTrue(
+    AssertFalse(
         AoePackPositioningController.ShouldYieldPackMovementForSafety(
             forcedMovementActive: false,
             forbiddenSafetyActive: true,
+            temporaryObstacleSafetyActive: false,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: false,
             bmrMoveRequested: false,
             bmrMoveImminent: false,
             bossModuleContext: false),
-        "trash pack movement should yield to active ground danger");
+        "trash pack movement should bias safe mechanic gaps instead of yielding to forbidden zones");
 
     AssertFalse(
         AoePackPositioningController.ShouldYieldPackMovementForSafety(
             forcedMovementActive: false,
             forbiddenSafetyActive: false,
+            temporaryObstacleSafetyActive: true,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: false,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false,
+            bossModuleContext: false),
+        "temporary obstacles should stay BMR pathfinding constraints rather than suppressing scoring");
+
+    AssertFalse(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: false,
+            temporaryObstacleSafetyActive: false,
+            forbiddenDirectionSafetyActive: true,
+            specialModeSafetyActive: false,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false,
+            bossModuleContext: false),
+        "forbidden directions should stay BMR facing constraints rather than suppressing scoring");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: false,
+            temporaryObstacleSafetyActive: false,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: true,
+            bmrMoveRequested: false,
+            bmrMoveImminent: false,
+            bossModuleContext: false),
+        "trash pack movement should yield to special movement modes");
+
+    AssertFalse(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: false,
+            temporaryObstacleSafetyActive: false,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: false,
             bmrMoveRequested: true,
             bmrMoveImminent: true,
             bossModuleContext: false),
@@ -741,6 +858,9 @@ static void PackMovementCombinesWithForbiddenZones()
         AoePackPositioningController.ShouldYieldPackMovementForSafety(
             forcedMovementActive: true,
             forbiddenSafetyActive: false,
+            temporaryObstacleSafetyActive: false,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: false,
             bmrMoveRequested: false,
             bmrMoveImminent: false,
             bossModuleContext: false),
@@ -871,13 +991,13 @@ static void TargetUptimeContributesDuringMechanicExits()
             bmrMoveImminent: true),
         "forced movement remains authoritative");
 
-    AssertFalse(
+    AssertTrue(
         TargetUptimePositioningController.ShouldContributeDuringMechanic(
             forbiddenZonesActive: false,
             forcedMovementActive: false,
             bmrMoveRequested: true,
             bmrMoveImminent: true),
-        "target uptime exits require an active mechanic safety field");
+        "target uptime should bias BMR movement even without active forbidden zones");
 
     var candidate = TargetUptimePositioningController.ResolveCandidate(
         playerPosition: new Vector2(20f, 0f),
@@ -911,6 +1031,26 @@ static void TrashAoeShortOneHitGainIsWorthMoving()
             out var reason),
         "long movement for one extra trash AoE hit should remain bounded");
     AssertContains("skipped", reason, "marginal AoE skip reason");
+}
+
+static void TrashAoePrepSkipsGoodEnoughOneHitChurn()
+{
+    AssertTrue(
+        AoePackPositioningController.ShouldSkipProactiveAoeReposition(
+            currentHits: 5,
+            bestHits: 6,
+            targetCount: 6,
+            out var reason),
+        "proactive AoE prep should not chase a single extra hit once coverage is good enough");
+    AssertContains("good AoE prep coverage", reason, "proactive AoE prep skip reason");
+
+    AssertFalse(
+        AoePackPositioningController.ShouldSkipProactiveAoeReposition(
+            currentHits: 4,
+            bestHits: 6,
+            targetCount: 6,
+            out _),
+        "proactive AoE prep should still allow meaningful two-hit improvements");
 }
 
 static void TrashAoeRetainsEqualHitCandidate()

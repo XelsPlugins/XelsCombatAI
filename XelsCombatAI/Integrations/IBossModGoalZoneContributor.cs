@@ -8,8 +8,9 @@ internal enum BossModGoalPriority
 {
     Convenience = 100,
     Uptime = 200,
-    ImmediateAction = 300,
-    DefensiveMechanic = 400
+    PartyUtility = 300,
+    ImmediateAction = 400,
+    DefensiveMechanic = 500
 }
 
 internal enum BossModGoalScoreMode
@@ -30,7 +31,8 @@ internal sealed record BossModGoalContribution(
     string Label,
     Vector2? Candidate = null,
     MechanicWhisperConfidence Confidence = MechanicWhisperConfidence.Routine,
-    BossModGoalScoreMode ScoreMode = BossModGoalScoreMode.Advisory);
+    BossModGoalScoreMode ScoreMode = BossModGoalScoreMode.Advisory,
+    float AdvisoryWeight = 1f);
 
 internal interface IBossModGoalZoneContributor
 {

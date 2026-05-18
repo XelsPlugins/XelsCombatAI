@@ -89,7 +89,8 @@ public sealed class Plugin : IDalamudPlugin
         var healerAoePositioningController = new HealerAoePositioningController(this.config, this.services, bossMod, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
         var aggroSafetyController = new AggroSafetyController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true);
-        IBossModGoalZoneContributor[] legacyMovementContributors = [aggroSafetyController, targetUptimePositioningController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, arenaEdgePositioningController];
+        var bossCenterAvoidanceController = new BossCenterAvoidanceController(this.config, this.services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule());
+        IBossModGoalZoneContributor[] legacyMovementContributors = [aggroSafetyController, targetUptimePositioningController, aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController];
         var aoeGoalHook = new BossModGoalZoneHook(this.config, PluginInterface, this.services, Log, vnavmesh, legacyMovementContributors);
         var gapCloserController = new GapCloserController(
             this.config,

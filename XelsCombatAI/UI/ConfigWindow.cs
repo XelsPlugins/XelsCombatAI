@@ -249,7 +249,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.ManageHealerCoverageZone,
             this.defaultConfig.ManageHealerCoverageZone,
             v => this.config.ManageHealerCoverageZone = v,
-            "Healers only: prefers safe spots where more party members are comfortably in AoE healing range.",
+            "Healers only: prefers safe spots where more party members are comfortably in AoE healing range.\nHolds during casts and active BossMod mechanic positioning.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Stand in defensive ground effects",
@@ -283,7 +283,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.AvoidStandingInsideEnemies,
             this.defaultConfig.AvoidStandingInsideEnemies,
             v => this.config.AvoidStandingInsideEnemies = v,
-            "Avoids standing inside boss hitboxes when BossMod knows the fight.",
+            "Avoids favoring positions inside boss-sized hitboxes.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Avoid arena edge",
@@ -310,7 +310,7 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         if (!this.config.ManageMovement)
             ImGui.BeginDisabled();
-        changed |= this.Checkbox("Move for better AoE hits", this.config.ManageAoePackPositioning, this.defaultConfig.ManageAoePackPositioning, v => this.config.ManageAoePackPositioning = v, "Moves to a safe spot where your AoE can hit more enemies.", movementDisabledTooltip);
+        changed |= this.Checkbox("Move for better AoE hits", this.config.ManageAoePackPositioning, this.defaultConfig.ManageAoePackPositioning, v => this.config.ManageAoePackPositioning = v, "Moves to a safe spot where your AoE can hit more enemies.\nYields to active BossMod mechanic safety.", movementDisabledTooltip);
         if (!this.config.ManageMovement)
             ImGui.EndDisabled();
 

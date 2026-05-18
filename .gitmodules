@@ -1,0 +1,8 @@
+[submodule "third_party/ECommons"]
+	path = third_party/ECommons
+	url = https://github.com/NightmareXIV/ECommons.git
+	branch = master
+[submodule "third_party/BossmodReborn"]
+	path = third_party/BossmodReborn
+	url = https://github.com/FFXIV-CombatReborn/BossmodReborn.git
+	branch = main
