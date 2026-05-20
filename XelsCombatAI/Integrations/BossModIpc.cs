@@ -48,72 +48,96 @@ internal sealed class BossModIpc
         "BossMod.Autorotation.MiscAI.NormalMovement"
     ];
 
-    private readonly ICallGateSubscriber<string, string?> getPreset;
-    private readonly ICallGateSubscriber<string, bool, bool> createPreset;
-    private readonly ICallGateSubscriber<string?> getActivePreset;
-    private readonly ICallGateSubscriber<string, bool> setActivePreset;
-    private readonly ICallGateSubscriber<bool> clearActivePreset;
-    private readonly ICallGateSubscriber<uint, bool> hasModuleByDataId;
-    private readonly ICallGateSubscriber<string, bool, bool> disableModule;
-    private readonly ICallGateSubscriber<string, string, string, string, bool> addTransientStrategy;
-    private readonly ICallGateSubscriber<string, string, string, bool> clearTransientStrategy;
-    private readonly ICallGateSubscriber<string, bool> clearTransientPresetStrategies;
-    private readonly ICallGateSubscriber<float> nextDowntimeIn;
-    private readonly ICallGateSubscriber<float> nextDowntimeEndIn;
+    private readonly IDalamudPluginInterface pluginInterface;
     private readonly IPluginLog log;
+    private readonly BossModRuntimeGate gate;
+    private ICallGateSubscriber<string, string?>? getPreset;
+    private ICallGateSubscriber<string, bool, bool>? createPreset;
+    private ICallGateSubscriber<string?>? getActivePreset;
+    private ICallGateSubscriber<string, bool>? setActivePreset;
+    private ICallGateSubscriber<bool>? clearActivePreset;
+    private ICallGateSubscriber<uint, bool>? hasModuleByDataId;
+    private ICallGateSubscriber<string, bool, bool>? disableModule;
+    private ICallGateSubscriber<string, string, string, string, bool>? addTransientStrategy;
+    private ICallGateSubscriber<string, string, string, bool>? clearTransientStrategy;
+    private ICallGateSubscriber<string, bool>? clearTransientPresetStrategies;
+    private ICallGateSubscriber<float>? nextDowntimeIn;
+    private ICallGateSubscriber<float>? nextDowntimeEndIn;
     private DateTime nextFailureLog = DateTime.MinValue;
 
-    public BossModIpc(IDalamudPluginInterface pluginInterface, IPluginLog log)
+    public BossModIpc(IDalamudPluginInterface pluginInterface, IPluginLog log, BossModRuntimeGate gate)
     {
+        this.pluginInterface = pluginInterface;
         this.log = log;
-        this.getPreset = pluginInterface.GetIpcSubscriber<string, string?>("BossMod.Presets.Get");
-        this.createPreset = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Presets.Create");
-        this.getActivePreset = pluginInterface.GetIpcSubscriber<string?>("BossMod.Presets.GetActive");
-        this.setActivePreset = pluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.SetActive");
-        this.clearActivePreset = pluginInterface.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive");
-        this.hasModuleByDataId = pluginInterface.GetIpcSubscriber<uint, bool>("BossMod.HasModuleByDataId");
-        this.disableModule = pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Configuration.DisableModule");
-        this.addTransientStrategy = pluginInterface.GetIpcSubscriber<string, string, string, string, bool>("BossMod.Presets.AddTransientStrategy");
-        this.clearTransientStrategy = pluginInterface.GetIpcSubscriber<string, string, string, bool>("BossMod.Presets.ClearTransientStrategy");
-        this.clearTransientPresetStrategies = pluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.ClearTransientPresetStrategies");
-        this.nextDowntimeIn = pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextDowntimeIn");
-        this.nextDowntimeEndIn = pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextDowntimeEndIn");
+        this.gate = gate;
     }
 
     public bool EnsurePreset()
     {
-        var preset = this.Invoke(() => this.getPreset.InvokeFunc(DefaultPresetName));
+        if (!this.IsAvailable() ||
+            this.getPreset is not { } getPreset ||
+            this.createPreset is not { } createPreset)
+        {
+            return false;
+        }
+
+        var preset = this.Invoke(getPreset, () => getPreset.InvokeFunc(DefaultPresetName));
         if (preset != null && RequiredPresetModules.All(preset.Contains))
         {
             return true;
         }
 
-        return this.Invoke(() => this.createPreset.InvokeFunc(PresetPayload, true));
+        return this.Invoke(createPreset, () => createPreset.InvokeFunc(PresetPayload, true));
+    }
+
+    public bool IsIpcReady()
+    {
+        return this.EnsureSubscribers() && this.HasRequiredFunctions();
     }
 
     public bool IsAvailable()
     {
-        try
-        {
-            _ = this.getPreset.InvokeFunc(DefaultPresetName);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            this.LogRecoverableFailure(ex, "BossMod preset IPC is unavailable.");
-            return false;
-        }
+        return this.gate.IsOpen && this.IsIpcReady();
     }
 
-    public bool SetActive(string presetName) => this.Invoke(() => this.setActivePreset.InvokeFunc(presetName));
+    public bool SetActive(string presetName)
+    {
+        if (!this.IsAvailable() || this.setActivePreset is not { } subscriber)
+        {
+            return false;
+        }
 
-    public string? GetActive() => this.Invoke(() => this.getActivePreset.InvokeFunc());
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(presetName));
+    }
 
-    public bool ClearActive() => this.Invoke(() => this.clearActivePreset.InvokeFunc());
+    public string? GetActive()
+    {
+        if (!this.IsAvailable() || this.getActivePreset is not { } subscriber)
+        {
+            return null;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc());
+    }
+
+    public bool ClearActive()
+    {
+        if (!this.IsAvailable() || this.clearActivePreset is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc());
+    }
 
     public bool SetPositional(string presetName, Positional positional)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.GoToPositional",
             "Positional",
@@ -122,7 +146,12 @@ internal sealed class BossModIpc
 
     public bool SetRange(string presetName, float range)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayCloseToTarget",
             "range",
@@ -131,7 +160,12 @@ internal sealed class BossModIpc
 
     public bool SetMovement(string presetName, bool enabled)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.NormalMovement",
             "Destination",
@@ -140,7 +174,12 @@ internal sealed class BossModIpc
 
     public bool SetForbiddenZoneCushion(string presetName, string cushion)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.NormalMovement",
             "ForbiddenZoneCushion",
@@ -149,7 +188,12 @@ internal sealed class BossModIpc
 
     public bool SetMovementRangeStrategy(string presetName, string strategy)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.NormalMovement",
             "Range",
@@ -158,7 +202,12 @@ internal sealed class BossModIpc
 
     public bool SetLeylinesBetweenTheLines(string presetName, bool enabled)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Use Between The Lines",
@@ -167,7 +216,12 @@ internal sealed class BossModIpc
 
     public bool SetLeylinesRetrace(string presetName, bool enabled)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Use Retrace",
@@ -176,7 +230,12 @@ internal sealed class BossModIpc
 
     public bool SetLeylinesGoal(string presetName, bool enabled)
     {
-        return this.Invoke(() => this.addTransientStrategy.InvokeFunc(
+        if (!this.IsAvailable() || this.addTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(
             presetName,
             "BossMod.Autorotation.MiscAI.StayWithinLeylines",
             "Goal",
@@ -185,24 +244,71 @@ internal sealed class BossModIpc
 
     public bool ClearTransientStrategy(string presetName, string moduleTypeName, string trackName)
     {
-        return this.Invoke(() => this.clearTransientStrategy.InvokeFunc(presetName, moduleTypeName, trackName));
+        if (!this.IsAvailable() || this.clearTransientStrategy is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(presetName, moduleTypeName, trackName));
     }
 
     public bool ClearTransientPresetStrategies(string presetName)
     {
-        return this.Invoke(() => this.clearTransientPresetStrategies.InvokeFunc(presetName));
+        if (!this.IsAvailable() || this.clearTransientPresetStrategies is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(presetName));
     }
 
-    public bool HasModuleByDataId(uint dataId) => this.Invoke(() => this.hasModuleByDataId.InvokeFunc(dataId));
-
-    public bool DisableModule(string moduleName, bool disabled) => this.Invoke(() => this.disableModule.InvokeFunc(moduleName, disabled));
-
-    public float NextDowntimeIn() => this.Invoke(() => this.nextDowntimeIn.InvokeFunc(), float.MaxValue);
-
-    public float NextDowntimeEndIn() => this.Invoke(() => this.nextDowntimeEndIn.InvokeFunc(), float.MaxValue);
-
-    private bool Invoke(Func<bool> action)
+    public bool HasModuleByDataId(uint dataId)
     {
+        if (!this.IsAvailable() || this.hasModuleByDataId is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(dataId));
+    }
+
+    public bool DisableModule(string moduleName, bool disabled)
+    {
+        if (!this.IsAvailable() || this.disableModule is not { } subscriber)
+        {
+            return false;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(moduleName, disabled));
+    }
+
+    public float NextDowntimeIn()
+    {
+        if (!this.IsAvailable() || this.nextDowntimeIn is not { } subscriber)
+        {
+            return float.MaxValue;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(), float.MaxValue);
+    }
+
+    public float NextDowntimeEndIn()
+    {
+        if (!this.IsAvailable() || this.nextDowntimeEndIn is not { } subscriber)
+        {
+            return float.MaxValue;
+        }
+
+        return this.Invoke(subscriber, () => subscriber.InvokeFunc(), float.MaxValue);
+    }
+
+    private bool Invoke(ICallGateSubscriber subscriber, Func<bool> action)
+    {
+        if (!this.CanInvoke(subscriber))
+        {
+            return false;
+        }
+
         try
         {
             return action();
@@ -214,8 +320,13 @@ internal sealed class BossModIpc
         }
     }
 
-    private string? Invoke(Func<string?> action)
+    private string? Invoke(ICallGateSubscriber subscriber, Func<string?> action)
     {
+        if (!this.CanInvoke(subscriber))
+        {
+            return null;
+        }
+
         try
         {
             return action();
@@ -227,8 +338,13 @@ internal sealed class BossModIpc
         }
     }
 
-    private float Invoke(Func<float> action, float fallback)
+    private float Invoke(ICallGateSubscriber subscriber, Func<float> action, float fallback)
     {
+        if (!this.CanInvoke(subscriber))
+        {
+            return fallback;
+        }
+
         try
         {
             return action();
@@ -238,6 +354,106 @@ internal sealed class BossModIpc
             this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
             return fallback;
         }
+    }
+
+    private bool CanInvoke(ICallGateSubscriber subscriber)
+    {
+        if (!this.gate.IsOpen || !this.EnsureSubscribers())
+        {
+            return false;
+        }
+
+        try
+        {
+            return subscriber.HasFunction;
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "Could not check BossMod IPC readiness.");
+            return false;
+        }
+    }
+
+    private bool HasRequiredFunctions()
+    {
+        try
+        {
+            return this.getPreset?.HasFunction == true &&
+                   this.createPreset?.HasFunction == true &&
+                   this.getActivePreset?.HasFunction == true &&
+                   this.setActivePreset?.HasFunction == true &&
+                   this.clearActivePreset?.HasFunction == true &&
+                   this.hasModuleByDataId?.HasFunction == true &&
+                   this.disableModule?.HasFunction == true &&
+                   this.addTransientStrategy?.HasFunction == true &&
+                   this.clearTransientStrategy?.HasFunction == true &&
+                   this.clearTransientPresetStrategies?.HasFunction == true &&
+                   this.nextDowntimeIn?.HasFunction == true &&
+                   this.nextDowntimeEndIn?.HasFunction == true;
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "Could not check BossMod IPC readiness.");
+            return false;
+        }
+    }
+
+    private bool EnsureSubscribers()
+    {
+        if (this.getPreset != null &&
+            this.createPreset != null &&
+            this.getActivePreset != null &&
+            this.setActivePreset != null &&
+            this.clearActivePreset != null &&
+            this.hasModuleByDataId != null &&
+            this.disableModule != null &&
+            this.addTransientStrategy != null &&
+            this.clearTransientStrategy != null &&
+            this.clearTransientPresetStrategies != null &&
+            this.nextDowntimeIn != null &&
+            this.nextDowntimeEndIn != null)
+        {
+            return true;
+        }
+
+        try
+        {
+            this.getPreset = this.pluginInterface.GetIpcSubscriber<string, string?>("BossMod.Presets.Get");
+            this.createPreset = this.pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Presets.Create");
+            this.getActivePreset = this.pluginInterface.GetIpcSubscriber<string?>("BossMod.Presets.GetActive");
+            this.setActivePreset = this.pluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.SetActive");
+            this.clearActivePreset = this.pluginInterface.GetIpcSubscriber<bool>("BossMod.Presets.ClearActive");
+            this.hasModuleByDataId = this.pluginInterface.GetIpcSubscriber<uint, bool>("BossMod.HasModuleByDataId");
+            this.disableModule = this.pluginInterface.GetIpcSubscriber<string, bool, bool>("BossMod.Configuration.DisableModule");
+            this.addTransientStrategy = this.pluginInterface.GetIpcSubscriber<string, string, string, string, bool>("BossMod.Presets.AddTransientStrategy");
+            this.clearTransientStrategy = this.pluginInterface.GetIpcSubscriber<string, string, string, bool>("BossMod.Presets.ClearTransientStrategy");
+            this.clearTransientPresetStrategies = this.pluginInterface.GetIpcSubscriber<string, bool>("BossMod.Presets.ClearTransientPresetStrategies");
+            this.nextDowntimeIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextDowntimeIn");
+            this.nextDowntimeEndIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextDowntimeEndIn");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.ClearSubscribers();
+            this.LogRecoverableFailure(ex, "Could not create BossMod IPC subscribers.");
+            return false;
+        }
+    }
+
+    private void ClearSubscribers()
+    {
+        this.getPreset = null;
+        this.createPreset = null;
+        this.getActivePreset = null;
+        this.setActivePreset = null;
+        this.clearActivePreset = null;
+        this.hasModuleByDataId = null;
+        this.disableModule = null;
+        this.addTransientStrategy = null;
+        this.clearTransientStrategy = null;
+        this.clearTransientPresetStrategies = null;
+        this.nextDowntimeIn = null;
+        this.nextDowntimeEndIn = null;
     }
 
     private void LogRecoverableFailure(Exception ex, string message)

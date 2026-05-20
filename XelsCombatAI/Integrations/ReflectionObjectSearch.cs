@@ -35,6 +35,11 @@ internal static class ReflectionObjectSearch
 
     public static IEnumerable<object> EnumerateLoadedPlugins(IDalamudPluginInterface pluginInterface, params string[] pluginNames)
     {
+        if (!pluginInterface.IsAutoUpdateComplete)
+        {
+            yield break;
+        }
+
         IEnumerable<object>? plugins;
         try
         {

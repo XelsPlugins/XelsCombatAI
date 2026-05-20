@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 
 namespace XelsCombatAI.Integrations;
@@ -7,21 +6,16 @@ internal sealed class DependencyChecker(
     Configuration config,
     DalamudServices services,
     BossModIpc bossMod,
+    AvariceIpc avarice,
     RotationSolverIpc rotationSolver)
 {
-    private static readonly TimeSpan DependencyCacheDuration = TimeSpan.FromMilliseconds(750);
-
-    private DateTime cachedDependencyCheckUntil = DateTime.MinValue;
-    private bool cachedDependenciesAvailable;
-    private string cachedMissing = string.Empty;
-
     public bool DependenciesAvailable(out string missing, bool forceRefresh = false)
     {
-        var now = DateTime.UtcNow;
-        if (!forceRefresh && now < this.cachedDependencyCheckUntil)
+        _ = forceRefresh;
+
+        if (!this.CanProbeDependencies(out missing))
         {
-            missing = this.cachedMissing;
-            return this.cachedDependenciesAvailable;
+            return false;
         }
 
         var missingParts = new List<string>();
@@ -37,10 +31,7 @@ internal sealed class DependencyChecker(
         }
 
         missing = string.Join("; ", missingParts);
-        this.cachedMissing = missing;
-        this.cachedDependenciesAvailable = missingParts.Count == 0;
-        this.cachedDependencyCheckUntil = now.Add(DependencyCacheDuration);
-        return this.cachedDependenciesAvailable;
+        return missingParts.Count == 0;
     }
 
     public string? GetDependencyWarning()
@@ -50,6 +41,11 @@ internal sealed class DependencyChecker(
 
     public string? GetTrueNorthWarning(bool? rsrTrueNorthDisabled)
     {
+        if (!this.CanProbeDependencies(out _))
+        {
+            return null;
+        }
+
         if (!config.ManagePositionals || !config.ManageTrueNorth)
         {
             return null;
@@ -70,16 +66,42 @@ internal sealed class DependencyChecker(
 
     public bool IsBossModAvailable()
     {
-        return services.HasLoadedPlugin("BossModReborn", "BossMod Reborn", "BossMod") && bossMod.IsAvailable();
+        return this.CanProbeDependencies(out _) && bossMod.IsIpcReady();
     }
 
     public bool IsAvariceAvailable()
     {
-        return services.HasLoadedPlugin("Avarice");
+        return this.CanProbeDependencies(out _) && avarice.IsAvailable();
     }
 
     public bool IsRotationSolverAvailable()
     {
-        return rotationSolver.IsAvailable(services.PluginInterface);
+        return this.CanProbeDependencies(out _) && rotationSolver.IsAvailable(services.PluginInterface);
+    }
+
+    public bool CanProbeDependencies(out string waitingReason)
+    {
+        if (!services.PluginInterface.IsAutoUpdateComplete)
+        {
+            waitingReason = "Dalamud plugin updates are still settling";
+            return false;
+        }
+
+        if (!services.Framework.IsInFrameworkUpdateThread)
+        {
+            waitingReason = "game state will be checked from the framework thread";
+            return false;
+        }
+
+        if (!services.ClientState.IsLoggedIn ||
+            services.ClientState.TerritoryType == 0 ||
+            services.ObjectTable.LocalPlayer == null)
+        {
+            waitingReason = "game state is still loading";
+            return false;
+        }
+
+        waitingReason = string.Empty;
+        return true;
     }
 }

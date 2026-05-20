@@ -49,6 +49,12 @@ internal sealed class BossModPresetController(
 
     public void Deactivate()
     {
+        if (!bossMod.IsAvailable())
+        {
+            this.MarkUninitialized();
+            return;
+        }
+
         var presetName = BossModIpc.DefaultPresetName;
         try
         {

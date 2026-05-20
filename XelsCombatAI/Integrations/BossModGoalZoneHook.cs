@@ -17,7 +17,6 @@ internal sealed class BossModGoalZoneHook : IDisposable
 {
     private const string BossModPluginTypeName = "BossMod.Plugin";
     private const int MaxFailures = 3;
-    private static readonly TimeSpan OwnerLivenessCheckInterval = TimeSpan.FromSeconds(2);
     private const float MechanicWhisperCandidateResetDistance = 3f;
     private const float MechanicEscapeMarginCandidateResetDistance = 0.75f;
     private const float MechanicEscapeMarginRadius = 2.5f;
@@ -26,24 +25,27 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private readonly Configuration config;
     private readonly DalamudServices services;
     private readonly IPluginLog log;
+    private readonly BossModRuntimeGate bossModGate;
     private readonly IReadOnlyList<IBossModGoalZoneContributor> contributors;
     private readonly ManualCorrectionFeedback manualCorrectionFeedback;
     private DateTime nextResolveAttempt = DateTime.MinValue;
-    private DateTime nextOwnerLivenessCheck = DateTime.MinValue;
     private int failures;
     private bool disabledAfterFailure;
+    private bool bossModInvalidated;
     private string status = "unresolved";
     private ReflectedDraw? draw;
 
-    public BossModGoalZoneHook(Configuration config, IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, IReadOnlyList<IBossModGoalZoneContributor> contributors, ManualCorrectionFeedback manualCorrectionFeedback)
+    public BossModGoalZoneHook(Configuration config, IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, BossModRuntimeGate bossModGate, IReadOnlyList<IBossModGoalZoneContributor> contributors, ManualCorrectionFeedback manualCorrectionFeedback)
     {
         this.config = config;
         this.pluginInterface = pluginInterface;
         this.services = services;
         this.log = log;
+        this.bossModGate = bossModGate;
         this.contributors = contributors;
         this.manualCorrectionFeedback = manualCorrectionFeedback;
         this.SetContributorHookState(this.status);
+        this.pluginInterface.ActivePluginsChanged += this.OnActivePluginsChanged;
     }
 
     public string Status => this.status;
@@ -106,13 +108,16 @@ internal sealed class BossModGoalZoneHook : IDisposable
     public void EnsureActive()
     {
         var now = DateTime.UtcNow;
-        if (this.draw != null && now >= this.nextOwnerLivenessCheck)
+        if (!this.bossModGate.IsOpen)
         {
-            this.nextOwnerLivenessCheck = now.Add(OwnerLivenessCheckInterval);
-            if (!this.draw.IsOwnerLoaded())
-            {
-                this.DisposeDraw("BMR draw owner unloaded");
-            }
+            this.MarkBossModUnavailable();
+            return;
+        }
+
+        if (this.bossModInvalidated)
+        {
+            this.draw = null;
+            this.bossModInvalidated = false;
         }
 
         if (this.draw != null || this.disabledAfterFailure)
@@ -141,16 +146,20 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.manualCorrectionFeedback, this.services, this.log, this.HandleFailure, out var reason);
+            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.manualCorrectionFeedback, this.services, this.log, this.bossModGate, this.HandleFailure, out var reason);
             if (reflectedDraw == null)
             {
                 this.SetStatus(reason);
                 return;
             }
 
-            reflectedDraw.Install();
+            if (!reflectedDraw.Install())
+            {
+                this.SetStatus("waiting for BMR");
+                return;
+            }
+
             this.draw = reflectedDraw;
-            this.nextOwnerLivenessCheck = DateTime.UtcNow.Add(OwnerLivenessCheckInterval);
             this.failures = 0;
             this.SetStatus("draw wrapper active");
         }
@@ -158,6 +167,19 @@ internal sealed class BossModGoalZoneHook : IDisposable
         {
             this.HandleFailure(ex, "Could not install BossMod goal draw wrapper.", $"BMR goal wrapper install failed: {ex.Message}");
         }
+    }
+
+    public void MarkBossModUnavailable()
+    {
+        this.failures = 0;
+        this.disabledAfterFailure = false;
+        this.nextResolveAttempt = DateTime.MinValue;
+        foreach (var contributor in this.contributors)
+        {
+            contributor.Reset();
+        }
+
+        this.SetStatus("waiting for BMR");
     }
 
     public void Reset()
@@ -174,6 +196,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
     public void Dispose()
     {
+        this.pluginInterface.ActivePluginsChanged -= this.OnActivePluginsChanged;
         this.DisposeDraw("disposed");
     }
 
@@ -201,6 +224,13 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
     private void DisposeDraw(string newStatus)
     {
+        if (!this.bossModGate.IsOpen)
+        {
+            this.draw = null;
+            this.SetStatus(newStatus);
+            return;
+        }
+
         try
         {
             this.draw?.Dispose();
@@ -211,8 +241,44 @@ internal sealed class BossModGoalZoneHook : IDisposable
         }
 
         this.draw = null;
-        this.nextOwnerLivenessCheck = DateTime.MinValue;
         this.SetStatus(newStatus);
+    }
+
+    private void OnActivePluginsChanged(IActivePluginsChangedEventArgs args)
+    {
+        if (!AffectsBossMod(args))
+        {
+            return;
+        }
+
+        this.nextResolveAttempt = DateTime.MinValue;
+        this.failures = 0;
+        this.disabledAfterFailure = false;
+        if (args.Kind is PluginListInvalidationKind.Unloaded or PluginListInvalidationKind.Update or PluginListInvalidationKind.AutoUpdate)
+        {
+            this.bossModGate.Close();
+            this.bossModInvalidated = true;
+            this.draw = null;
+            this.SetStatus("waiting for BMR");
+            return;
+        }
+
+        this.bossModInvalidated = true;
+        this.SetStatus("waiting for BMR");
+    }
+
+    private static bool AffectsBossMod(IActivePluginsChangedEventArgs args)
+    {
+        foreach (var internalName in args.AffectedInternalNames)
+        {
+            if (string.Equals(internalName, "BossModReborn", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(internalName, "BossMod", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void SetStatus(string newStatus)
@@ -240,6 +306,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly ManualCorrectionFeedback manualCorrectionFeedback;
         private readonly DalamudServices services;
         private readonly IPluginLog log;
+        private readonly BossModRuntimeGate bossModGate;
         private readonly Action<Exception, string, string> failureHandler;
         private readonly MethodInfo executeHintsMethod;
         private readonly FieldInfo previousUpdateTimeField;
@@ -314,6 +381,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             ManualCorrectionFeedback manualCorrectionFeedback,
             DalamudServices services,
             IPluginLog log,
+            BossModRuntimeGate bossModGate,
             Action<Exception, string, string> failureHandler,
             ReflectedMembers members)
         {
@@ -326,6 +394,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.manualCorrectionFeedback = manualCorrectionFeedback;
             this.services = services;
             this.log = log;
+            this.bossModGate = bossModGate;
             this.failureHandler = failureHandler;
             this.executeHintsMethod = members.ExecuteHintsMethod;
             this.previousUpdateTimeField = members.PreviousUpdateTimeField;
@@ -376,24 +445,6 @@ internal sealed class BossModGoalZoneHook : IDisposable
         public string LastGoalSources => this.lastGoalSources;
         public BossModMovementDiagnostics MovementDiagnostics => this.movementDiagnostics;
 
-        public bool IsOwnerLoaded()
-        {
-            var activePlugin = ReflectionObjectSearch.FindLoadedPlugin(
-                this.bmrPluginInterface,
-                BossModPluginTypeName,
-                maxDepth: 8,
-                "BossModReborn",
-                "BossMod Reborn",
-                "BossMod");
-            if (activePlugin == null)
-            {
-                return false;
-            }
-
-            return ReferenceEquals(activePlugin, this.plugin) ||
-                   activePlugin.GetType().Assembly == this.plugin.GetType().Assembly;
-        }
-
         public static ReflectedDraw? TryCreate(
             object plugin,
             Configuration config,
@@ -401,6 +452,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             ManualCorrectionFeedback manualCorrectionFeedback,
             DalamudServices services,
             IPluginLog log,
+            BossModRuntimeGate bossModGate,
             Action<Exception, string, string> failureHandler,
             out string reason)
         {
@@ -486,7 +538,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             try
             {
-                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, manualCorrectionFeedback, services, log, failureHandler, members);
+                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, manualCorrectionFeedback, services, log, bossModGate, failureHandler, members);
             }
             catch (Exception ex)
             {
@@ -496,30 +548,38 @@ internal sealed class BossModGoalZoneHook : IDisposable
             }
         }
 
-        public void Install()
+        public bool Install()
         {
+            if (!this.bossModGate.IsOpen)
+            {
+                return false;
+            }
+
             this.bmrPluginInterface.UiBuilder.Draw -= this.originalDraw;
             this.bmrPluginInterface.UiBuilder.Draw += this.wrapperDraw;
             this.installed = true;
+            return true;
         }
 
         public void Dispose()
         {
-            if (!this.installed)
+            if (!this.installed || !this.bossModGate.IsOpen)
             {
                 return;
             }
 
             this.installed = false;
             this.bmrPluginInterface.UiBuilder.Draw -= this.wrapperDraw;
-            if (this.IsOwnerLoaded())
-            {
-                this.bmrPluginInterface.UiBuilder.Draw += this.originalDraw;
-            }
+            this.bmrPluginInterface.UiBuilder.Draw += this.originalDraw;
         }
 
         private void Draw()
         {
+            if (!this.bossModGate.IsOpen)
+            {
+                return;
+            }
+
             try
             {
                 this.DrawReflected();

@@ -20,6 +20,7 @@ internal sealed class BossModReflectionSafety
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IPluginLog log;
+    private readonly BossModRuntimeGate bossModGate;
     private object? bossModPlugin;
     private FieldInfo? hintsField;
     private FieldInfo? imminentSpecialModeField;
@@ -31,10 +32,11 @@ internal sealed class BossModReflectionSafety
     private DateTime nextResolveAttempt = DateTime.MinValue;
     private string status = "unresolved";
 
-    public BossModReflectionSafety(IDalamudPluginInterface pluginInterface, IPluginLog log)
+    public BossModReflectionSafety(IDalamudPluginInterface pluginInterface, IPluginLog log, BossModRuntimeGate bossModGate)
     {
         this.pluginInterface = pluginInterface;
         this.log = log;
+        this.bossModGate = bossModGate;
     }
 
     public string Status => this.status;
@@ -763,6 +765,13 @@ internal sealed class BossModReflectionSafety
 
     private bool EnsureResolved()
     {
+        if (!this.bossModGate.IsOpen)
+        {
+            this.ResetWithStatus("waiting for BMR");
+            this.nextResolveAttempt = DateTime.MinValue;
+            return false;
+        }
+
         if (this.bossModPlugin != null &&
             this.hintsField != null &&
             this.wposXField != null &&

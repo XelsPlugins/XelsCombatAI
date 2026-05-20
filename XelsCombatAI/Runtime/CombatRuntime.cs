@@ -13,6 +13,7 @@ namespace XelsCombatAI.Runtime;
 internal sealed class CombatRuntime(
     Configuration config,
     DalamudServices services,
+    BossModRuntimeGate bossModGate,
     DependencyChecker dependencyChecker,
     BossModPresetController presetController,
     PositionalsController positionalsController,
@@ -71,7 +72,8 @@ internal sealed class CombatRuntime(
                 this.nextRuntimeErrorLog = DateTime.UtcNow.AddSeconds(10);
             }
 
-            this.ResetRuntimeCache();
+            bossModGate.Close();
+            this.ResetRuntimeCache(resetBossModHook: false);
         }
     }
 
@@ -90,12 +92,19 @@ internal sealed class CombatRuntime(
 
         var now = DateTime.UtcNow;
         var dependenciesAvailable = dependencyChecker.DependenciesAvailable(out var missing);
-        if (!dependenciesAvailable &&
-            !this.ShouldContinueThroughTransientDependencyLoss(combatEngagement.EffectiveInCombat, now))
+        var bossModAvailable = dependenciesAvailable || dependencyChecker.IsBossModAvailable();
+        this.SetBossModGate(bossModAvailable);
+        if (!dependenciesAvailable)
         {
-            this.UpdateFightReviewLogging(CombatEngagementDetector.IsEffectivelyInCombat(services), "dependencies unavailable");
-            this.WaitForDependencies(missing);
-            return;
+            if (!this.ShouldContinueThroughTransientDependencyLoss(
+                    combatEngagement.EffectiveInCombat,
+                    now,
+                    bossModAvailable))
+            {
+                this.UpdateFightReviewLogging(CombatEngagementDetector.IsEffectivelyInCombat(services), "dependencies unavailable");
+                this.WaitForDependencies(missing, bossModAvailable);
+                return;
+            }
         }
 
         if (dependenciesAvailable)
@@ -172,8 +181,10 @@ internal sealed class CombatRuntime(
     {
         if (enabled && !dependencyChecker.DependenciesAvailable(out var missing, forceRefresh: true))
         {
+            var bossModAvailable = dependencyChecker.IsBossModAvailable();
+            this.SetBossModGate(bossModAvailable);
             config.Enabled = true;
-            this.ResetRuntimeCache();
+            this.ResetRuntimeCache(resetBossModHook: bossModAvailable);
             saveConfig();
             if (warn)
             {
@@ -186,8 +197,9 @@ internal sealed class CombatRuntime(
         config.Enabled = enabled;
         if (!enabled)
         {
-            presetController.Deactivate();
-            this.ResetRuntimeCache();
+            this.DeactivatePresetIfBossModAvailable();
+            this.ResetRuntimeCache(resetBossModHook: bossModGate.IsOpen);
+            bossModGate.Close();
         }
 
         saveConfig();
@@ -201,6 +213,11 @@ internal sealed class CombatRuntime(
 
     public void ResetRuntimeCache()
     {
+        this.ResetRuntimeCache(resetBossModHook: bossModGate.IsOpen);
+    }
+
+    private void ResetRuntimeCache(bool resetBossModHook)
+    {
         this.manualMovementSuppressUntil = DateTime.MinValue;
         this.dependencyGraceUntil = DateTime.MinValue;
         presetController.ResetCache();
@@ -209,7 +226,15 @@ internal sealed class CombatRuntime(
         healerAoePositioningController.Reset();
         survivabilityZonePositioningController.Reset();
         redMageMeleeComboController.Reset();
-        aoeGoalHook.Reset();
+        if (resetBossModHook)
+        {
+            aoeGoalHook.Reset();
+        }
+        else
+        {
+            aoeGoalHook.MarkBossModUnavailable();
+        }
+
         manualCorrectionFeedback.Reset();
         mobilityDecisionEvaluator.Reset();
         dashStyleController.Reset();
@@ -322,7 +347,7 @@ internal sealed class CombatRuntime(
 
         if (config.Enabled)
         {
-            presetController.Deactivate();
+            this.DeactivatePresetIfBossModAvailable();
         }
 
         aoeGoalHook.Dispose();
@@ -332,28 +357,55 @@ internal sealed class CombatRuntime(
 
     private void HandleOutOfCombat()
     {
-        if (presetController.InitializedPreset)
-        {
-            presetController.Deactivate();
-        }
+        this.DeactivatePresetIfBossModAvailable();
 
         this.ResetRuntimeCache();
     }
 
-    private void WaitForDependencies(string missing)
+    private void WaitForDependencies(string missing, bool bossModAvailable)
     {
-        if (presetController.InitializedPreset)
-        {
-            presetController.Deactivate();
-        }
+        this.DeactivatePresetIfBossModAvailable(bossModAvailable);
 
-        this.ResetRuntimeCache();
+        this.ResetRuntimeCache(resetBossModHook: bossModAvailable);
         if (!string.Equals(this.lastMissingDependencies, missing, StringComparison.Ordinal))
         {
             this.lastMissingDependencies = missing;
             services.Log.Verbose($"XCAI waiting for dependencies: {missing}.");
             updateDtr();
         }
+    }
+
+    private void DeactivatePresetIfBossModAvailable()
+    {
+        this.DeactivatePresetIfBossModAvailable(dependencyChecker.IsBossModAvailable());
+    }
+
+    private void DeactivatePresetIfBossModAvailable(bool bossModAvailable)
+    {
+        this.SetBossModGate(bossModAvailable);
+        if (!presetController.InitializedPreset)
+        {
+            return;
+        }
+
+        if (bossModAvailable)
+        {
+            presetController.Deactivate();
+            return;
+        }
+
+        presetController.MarkUninitialized();
+    }
+
+    private void SetBossModGate(bool bossModAvailable)
+    {
+        if (bossModAvailable)
+        {
+            bossModGate.Open();
+            return;
+        }
+
+        bossModGate.Close();
     }
 
     private void ClearDependencyWaitState()
@@ -368,9 +420,9 @@ internal sealed class CombatRuntime(
         updateDtr();
     }
 
-    private bool ShouldContinueThroughTransientDependencyLoss(bool effectiveInCombat, DateTime now)
+    private bool ShouldContinueThroughTransientDependencyLoss(bool effectiveInCombat, DateTime now, bool bossModAvailable)
     {
-        if (!effectiveInCombat)
+        if (!effectiveInCombat || !bossModAvailable)
         {
             this.dependencyGraceUntil = DateTime.MinValue;
             return false;
@@ -410,6 +462,7 @@ internal sealed class CombatRuntime(
     {
         if (!this.wasInCombat && !this.wasDead && !presetController.InitializedPreset)
         {
+            bossModGate.Close();
             return;
         }
 
@@ -418,14 +471,12 @@ internal sealed class CombatRuntime(
             this.FlushCombatHistory("disabled");
         }
 
-        if (presetController.InitializedPreset)
-        {
-            presetController.Deactivate();
-        }
+        this.DeactivatePresetIfBossModAvailable();
 
         this.wasInCombat = false;
         this.wasDead = false;
         this.ResetRuntimeCache();
+        bossModGate.Close();
     }
 
     private string DisabledLoggingInactiveReason()
@@ -437,10 +488,7 @@ internal sealed class CombatRuntime(
 
     private void HandleDeath()
     {
-        if (presetController.InitializedPreset)
-        {
-            presetController.Deactivate();
-        }
+        this.DeactivatePresetIfBossModAvailable();
 
         this.ResetRuntimeCache();
     }

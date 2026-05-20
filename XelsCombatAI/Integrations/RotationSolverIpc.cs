@@ -1,7 +1,7 @@
 using System;
-using System.Linq;
 using System.Reflection;
 using Dalamud.Plugin;
+using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Services;
 using ECommons.EzIpcManager;
 
@@ -20,7 +20,6 @@ internal enum StateCommandType : byte
 
 internal sealed class RotationSolverIpc
 {
-    private const string InternalName = "RotationSolver";
     private const string IpcPrefix = "RotationSolverReborn";
     private const string DataCenterTypeName = "RotationSolver.Basic.DataCenter";
     private const string DisableTrueNorthCommand = "AutoUseTrueNorth False";
@@ -33,6 +32,8 @@ internal sealed class RotationSolverIpc
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IPluginLog log;
+    private readonly ICallGateSubscriber<OtherCommandType, string, object> otherCommandGate;
+    private readonly ICallGateSubscriber<StateCommandType, object> changeOperatingModeGate;
 
     private Type? dataCenterType;
     private PropertyInfo? stateProp;
@@ -50,6 +51,8 @@ internal sealed class RotationSolverIpc
     {
         this.pluginInterface = pluginInterface;
         this.log = log;
+        this.otherCommandGate = pluginInterface.GetIpcSubscriber<OtherCommandType, string, object>($"{IpcPrefix}.OtherCommand");
+        this.changeOperatingModeGate = pluginInterface.GetIpcSubscriber<StateCommandType, object>($"{IpcPrefix}.ChangeOperatingMode");
         try
         {
             EzIPC.Init(this, IpcPrefix);
@@ -64,28 +67,26 @@ internal sealed class RotationSolverIpc
 
     public bool IsAvailable(IDalamudPluginInterface pluginInterface)
     {
-        return ReflectionObjectSearch.HasLoadedPlugin(
-            pluginInterface,
-            InternalName,
-            "RotationSolverReborn",
-            "Rotation Solver Reborn");
+        _ = pluginInterface;
+        return this.HasAction(this.otherCommandGate) &&
+               this.HasAction(this.changeOperatingModeGate);
     }
 
     public string Diagnostics => this.GetDiagnostics();
 
     public bool DisableAutoTrueNorth()
     {
-        return this.TryInvoke(() => this.otherCommand(OtherCommandType.Settings, DisableTrueNorthCommand));
+        return this.TryInvoke(this.otherCommandGate, () => this.otherCommand(OtherCommandType.Settings, DisableTrueNorthCommand));
     }
 
     public bool SetHenched()
     {
-        return this.TryInvoke(() => this.changeOperatingMode(StateCommandType.Henched));
+        return this.TryInvoke(this.changeOperatingModeGate, () => this.changeOperatingMode(StateCommandType.Henched));
     }
 
     public bool RestoreMode(StateCommandType mode)
     {
-        return this.TryInvoke(() => this.changeOperatingMode(mode));
+        return this.TryInvoke(this.changeOperatingModeGate, () => this.changeOperatingMode(mode));
     }
 
     public bool IsNoCasting(IPluginLog log)
@@ -286,11 +287,11 @@ internal sealed class RotationSolverIpc
         return true;
     }
 
-    private bool TryInvoke(Action action)
+    private bool TryInvoke(ICallGateSubscriber subscriber, Action action)
     {
         try
         {
-            if (!this.IsAvailable(this.pluginInterface))
+            if (!this.HasAction(subscriber))
             {
                 this.ResetReflectionCache();
                 return false;
@@ -303,6 +304,19 @@ internal sealed class RotationSolverIpc
         {
             this.LogRecoverableFailure(ex, "Rotation Solver Reborn IPC invocation failed.");
             this.ResetReflectionCache();
+            return false;
+        }
+    }
+
+    private bool HasAction(ICallGateSubscriber subscriber)
+    {
+        try
+        {
+            return subscriber.HasAction;
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "Could not check Rotation Solver Reborn IPC readiness.");
             return false;
         }
     }

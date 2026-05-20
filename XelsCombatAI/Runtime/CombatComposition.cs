@@ -29,14 +29,16 @@ internal sealed class CombatComposition : IDisposable
         Action updateDtr,
         Action<string> print)
     {
-        var bossMod = new BossModIpc(pluginInterface, log);
-        var bossModSafety = new BossModReflectionSafety(pluginInterface, log);
+        var bossModGate = new BossModRuntimeGate();
+        var bossMod = new BossModIpc(pluginInterface, log, bossModGate);
+        var avarice = new AvariceIpc(pluginInterface, log);
+        var bossModSafety = new BossModReflectionSafety(pluginInterface, log, bossModGate);
         var vnavmesh = new VNavmeshIpc(pluginInterface);
         var manualMovement = new ManualMovementInputDetector();
         var manualCorrectionFeedback = new ManualCorrectionFeedback();
         var rotationSolver = new RotationSolverIpc(pluginInterface, log);
         var rotationSolverActions = new RotationSolverActionReflection(pluginInterface, log);
-        var dependencyChecker = new DependencyChecker(config, services, bossMod, rotationSolver);
+        var dependencyChecker = new DependencyChecker(config, services, bossMod, avarice, rotationSolver);
         var jobRangeProvider = new JobRangeProvider(services);
         jobRangeProvider.Initialize();
         var targetUptimePlanner = new TargetUptimePlanner(services, bossMod, jobRangeProvider, rotationSolverActions);
@@ -55,7 +57,7 @@ internal sealed class CombatComposition : IDisposable
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
         var bossCenterAvoidanceController = new BossCenterAvoidanceController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule());
         IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController];
-        var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, legacyMovementContributors, manualCorrectionFeedback);
+        var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, legacyMovementContributors, manualCorrectionFeedback);
         var gapCloserController = new GapCloserController(
             config,
             services,
@@ -92,6 +94,7 @@ internal sealed class CombatComposition : IDisposable
         runtime = new CombatRuntime(
             config,
             services,
+            bossModGate,
             dependencyChecker,
             presetController,
             positionalsController,

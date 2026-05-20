@@ -91,10 +91,6 @@ public sealed class Plugin : IDalamudPlugin
 
         this.dtrEntry = DtrBar.Get("XelsCombatAI");
         this.dtrEntry.OnClick = this.OnDtrClick;
-        if (this.config.ManagePositionals && this.config.ManageTrueNorth)
-        {
-            this.runtime.EnsureRsrTrueNorthDisabled();
-        }
         this.windowSystem.AddWindow(this.configWindow);
         this.UpdateDtr();
 
@@ -239,6 +235,13 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         this.dtrEntry.Text = $"XCAI: {(this.config.Enabled ? "On" : "Off")}";
+        if (!Framework.IsInFrameworkUpdateThread)
+        {
+            this.dtrEntry.Tooltip = "Left click: toggle Xel's Combat AI\nRight click: open config";
+            this.dtrEntry.Shown = true;
+            return;
+        }
+
         var dependencyWarning = this.runtime.GetDependencyWarning();
         var trueNorthWarning = this.runtime.GetTrueNorthWarning();
         this.dtrEntry.Tooltip = dependencyWarning == null
