@@ -6,6 +6,8 @@ internal static class ActionUse
 {
     public const uint TrueNorthActionId = 7546;
     public const uint TrueNorthStatusId = 1250;
+    public const uint SurecastStatusId = 160;
+    public const uint ArmsLengthStatusId = 1209;
     public const uint CircleOfPowerStatusId = 738;
     public const uint PassageOfArmsActionId = 7385;
     public const uint PassageOfArmsStatusId = 1175;

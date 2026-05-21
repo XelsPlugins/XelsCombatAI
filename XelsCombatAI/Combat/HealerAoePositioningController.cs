@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Reflection;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Types;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using XelsCombatAI.Game;
 using XelsCombatAI.Integrations;
 
@@ -34,7 +35,10 @@ internal sealed class HealerAoePositioningController(
     DalamudServices services,
     BossModIpc bossMod,
     RotationSolverActionReflection rotationSolverActions,
-    Func<bool> automatedMovementSuppressed)
+    Func<bool> automatedMovementSuppressed,
+    Func<bool> currentTargetHasBossModule,
+    MobilityDecisionEvaluator mobilityEvaluator,
+    FacingController facingController)
     : IBossModGoalZoneContributor
 {
     private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -50,6 +54,12 @@ internal sealed class HealerAoePositioningController(
     private const float MaxDowntimeCoverageComfortMoveDistance = 14f;
     private const float MaxCriticalCoverageCatchUpMoveDistance = 60f;
     private const float MaxPartyAoeHealCatchUpMoveDistance = 30f;
+    private const float MaxBossCoverageRoutineMoveDistance = 18f;
+    private const float BossRangeComfortSurfaceDistance = 14f;
+    private const float MinimumBossCoverageDashDistance = 10f;
+    private const float MinimumBossCoverageDashGain = 6f;
+    private const float MaximumBossCoverageDashTargetDistance = 25f;
+    private const float BossCoverageDashTargetRadius = 7.5f;
     private const float MinimumPartyAoeHealEffectRange = 8f;
     private const float MinimumCoverageComfortSlackGain = 3f;
     private const float PreferredCoverageSlack = 5f;
@@ -84,6 +94,7 @@ internal sealed class HealerAoePositioningController(
     private long evaluatedHealerCoverageGcdWindowId = -1;
     private float lastObservedGcdElapsed = -1f;
     private DateTime fallbackHealerCoverageGcdWindowStartedAt = DateTime.MinValue;
+    private DateTime nextCoverageDashAttempt = DateTime.MinValue;
     private bool bmrMoveRequested;
     private bool bmrMoveImminent;
 
@@ -131,6 +142,7 @@ internal sealed class HealerAoePositioningController(
         this.evaluatedHealerCoverageGcdWindowId = -1;
         this.lastObservedGcdElapsed = -1f;
         this.fallbackHealerCoverageGcdWindowStartedAt = DateTime.MinValue;
+        this.nextCoverageDashAttempt = DateTime.MinValue;
         this.bmrMoveRequested = false;
         this.bmrMoveImminent = false;
     }
@@ -203,7 +215,8 @@ internal sealed class HealerAoePositioningController(
         }
 
         var tank = PartyAllyProvider.SelectBestTank(services, player);
-        var plan = this.BuildPlan(player, members, tank);
+        var bossModuleContext = currentTargetHasBossModule();
+        var plan = this.BuildPlan(player, members, tank, bossModuleContext);
         var now = DateTime.UtcNow;
         rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var upcomingGcd, out _);
         var gcdWindowId = this.UpdateHealerCoverageGcdWindow(upcomingGcd, now);
@@ -248,13 +261,22 @@ internal sealed class HealerAoePositioningController(
             plan.TotalMembers,
             plan.DistanceToCenter,
             partyAoeHealPending);
+        var bossCoverageMove = ShouldImproveBossCoveragePosition(
+            plan.CurrentCoveredCount,
+            plan.BestCoveredCount,
+            plan.TotalMembers,
+            plan.CurrentBossRangeScore,
+            plan.BestBossRangeScore,
+            bossModuleContext);
         var boundedTankRestore = restoresTankCoverage &&
                                  plan.DistanceToCenter <= MaxTankCoverageRestoreDistance;
-        var shouldMove = strongCoverageGain || restoresFullCoverage || proactiveCoverageComfort || criticalCoverageCatchUp || partyAoeHealCatchUp || boundedTankRestore;
+        var shouldMove = strongCoverageGain || restoresFullCoverage || proactiveCoverageComfort || criticalCoverageCatchUp || partyAoeHealCatchUp || bossCoverageMove || boundedTankRestore;
         var maxMoveDistance = criticalCoverageCatchUp
             ? MaxCriticalCoverageCatchUpMoveDistance
             : partyAoeHealCatchUp
             ? MaxPartyAoeHealCatchUpMoveDistance
+            : bossCoverageMove
+            ? MaxBossCoverageRoutineMoveDistance
             : proactiveCoverageComfort
             ? ResolveCoverageComfortMoveDistance(downtimeLikely, mechanicPositioningActive)
             : MaxConvenienceMoveDistance;
@@ -292,6 +314,11 @@ internal sealed class HealerAoePositioningController(
         }
         else if (shouldMove && plan.DistanceToCenter > maxMoveDistance)
         {
+            if (bossCoverageMove && this.TryUseBossCoverageDash(gcdWindowId, player, plan, members))
+            {
+                return;
+            }
+
             shouldMove = false;
             this.lastReason = partyAoeHealPending
                 ? $"party AoE heal coverage point too far: {plan.DistanceToCenter:0.0}y"
@@ -303,6 +330,7 @@ internal sealed class HealerAoePositioningController(
                      upcomingGcd?.GcdRemaining ?? -1f,
                      upcomingGcd?.GcdElapsed ?? -1f,
                      upcomingGcd?.GcdTotal ?? -1f,
+                     CasterMovementPolicy.IsCasterSlidecastWindow(player),
                      IsBossModSafetyMovementActive(forcedMovementActive, forbiddenSafetyActive, bossModGoalZoneActive, this.bmrMoveImminent),
                      out var timingSkipReason))
         {
@@ -347,6 +375,8 @@ internal sealed class HealerAoePositioningController(
                     : mechanicPositioningActive
                     ? "mechanic healer comfort; "
                     : "healer comfort; "
+                : bossCoverageMove
+                ? "boss healer coverage; "
                 : string.Empty;
             this.coverageMoveDecision = new(
                 gcdWindowId,
@@ -442,7 +472,194 @@ internal sealed class HealerAoePositioningController(
         this.lastReason = $"{decision.ReasonPrefix}covering {currentCoveredCount}/{decision.TotalMembers}, can cover {decision.BestCoveredCount}/{decision.TotalMembers}";
     }
 
-    private HealerCoverageGoalPlan BuildPlan(IBattleChara player, IReadOnlyList<IBattleChara> members, IBattleChara? tank)
+    private bool TryUseBossCoverageDash(
+        long gcdWindowId,
+        IBattleChara player,
+        HealerCoverageGoalPlan plan,
+        IReadOnlyList<IBattleChara> members)
+    {
+        if (DateTime.UtcNow < this.nextCoverageDashAttempt ||
+            !config.UseGapCloser)
+        {
+            return false;
+        }
+
+        return player.ClassJob.RowId switch
+        {
+            24 when config.GapCloserWHM => this.TryUseWhiteMageCoverageDash(gcdWindowId, player, plan),
+            40 when config.GapCloserSGE => this.TryUseSageCoverageDash(gcdWindowId, player, plan, members),
+            _ => false
+        };
+    }
+
+    private unsafe bool TryUseWhiteMageCoverageDash(
+        long gcdWindowId,
+        IBattleChara player,
+        HealerCoverageGoalPlan plan)
+    {
+        if (!ActionUse.CanUseAction(ActionUse.WhiteMageAetherialShiftActionId))
+        {
+            return false;
+        }
+
+        var playerPosition = new Vector2(player.Position.X, player.Position.Z);
+        var currentDistance = Vector2.Distance(playerPosition, plan.OptimalCenter);
+        if (currentDistance < MinimumBossCoverageDashDistance)
+        {
+            return false;
+        }
+
+        var movement = new Vector3(plan.OptimalCenter.X - player.Position.X, 0f, plan.OptimalCenter.Y - player.Position.Z);
+        if (movement.LengthSquared() <= 0.0001f)
+        {
+            return false;
+        }
+
+        var direction = Vector3.Normalize(movement);
+        var destination = player.Position + direction * CombatConstants.FixedForwardGapCloserRange;
+        var landingPosition = new Vector2(destination.X, destination.Z);
+        var landingDistance = Vector2.Distance(landingPosition, plan.OptimalCenter);
+        var gain = currentDistance - landingDistance;
+        if (gain < MinimumBossCoverageDashGain ||
+            CountCovered(landingPosition, plan.AllMembers) < plan.CurrentCoveredCount)
+        {
+            return false;
+        }
+
+        if (!mobilityEvaluator.TryValidateDashDestination(
+            player,
+            destination,
+            services.TargetManager.Target as IBattleChara,
+            null,
+            MobilityIntent.PathRecovery,
+            "Aetherial Shift",
+            ActionUse.WhiteMageAetherialShiftActionId,
+            config.MinimumGapCloserDistance,
+            requireSafetyProgress: false,
+            requireUptimeProgress: false,
+            requireVnavReachable: true,
+            out var decision))
+        {
+            this.lastReason = $"Aetherial Shift coverage rejected: {decision.RiskReason}";
+            return false;
+        }
+
+        this.nextCoverageDashAttempt = DateTime.UtcNow.AddMilliseconds(250);
+        var desiredRotation = Geometry.DirectionToRotation(direction);
+        if (Geometry.AbsAngleDelta(player.Rotation, desiredRotation) > FacingController.DirectionalDashToleranceRadians)
+        {
+            facingController.RequestFacing(FacingController.CreateDirectionalDashRequest(desiredRotation, destination, "turn for Aetherial Shift", FacingBossModPolicy.AssistValidatedDash));
+            this.lastInjected = false;
+            this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: true);
+            this.lastReason = $"turning for Aetherial Shift boss healer coverage ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
+            return true;
+        }
+
+        var used = ActionManager.Instance()->UseAction(ActionType.Action, ActionUse.WhiteMageAetherialShiftActionId, player.GameObjectId);
+        mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
+        if (used)
+        {
+            this.coverageMoveDecision = null;
+            this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
+            this.lastInjected = false;
+            this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: true);
+            this.lastReason = $"used Aetherial Shift for boss healer coverage ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
+            return true;
+        }
+
+        this.lastReason = "failed to use Aetherial Shift for boss healer coverage";
+        return false;
+    }
+
+    private unsafe bool TryUseSageCoverageDash(
+        long gcdWindowId,
+        IBattleChara player,
+        HealerCoverageGoalPlan plan,
+        IReadOnlyList<IBattleChara> members)
+    {
+        if (!ActionUse.CanUseAction(ActionUse.SageIcarusActionId))
+        {
+            return false;
+        }
+
+        var playerPosition = new Vector2(player.Position.X, player.Position.Z);
+        var currentDistance = Vector2.Distance(playerPosition, plan.OptimalCenter);
+        if (currentDistance < MinimumBossCoverageDashDistance)
+        {
+            return false;
+        }
+
+        IBattleChara? bestAlly = null;
+        MobilityDecisionDiagnostics bestDecision = MobilityDecisionDiagnostics.Empty;
+        var bestScore = float.NegativeInfinity;
+        foreach (var ally in members)
+        {
+            if (ally.GameObjectId == player.GameObjectId ||
+                Vector3.Distance(player.Position, ally.Position) > MaximumBossCoverageDashTargetDistance)
+            {
+                continue;
+            }
+
+            var allyPosition = new Vector2(ally.Position.X, ally.Position.Z);
+            var landingDistance = Vector2.Distance(allyPosition, plan.OptimalCenter);
+            var gain = currentDistance - landingDistance;
+            if (gain < MinimumBossCoverageDashGain ||
+                landingDistance > BossCoverageDashTargetRadius ||
+                CountCovered(allyPosition, plan.AllMembers) < plan.CurrentCoveredCount)
+            {
+                continue;
+            }
+
+            if (!mobilityEvaluator.TryValidateDashDestination(
+                player,
+                ally.Position,
+                services.TargetManager.Target as IBattleChara,
+                null,
+                MobilityIntent.PathRecovery,
+                "Icarus",
+                ActionUse.SageIcarusActionId,
+                config.MinimumGapCloserDistance,
+                requireSafetyProgress: false,
+                requireUptimeProgress: false,
+                requireVnavReachable: true,
+                out var decision))
+            {
+                this.lastReason = $"Icarus coverage rejected: {decision.RiskReason}";
+                continue;
+            }
+
+            var score = gain + CountCovered(allyPosition, plan.AllMembers);
+            if (score > bestScore)
+            {
+                bestAlly = ally;
+                bestDecision = decision;
+                bestScore = score;
+            }
+        }
+
+        if (bestAlly == null)
+        {
+            return false;
+        }
+
+        this.nextCoverageDashAttempt = DateTime.UtcNow.AddMilliseconds(250);
+        var used = ActionManager.Instance()->UseAction(ActionType.Action, ActionUse.SageIcarusActionId, bestAlly.GameObjectId);
+        mobilityEvaluator.RecordActionResult(bestDecision, used, used ? "action used" : "action failed");
+        if (used)
+        {
+            this.coverageMoveDecision = null;
+            this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
+            this.lastInjected = false;
+            this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: true);
+            this.lastReason = $"used Icarus for boss healer coverage ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
+            return true;
+        }
+
+        this.lastReason = "failed to use Icarus for boss healer coverage";
+        return false;
+    }
+
+    private HealerCoverageGoalPlan BuildPlan(IBattleChara player, IReadOnlyList<IBattleChara> members, IBattleChara? tank, bool bossModuleContext)
     {
         var playerPos = new Vector2(player.Position.X, player.Position.Z);
         var allPositions = new List<Vector2>(members.Count);
@@ -468,6 +685,7 @@ internal sealed class HealerAoePositioningController(
         var currentCoversTank = tankPosition.HasValue &&
                                 Vector2.DistanceSquared(playerPos, tankPosition.Value) <= CoverageRadiusSquared;
         var bossCenterAvoidance = this.ResolveBossCenterAvoidance();
+        var bossRangePreference = bossModuleContext ? this.ResolveBossRangePreference() : null;
         Func<Vector2, bool>? candidateAllowed = null;
         if (bossCenterAvoidance.HasValue)
         {
@@ -475,7 +693,7 @@ internal sealed class HealerAoePositioningController(
             candidateAllowed = avoidance.Allows;
         }
 
-        var bestCenter = SelectBestCenter(playerPos, allPositions, tankPosition, this.lastPlan?.OptimalCenter, candidateAllowed);
+        var bestCenter = SelectBestCenter(playerPos, allPositions, tankPosition, this.lastPlan?.OptimalCenter, candidateAllowed, bossRangePreference);
         var bestCovered = GetCoveredMembers(bestCenter, allPositions);
         var bestCoversTank = tankPosition.HasValue &&
                              Vector2.DistanceSquared(bestCenter, tankPosition.Value) <= CoverageRadiusSquared;
@@ -489,7 +707,7 @@ internal sealed class HealerAoePositioningController(
         }
 
         if (bestCovered.Count == currentCovered &&
-            TrySelectComfortCoverageCenter(playerPos, allPositions, tankPosition, this.lastPlan?.OptimalCenter, out var comfortCenter, candidateAllowed))
+            TrySelectComfortCoverageCenter(playerPos, allPositions, tankPosition, this.lastPlan?.OptimalCenter, out var comfortCenter, candidateAllowed, bossRangePreference))
         {
             var comfortCovered = GetCoveredMembers(comfortCenter, allPositions);
             var comfortCoversTank = tankPosition.HasValue &&
@@ -507,6 +725,8 @@ internal sealed class HealerAoePositioningController(
         var bestComfortSlack = MinimumCoverageSlack(bestCenter, bestCovered);
 
         return new HealerCoverageGoalPlan(
+            playerPos,
+            currentCoveredMembers,
             bestCenter,
             bestCovered,
             allPositions,
@@ -517,7 +737,9 @@ internal sealed class HealerAoePositioningController(
             bestCoversTank,
             currentComfortSlack,
             bestComfortSlack,
-            bossCenterAvoidance);
+            bossCenterAvoidance,
+            bossRangePreference,
+            bossRangePreference?.Score(playerPos) ?? 0f);
     }
 
     private BossCenterAvoidance? ResolveBossCenterAvoidance()
@@ -534,6 +756,21 @@ internal sealed class HealerAoePositioningController(
         return new BossCenterAvoidance(
             new Vector2(target.Position.X, target.Position.Z),
             BossCenterAvoidanceController.AvoidanceRadius(target.HitboxRadius));
+    }
+
+    private BossRangePreference? ResolveBossRangePreference()
+    {
+        if (services.TargetManager.Target is not IBattleChara target ||
+            target.IsDead ||
+            target.CurrentHp == 0 ||
+            !target.IsTargetable)
+        {
+            return null;
+        }
+
+        return new BossRangePreference(
+            new Vector2(target.Position.X, target.Position.Z),
+            target.HitboxRadius + BossRangeComfortSurfaceDistance);
     }
 
     private static Vector2 AveragePosition(IReadOnlyList<Vector2> members)
@@ -553,6 +790,15 @@ internal sealed class HealerAoePositioningController(
         Vector2? tankPosition,
         Vector2? previousCenter = null,
         Func<Vector2, bool>? candidateAllowed = null)
+        => SelectBestCenter(playerPosition, members, tankPosition, previousCenter, candidateAllowed, bossRangePreference: null);
+
+    private static Vector2 SelectBestCenter(
+        Vector2 playerPosition,
+        IReadOnlyList<Vector2> members,
+        Vector2? tankPosition,
+        Vector2? previousCenter,
+        Func<Vector2, bool>? candidateAllowed,
+        BossRangePreference? bossRangePreference)
     {
         var best = playerPosition;
         var bestCovered = CountCovered(best, members);
@@ -573,7 +819,7 @@ internal sealed class HealerAoePositioningController(
             var distance = Vector2.Distance(playerPosition, candidate);
             if (covered > bestCovered ||
                 (covered == bestCovered && coversTank && !bestCoversTank) ||
-                (covered == bestCovered && coversTank == bestCoversTank && distance < bestDistance))
+                (covered == bestCovered && coversTank == bestCoversTank && PreferCoverageCandidate(candidate, best, distance, bestDistance, bossRangePreference)))
             {
                 best = candidate;
                 bestCovered = covered;
@@ -601,6 +847,16 @@ internal sealed class HealerAoePositioningController(
         Vector2? previousCenter,
         out Vector2 comfortCenter,
         Func<Vector2, bool>? candidateAllowed = null)
+        => TrySelectComfortCoverageCenter(playerPosition, members, tankPosition, previousCenter, out comfortCenter, candidateAllowed, bossRangePreference: null);
+
+    private static bool TrySelectComfortCoverageCenter(
+        Vector2 playerPosition,
+        IReadOnlyList<Vector2> members,
+        Vector2? tankPosition,
+        Vector2? previousCenter,
+        out Vector2 comfortCenter,
+        Func<Vector2, bool>? candidateAllowed,
+        BossRangePreference? bossRangePreference)
     {
         comfortCenter = playerPosition;
         var currentCovered = GetCoveredMembers(playerPosition, members);
@@ -642,7 +898,8 @@ internal sealed class HealerAoePositioningController(
             var usefulSlack = MathF.Min(minSlack, PreferredCoverageSlack);
             var distanceSq = Vector2.DistanceSquared(candidate, playerPosition);
             if (usefulSlack > bestUsefulSlack + 0.05f ||
-                MathF.Abs(usefulSlack - bestUsefulSlack) <= 0.05f && distanceSq < bestDistanceSq)
+                MathF.Abs(usefulSlack - bestUsefulSlack) <= 0.05f &&
+                PreferCoverageCandidate(candidate, best, MathF.Sqrt(distanceSq), MathF.Sqrt(bestDistanceSq), bossRangePreference))
             {
                 best = candidate;
                 bestMinSlack = minSlack;
@@ -659,6 +916,26 @@ internal sealed class HealerAoePositioningController(
 
         comfortCenter = best;
         return true;
+    }
+
+    private static bool PreferCoverageCandidate(Vector2 candidate, Vector2 currentBest, float candidateDistance, float bestDistance, BossRangePreference? bossRangePreference)
+    {
+        if (bossRangePreference.HasValue)
+        {
+            var candidateRange = bossRangePreference.Value.Score(candidate);
+            var bestRange = bossRangePreference.Value.Score(currentBest);
+            if (candidateRange > bestRange + 0.05f)
+            {
+                return true;
+            }
+
+            if (candidateRange + 0.05f < bestRange)
+            {
+                return false;
+            }
+        }
+
+        return candidateDistance < bestDistance;
     }
 
     private static bool IsCandidateAllowed(Vector2 candidate, Func<Vector2, bool>? candidateAllowed)
@@ -925,6 +1202,29 @@ internal sealed class HealerAoePositioningController(
                bestCoverageComfortSlack >= currentCoverageComfortSlack + MinimumCoverageComfortSlackGain;
     }
 
+    internal static bool ShouldImproveBossCoveragePosition(
+        int currentCoveredCount,
+        int bestCoveredCount,
+        int totalMembers,
+        float currentBossRangeScore,
+        float bestBossRangeScore,
+        bool bossModuleContext)
+    {
+        if (!bossModuleContext || totalMembers <= 1 || bestCoveredCount < currentCoveredCount)
+        {
+            return false;
+        }
+
+        if (bestCoveredCount > currentCoveredCount)
+        {
+            return true;
+        }
+
+        var usefulCluster = Math.Max(2, (totalMembers + 1) / 2);
+        return currentCoveredCount >= usefulCluster &&
+               bestBossRangeScore >= currentBossRangeScore + 0.15f;
+    }
+
     private static float ResolveCoverageComfortMoveDistance(bool downtimeLikely, bool mechanicPositioningActive)
     {
         if (downtimeLikely)
@@ -967,11 +1267,14 @@ internal sealed class HealerAoePositioningController(
         float gcdRemaining,
         float gcdElapsed,
         float gcdTotal,
+        bool slidecastWindow,
         bool bossModSafetyMovementActive,
         out string reason)
     {
         reason = string.Empty;
-        if (bossModSafetyMovementActive || !AoeRepositionPolicy.HasReliableGcdTiming(gcdRemaining, gcdElapsed, gcdTotal))
+        if (slidecastWindow ||
+            bossModSafetyMovementActive ||
+            !AoeRepositionPolicy.HasReliableGcdTiming(gcdRemaining, gcdElapsed, gcdTotal))
         {
             return false;
         }
@@ -1060,6 +1363,26 @@ internal sealed class HealerAoePositioningController(
         }
     }
 
+    private readonly record struct BossRangePreference(Vector2 Center, float DesiredDistance)
+    {
+        public float Score(Vector2 candidate)
+        {
+            var distance = Vector2.Distance(candidate, this.Center);
+            if (distance >= this.DesiredDistance)
+            {
+                return 1f;
+            }
+
+            return Math.Clamp(distance / MathF.Max(1f, this.DesiredDistance), 0f, 1f);
+        }
+
+        public bool SameSource(BossRangePreference other)
+        {
+            return MathF.Abs(this.DesiredDistance - other.DesiredDistance) <= 1f &&
+                   Vector2.DistanceSquared(this.Center, other.Center) <= 9f;
+        }
+    }
+
     private sealed record HealerCoverageMoveDecision(
         long GcdWindowId,
         Vector2 Center,
@@ -1074,6 +1397,10 @@ internal sealed class HealerAoePositioningController(
     {
         private static readonly MethodInfo ScoreFromWPosMethod = typeof(HealerCoverageGoalPlan).GetMethod(nameof(ScoreFromWPos), BindingFlags.Instance | BindingFlags.NonPublic)!;
 
+        // Healer's current position for non-movement overlay display.
+        private readonly Vector2 currentCenter;
+        // Members covered from the healer's current position.
+        private readonly IReadOnlyList<Vector2> currentCoveredMembers;
         // Optimal healer position that covers the most party members.
         private readonly Vector2 optimalCenter;
         // Members covered from optimalCenter (for overlay display).
@@ -1088,8 +1415,12 @@ internal sealed class HealerAoePositioningController(
         private readonly float currentCoverageComfortSlack;
         private readonly float bestCoverageComfortSlack;
         private readonly BossCenterAvoidance? bossCenterAvoidance;
+        private readonly BossRangePreference? bossRangePreference;
+        private readonly float currentBossRangeScore;
 
         public HealerCoverageGoalPlan(
+            Vector2 currentCenter,
+            IReadOnlyList<Vector2> currentCoveredMembers,
             Vector2 optimalCenter,
             IReadOnlyList<Vector2> coveredMembers,
             IReadOnlyList<Vector2> allMembers,
@@ -1100,8 +1431,12 @@ internal sealed class HealerAoePositioningController(
             bool bestCoversTank,
             float currentCoverageComfortSlack,
             float bestCoverageComfortSlack,
-            BossCenterAvoidance? bossCenterAvoidance)
+            BossCenterAvoidance? bossCenterAvoidance,
+            BossRangePreference? bossRangePreference,
+            float currentBossRangeScore)
         {
+            this.currentCenter = currentCenter;
+            this.currentCoveredMembers = currentCoveredMembers;
             this.optimalCenter = optimalCenter;
             this.coveredMembers = coveredMembers;
             this.allMembers = allMembers;
@@ -1113,6 +1448,8 @@ internal sealed class HealerAoePositioningController(
             this.currentCoverageComfortSlack = currentCoverageComfortSlack;
             this.bestCoverageComfortSlack = bestCoverageComfortSlack;
             this.bossCenterAvoidance = bossCenterAvoidance;
+            this.bossRangePreference = bossRangePreference;
+            this.currentBossRangeScore = currentBossRangeScore;
         }
 
         public float DistanceToCenter => this.distanceToCenter;
@@ -1125,6 +1462,9 @@ internal sealed class HealerAoePositioningController(
         public bool BestCoversTank => this.bestCoversTank;
         public float CurrentCoverageComfortSlack => this.currentCoverageComfortSlack;
         public float BestCoverageComfortSlack => this.bestCoverageComfortSlack;
+        public IReadOnlyList<Vector2> AllMembers => this.allMembers;
+        public float CurrentBossRangeScore => this.currentBossRangeScore;
+        public float BestBossRangeScore => this.bossRangePreference?.Score(this.optimalCenter) ?? 0f;
 
         public bool SameSource(HealerCoverageGoalPlan other)
         {
@@ -1133,8 +1473,11 @@ internal sealed class HealerAoePositioningController(
                 this.allMembers.Count != other.allMembers.Count ||
                 this.tankPosition.HasValue != other.tankPosition.HasValue ||
                 this.bossCenterAvoidance.HasValue != other.bossCenterAvoidance.HasValue ||
+                this.bossRangePreference.HasValue != other.bossRangePreference.HasValue ||
                 this.bossCenterAvoidance.HasValue &&
                 !this.bossCenterAvoidance.Value.SameSource(other.bossCenterAvoidance!.Value) ||
+                this.bossRangePreference.HasValue &&
+                !this.bossRangePreference.Value.SameSource(other.bossRangePreference!.Value) ||
                 this.tankPosition.HasValue &&
                 Vector2.DistanceSquared(this.tankPosition.Value, other.tankPosition!.Value) > 9f)
             {
@@ -1164,10 +1507,13 @@ internal sealed class HealerAoePositioningController(
 
         public HealerCoverageOverlaySnapshot CreateOverlay(float y, bool injected)
         {
-            var memberPositions = new Vector3[coveredMembers.Count];
-            for (var i = 0; i < coveredMembers.Count; i++)
-                memberPositions[i] = new Vector3(coveredMembers[i].X, y, coveredMembers[i].Y);
-            return new(new Vector3(optimalCenter.X, y, optimalCenter.Y), CoverageRadius, injected, distanceToCenter, this.coveredMembers.Count, this.allMembers.Count, memberPositions);
+            var center = injected ? this.optimalCenter : this.currentCenter;
+            var members = injected ? this.coveredMembers : this.currentCoveredMembers;
+            var distance = injected ? this.distanceToCenter : 0f;
+            var memberPositions = new Vector3[members.Count];
+            for (var i = 0; i < members.Count; i++)
+                memberPositions[i] = new Vector3(members[i].X, y, members[i].Y);
+            return new(new Vector3(center.X, y, center.Y), CoverageRadius, injected, distance, members.Count, this.allMembers.Count, memberPositions);
         }
 
         private float ScoreFromWPos(float x, float z)

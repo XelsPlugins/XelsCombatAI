@@ -49,11 +49,13 @@ internal sealed class CombatComposition : IDisposable
         var dashStyleController = new DashStyleController(config, jobRangeProvider, arenaEdgePositioningController);
         var facingController = new FacingController(config, services, bossMod, manualMovement, new LocalPlayerFacingActuator());
         var redMageMeleeComboController = new RedMageMeleeComboController(config, services, rotationSolverActions, bossModSafety, mobilityDecisionEvaluator, facingController, () => targetUptimePlanner.CurrentTargetHasBossModule());
-        targetUptimePlanner.TargetUptimeRangeOverride = redMageMeleeComboController.GetTargetUptimeRangeOverride;
         var aoePackPositioningController = new AoePackPositioningController(config, services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), jobRangeProvider);
+        targetUptimePlanner.TargetUptimeRangeOverride = () =>
+            redMageMeleeComboController.GetTargetUptimeRangeOverride() ??
+            aoePackPositioningController.GetTargetUptimeRangeOverride();
         var positionalsController = new PositionalsController(config, services, rotationSolver, positional => presetController!.SetPositional(positional), updateDtr, () => aoePackPositioningController.Status);
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
-        var healerAoePositioningController = new HealerAoePositioningController(config, services, bossMod, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true);
+        var healerAoePositioningController = new HealerAoePositioningController(config, services, bossMod, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), mobilityDecisionEvaluator, facingController);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
         var bossCenterAvoidanceController = new BossCenterAvoidanceController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule());
         IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController];

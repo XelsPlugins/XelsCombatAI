@@ -57,6 +57,7 @@ internal sealed class DashStyleController(Configuration config, JobRangeProvider
     public bool GreedStyleActive => config.CombatStyle != CombatStyle.Normal;
     public bool ReengageStyleActive => config.UseGapCloser && this.GreedStyleActive;
     public bool EscapeStyleActive => config.UseGapCloser && this.GreedStyleActive;
+    public bool KnockbackRecoveryActive => DateTime.UtcNow <= this.knockbackRecoveryUntil;
 
     public void Reset()
     {

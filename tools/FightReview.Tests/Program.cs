@@ -35,6 +35,7 @@ var tests = new (string Name, Action Body)[]
     ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
     ("gap closer follows RSR auto target", GapCloserFollowsRsrAutoTarget),
     ("ranged gap closers skip boss reengage", RangedGapClosersSkipBossReengage),
+    ("knockback recovery bypasses gap closer minimum distance", KnockbackRecoveryBypassesGapCloserMinimumDistance),
     ("BMR safety dash requires destination progress", BmrSafetyDashRequiresDestinationProgress),
     ("hostile relay dash requires target momentum", HostileRelayDashRequiresTargetMomentum),
     ("trash gap closer rejects stale pack", TrashGapCloserRejectsStalePack),
@@ -47,11 +48,13 @@ var tests = new (string Name, Action Body)[]
     ("healer coverage catches up from critical party isolation", HealerCoverageCatchesUpFromCriticalPartyIsolation),
     ("healer coverage combines with forbidden zones", HealerCoverageCombinesWithForbiddenZones),
     ("healer coverage respects cast timing", HealerCoverageRespectsCastTiming),
+    ("healer boss coverage prefers ranged comfort", HealerBossCoveragePrefersRangedComfort),
     ("pack movement combines with BossMod forbidden zones", PackMovementCombinesWithBossModForbiddenZones),
     ("mechanic whisper guard keeps aligned, shorter, or confident goals", MechanicWhisperGuardKeepsAlignedShorterOrConfidentGoals),
     ("mechanic safety isolates top goal contributions", MechanicSafetyIsolatesTopGoalContributions),
     ("mechanic escape margin follows BMR movement", MechanicEscapeMarginFollowsBmrMovement),
     ("trash AoE short one-hit gain is worth moving", TrashAoeShortOneHitGainIsWorthMoving),
+    ("melee AoE healer fallback uses melee range", MeleeAoeHealerFallbackUsesMeleeRange),
     ("trash AoE prep skips good-enough one-hit churn", TrashAoePrepSkipsGoodEnoughOneHitChurn),
     ("trash AoE retains equal-hit candidate", TrashAoeRetainsEqualHitCandidate),
     ("trash target retention yields to tank pack", TrashTargetRetentionYieldsToTankPack),
@@ -486,6 +489,59 @@ static void RangedGapClosersSkipBossReengage()
         "SAM Gyoten remains a real melee reengage tool");
 }
 
+static void KnockbackRecoveryBypassesGapCloserMinimumDistance()
+{
+    AssertTrue(
+        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+            knockbackRecoveryActive: true,
+            playerIsMeleeRangeRole: true,
+            targetHasBossModule: true,
+            antiKnockbackActive: false,
+            distanceToHitbox: 4.5f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "melee boss knockback recovery without anti-knockback should ignore the configured dash minimum");
+
+    AssertFalse(
+        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+            knockbackRecoveryActive: true,
+            playerIsMeleeRangeRole: true,
+            targetHasBossModule: true,
+            antiKnockbackActive: true,
+            distanceToHitbox: 4.5f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "active anti-knockback should keep the normal minimum-distance gate");
+
+    AssertFalse(
+        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+            knockbackRecoveryActive: true,
+            playerIsMeleeRangeRole: false,
+            targetHasBossModule: true,
+            antiKnockbackActive: false,
+            distanceToHitbox: 4.5f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "ranged jobs should keep the normal minimum-distance gate");
+
+    AssertFalse(
+        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+            knockbackRecoveryActive: true,
+            playerIsMeleeRangeRole: true,
+            targetHasBossModule: false,
+            antiKnockbackActive: false,
+            distanceToHitbox: 4.5f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "non-boss targets should keep the normal minimum-distance gate");
+
+    AssertFalse(
+        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+            knockbackRecoveryActive: true,
+            playerIsMeleeRangeRole: true,
+            targetHasBossModule: true,
+            antiKnockbackActive: false,
+            distanceToHitbox: 2.5f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "players already inside melee engagement range should not dash");
+}
+
 static void BmrSafetyDashRequiresDestinationProgress()
 {
     AssertFalse(
@@ -894,6 +950,7 @@ static void HealerCoverageRespectsCastTiming()
             gcdRemaining: 0.8f,
             gcdElapsed: 1.7f,
             gcdTotal: 2.5f,
+            slidecastWindow: false,
             bossModSafetyMovementActive: false,
             out var lateReason),
         "healer coverage should not start a move that would clip the next cast");
@@ -905,6 +962,7 @@ static void HealerCoverageRespectsCastTiming()
             gcdRemaining: 0.8f,
             gcdElapsed: 1.7f,
             gcdTotal: 2.5f,
+            slidecastWindow: false,
             bossModSafetyMovementActive: false,
             out _),
         "short healer coverage moves should be allowed inside the non-interrupt window");
@@ -915,9 +973,21 @@ static void HealerCoverageRespectsCastTiming()
             gcdRemaining: 0.8f,
             gcdElapsed: 1.7f,
             gcdTotal: 2.5f,
+            slidecastWindow: false,
             bossModSafetyMovementActive: true,
             out _),
         "BossMod safety movement should be allowed to take precedence over cast clipping concerns");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldSkipCoverageMoveForGcdTiming(
+            moveDistance: 7f,
+            gcdRemaining: 0.2f,
+            gcdElapsed: 2.3f,
+            gcdTotal: 2.5f,
+            slidecastWindow: true,
+            bossModSafetyMovementActive: false,
+            out _),
+        "slidecast window should allow healer coverage movement even late in the GCD");
 
     AssertTrue(
         HealerAoePositioningController.IsBossModSafetyMovementActive(
@@ -934,6 +1004,39 @@ static void HealerCoverageRespectsCastTiming()
             bossModGoalZoneActive: false,
             bmrMoveImminent: false),
         "passive forbidden zones alone should not bypass cast timing");
+}
+
+static void HealerBossCoveragePrefersRangedComfort()
+{
+    AssertTrue(
+        HealerAoePositioningController.ShouldImproveBossCoveragePosition(
+            currentCoveredCount: 7,
+            bestCoveredCount: 7,
+            totalMembers: 8,
+            currentBossRangeScore: 0.45f,
+            bestBossRangeScore: 0.75f,
+            bossModuleContext: true),
+        "boss healer coverage should move for a better ranged position when party coverage is preserved");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldImproveBossCoveragePosition(
+            currentCoveredCount: 7,
+            bestCoveredCount: 7,
+            totalMembers: 8,
+            currentBossRangeScore: 0.45f,
+            bestBossRangeScore: 0.75f,
+            bossModuleContext: false),
+        "non-boss contexts should not use boss ranged comfort");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldImproveBossCoveragePosition(
+            currentCoveredCount: 7,
+            bestCoveredCount: 6,
+            totalMembers: 8,
+            currentBossRangeScore: 0.45f,
+            bestBossRangeScore: 0.95f,
+            bossModuleContext: true),
+        "boss ranged comfort should not trade away existing healer coverage");
 }
 
 static void PackMovementCombinesWithBossModForbiddenZones()
@@ -1183,6 +1286,48 @@ static void TrashAoeShortOneHitGainIsWorthMoving()
             out var reason),
         "long movement for one extra trash AoE hit should remain bounded");
     AssertContains("skipped", reason, "marginal AoE skip reason");
+}
+
+static void MeleeAoeHealerFallbackUsesMeleeRange()
+{
+    AssertTrue(
+        AoePackPositioningController.ShouldUseMeleeAoeHealerFallback(
+            classJobId: 24,
+            packAoeRange: 8f,
+            inAoeSituation: true),
+        "WHM Holy should use local melee AoE fallback when RSR stays on single-target at range");
+
+    AssertEqual(
+        Configuration.InternalMeleeUptimeRange,
+        AoePackPositioningController.ResolveEffectivePackAoeRange(
+            classJobId: 40,
+            packAoeRange: 5f,
+            inAoeSituation: true),
+        "SGE Dyskrasia fallback should use melee engagement range");
+
+    AssertEqual(
+        25f,
+        AoePackPositioningController.ResolveEffectivePackAoeRange(
+            classJobId: 33,
+            packAoeRange: 25f,
+            inAoeSituation: true),
+        "AST Gravity should remain a ranged AoE");
+
+    AssertEqual(
+        24f,
+        AoePackPositioningController.ResolveEffectivePackAoeRange(
+            classJobId: 24,
+            packAoeRange: 24f,
+            inAoeSituation: true),
+        "healers below their self-centered AoE level should remain ranged");
+
+    AssertEqual(
+        8f,
+        AoePackPositioningController.ResolveEffectivePackAoeRange(
+            classJobId: 24,
+            packAoeRange: 8f,
+            inAoeSituation: false),
+        "single-target contexts should not force WHM into melee");
 }
 
 static void TrashAoePrepSkipsGoodEnoughOneHitChurn()

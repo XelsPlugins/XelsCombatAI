@@ -315,7 +315,13 @@ internal sealed class AoePackPositioningController(
             this.bmrMoveRequested,
             this.bmrMoveImminent,
             bossModuleContext);
-        var trashDiagnostics = this.UpdateTrashPullState(targets, allPackTargets, inAoeSituation, bossModuleContext, shouldYieldToMechanicSafety);
+        var player = services.ObjectTable.LocalPlayer;
+        var effectivePackAoeRange = ResolveEffectivePackAoeRange(
+            player?.ClassJob.RowId ?? 0,
+            jobRangeProvider.PackAoeRange,
+            inAoeSituation);
+        var meleeAoeHealerFallbackActive = effectivePackAoeRange < jobRangeProvider.PackAoeRange;
+        var trashDiagnostics = this.UpdateTrashPullState(targets, allPackTargets, inAoeSituation, bossModuleContext, shouldYieldToMechanicSafety, effectivePackAoeRange);
         if (config.KeepTrashTargetSelected)
         {
             if (this.trashPullState.Current.Phase == TrashPullPhase.Gathering && targets.Count > 0)
@@ -390,7 +396,7 @@ internal sealed class AoePackPositioningController(
 
         if (!config.ManageAoePackPositioning)
         {
-            if (packCenterMovementEnabled && inAoeSituation && this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "moving closer to trash pack", aoeRange: null, inAoeSituation: inAoeSituation, contributions: contributions))
+            if (packCenterMovementEnabled && inAoeSituation && this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "moving closer to trash pack", this.ResolvePackEngagementRange(meleeAoeHealerFallbackActive, null), inAoeSituation, contributions))
             {
                 return;
             }
@@ -429,14 +435,14 @@ internal sealed class AoePackPositioningController(
                 this.RestoreRsrIfNeeded();
             }
 
-            if (this.TryInjectProactivePackAoeMovement(hints, pathfindBounds, targets, inAoeSituation, contributions))
+            if (this.TryInjectProactivePackAoeMovement(hints, pathfindBounds, targets, inAoeSituation, effectivePackAoeRange, contributions))
             {
                 return;
             }
 
             if (packCenterMovementEnabled &&
                 inAoeSituation &&
-                this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "moving closer to trash pack", aoeRange: null, inAoeSituation: inAoeSituation, contributions: contributions))
+                this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "moving closer to trash pack", this.ResolvePackEngagementRange(meleeAoeHealerFallbackActive, null), inAoeSituation, contributions))
             {
                 return;
             }
@@ -480,7 +486,7 @@ internal sealed class AoePackPositioningController(
                 var targetCenteredRange = action.IsTargetCenteredCircle
                     ? action.Range
                     : (float?)null;
-                this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "targeted AoE — closing to attack range", targetCenteredRange, inAoeSituation, contributions);
+                this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "targeted AoE — closing to attack range", this.ResolvePackEngagementRange(meleeAoeHealerFallbackActive, targetCenteredRange), inAoeSituation, contributions);
             }
 
             return;
@@ -494,7 +500,6 @@ internal sealed class AoePackPositioningController(
             return;
         }
 
-        var player = services.ObjectTable.LocalPlayer;
         if (player == null)
         {
             this.lastReason = "local player unavailable";
@@ -1213,6 +1218,12 @@ internal sealed class AoePackPositioningController(
         ICollection<BossModGoalContribution> contributions)
     {
         var aoeRange = action != null && !ShouldSkipBodyReposition(action) ? action.EffectRange : (float?)null;
+        var player = services.ObjectTable.LocalPlayer;
+        var meleeAoeHealerFallbackActive = ShouldUseMeleeAoeHealerFallback(
+            player?.ClassJob.RowId ?? 0,
+            jobRangeProvider.PackAoeRange,
+            inAoeSituation);
+        aoeRange = this.ResolvePackEngagementRange(meleeAoeHealerFallbackActive, aoeRange);
         if (!this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "holding near pack", aoeRange, inAoeSituation, contributions))
         {
             this.ClearAoeCandidateGoal();
@@ -1419,16 +1430,41 @@ internal sealed class AoePackPositioningController(
         return primaryId != 0 && bestHits >= 2;
     }
 
+    public float? GetTargetUptimeRangeOverride()
+    {
+        if (!config.Enabled ||
+            !config.ManageMovement ||
+            !config.ManageAoePackPositioning ||
+            automatedMovementSuppressed() ||
+            !CombatEngagementDetector.IsEffectivelyInCombat(services))
+        {
+            return null;
+        }
+
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return null;
+        }
+
+        var inAoeSituation = this.lastPriorityTargetCount >= 2 && !this.bossLikeCombatActive;
+        var effectiveRange = ResolveEffectivePackAoeRange(player.ClassJob.RowId, jobRangeProvider.PackAoeRange, inAoeSituation);
+        return effectiveRange < jobRangeProvider.PackAoeRange
+            ? effectiveRange
+            : null;
+    }
+
     private bool TryInjectProactivePackAoeMovement(
         object hints,
         BossModPathfindBoundsSnapshot? pathfindBounds,
         List<TargetSnapshot> targets,
         bool inAoeSituation,
+        float packAoeRange,
         ICollection<BossModGoalContribution> contributions)
     {
         if (!inAoeSituation ||
             targets.Count < 2 ||
-            jobRangeProvider.PackAoeRange > ProactivePackAoeMaxBodyRange)
+            packAoeRange > ProactivePackAoeMaxBodyRange)
         {
             return false;
         }
@@ -1458,7 +1494,7 @@ internal sealed class AoePackPositioningController(
             }
         }
 
-        var radius = Math.Max(1f, jobRangeProvider.PackAoeRange);
+        var radius = Math.Max(1f, packAoeRange);
         var dangerZones = this.CreateDangerZoneSnapshot(hints);
         var targetArray = targets.ToArray();
         var plan = new GoalPlan(
@@ -1703,6 +1739,13 @@ internal sealed class AoePackPositioningController(
             candidate.Hits,
             this.CreateOverlayTargets(targets, y, candidate.Position, hit: false));
         return true;
+    }
+
+    private float? ResolvePackEngagementRange(bool meleeAoeHealerFallbackActive, float? requestedRange)
+    {
+        return meleeAoeHealerFallbackActive
+            ? Configuration.InternalMeleeUptimeRange
+            : requestedRange;
     }
 
     private bool TryInjectFluidPackFollow(
@@ -2336,7 +2379,8 @@ internal sealed class AoePackPositioningController(
         IReadOnlyList<TargetSnapshot> allTargets,
         bool trashContext,
         bool bossContext,
-        bool bmrSafetyPressure)
+        bool bmrSafetyPressure,
+        float packAoeRange)
     {
         var player = services.ObjectTable.LocalPlayer;
         if (player == null)
@@ -2357,7 +2401,7 @@ internal sealed class AoePackPositioningController(
             automatedMovementSuppressed(),
             bmrSafetyPressure,
             player.Position,
-            jobRangeProvider.PackAoeRange,
+            packAoeRange,
             tank == null ? null : new TrashPullActorPosition(tank.GameObjectId, tank.Position),
             partyMembers,
             dominantTargets,
@@ -2409,6 +2453,20 @@ internal sealed class AoePackPositioningController(
         }
 
         return Math.Clamp(engagementRange * 0.45f, 2.5f, 8f);
+    }
+
+    internal static bool ShouldUseMeleeAoeHealerFallback(uint classJobId, float packAoeRange, bool inAoeSituation)
+    {
+        return inAoeSituation &&
+               JobRoles.IsMeleeAoEHealer(classJobId) &&
+               packAoeRange <= ProactivePackAoeMaxBodyRange;
+    }
+
+    internal static float ResolveEffectivePackAoeRange(uint classJobId, float packAoeRange, bool inAoeSituation)
+    {
+        return ShouldUseMeleeAoeHealerFallback(classJobId, packAoeRange, inAoeSituation)
+            ? Configuration.InternalMeleeUptimeRange
+            : packAoeRange;
     }
 
     private static List<TargetSnapshot> DistinctTargets(IReadOnlyList<TargetSnapshot> targets)

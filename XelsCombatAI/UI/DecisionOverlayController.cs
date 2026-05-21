@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Types;
 
 namespace XelsCombatAI.UI;
@@ -41,6 +42,11 @@ internal sealed class DecisionOverlayController(
                 return;
             }
 
+            if (this.ShouldHideForGameUiState())
+            {
+                return;
+            }
+
             if (config.ShowDecisionOverlayHud)
             {
                 this.DrawConfigHud();
@@ -58,6 +64,15 @@ internal sealed class DecisionOverlayController(
             services.Log.Verbose(ex, "Decision overlay draw failed.");
             this.nextDrawErrorLog = DateTime.UtcNow.AddSeconds(10);
         }
+    }
+
+    private bool ShouldHideForGameUiState()
+    {
+        return services.GameGui.GameUiHidden ||
+               services.Condition[ConditionFlag.OccupiedInCutSceneEvent] ||
+               services.Condition[ConditionFlag.WatchingCutscene78] ||
+               services.Condition[ConditionFlag.WatchingCutscene] ||
+               services.ClientState.IsGPosing;
     }
 
     private void DrawWorldDebug()

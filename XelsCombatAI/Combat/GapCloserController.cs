@@ -155,8 +155,18 @@ internal sealed class GapCloserController(
             return false;
         }
 
+        var targetHasBossModule = target is IBattleNpc moduleTarget && bossMod.HasModuleByDataId(moduleTarget.BaseId);
+        var bypassMinimumDistanceForKnockback = ShouldBypassMinimumGapCloserDistanceForKnockback(
+            dashStyleController.KnockbackRecoveryActive,
+            JobRoles.GetRangeRole(player) == RangeRole.Melee,
+            targetHasBossModule,
+            HasAntiKnockbackStatus(player),
+            distanceToHitbox,
+            reengageRange);
         var gcdReengageUrgent = this.IsGcdReengageUrgent(distanceToHitbox, reengageRange);
-        var minimumDashDistance = gcdReengageUrgent
+        var minimumDashDistance = bypassMinimumDistanceForKnockback
+            ? 0f
+            : gcdReengageUrgent
             ? 0f
             : styleOpportunity.AllowsShortDash ? 4f : config.MinimumGapCloserDistance;
         if (distanceToHitbox < minimumDashDistance)
@@ -1292,6 +1302,21 @@ internal sealed class GapCloserController(
         return gcdRemaining <= requiredWalkTime + gcdBufferSeconds;
     }
 
+    internal static bool ShouldBypassMinimumGapCloserDistanceForKnockback(
+        bool knockbackRecoveryActive,
+        bool playerIsMeleeRangeRole,
+        bool targetHasBossModule,
+        bool antiKnockbackActive,
+        float distanceToHitbox,
+        float engagementRange)
+    {
+        return knockbackRecoveryActive &&
+               playerIsMeleeRangeRole &&
+               targetHasBossModule &&
+               !antiKnockbackActive &&
+               distanceToHitbox > engagementRange;
+    }
+
     private bool TryFindHostileRelayGapCloserTarget(
         IBattleChara player,
         IBattleNpc intendedTarget,
@@ -1378,6 +1403,14 @@ internal sealed class GapCloserController(
                    ActionUse.NinjaMudraStatusId,
                    ActionUse.NinjaTenChiJinStatusId,
                    ActionUse.NinjaThreeMudraStatusId);
+    }
+
+    private static bool HasAntiKnockbackStatus(IBattleChara player)
+    {
+        return HasAnyStatus(
+            player,
+            ActionUse.ArmsLengthStatusId,
+            ActionUse.SurecastStatusId);
     }
 
     private static bool HasAnyStatus(IBattleChara player, params uint[] statusIds)
