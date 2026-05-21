@@ -46,6 +46,7 @@ var tests = new (string Name, Action Body)[]
     ("healer coverage catches up for party-saving AoE heals", HealerCoverageCatchesUpForPartySavingAoeHeals),
     ("healer coverage catches up from critical party isolation", HealerCoverageCatchesUpFromCriticalPartyIsolation),
     ("healer coverage combines with forbidden zones", HealerCoverageCombinesWithForbiddenZones),
+    ("healer coverage respects cast timing", HealerCoverageRespectsCastTiming),
     ("pack movement combines with BossMod forbidden zones", PackMovementCombinesWithBossModForbiddenZones),
     ("mechanic whisper guard keeps aligned, shorter, or confident goals", MechanicWhisperGuardKeepsAlignedShorterOrConfidentGoals),
     ("mechanic safety isolates top goal contributions", MechanicSafetyIsolatesTopGoalContributions),
@@ -883,6 +884,56 @@ static void HealerCoverageCombinesWithForbiddenZones()
             bmrMoveRequested: false,
             bmrMoveImminent: false),
         "forced mechanic movement remains authoritative");
+}
+
+static void HealerCoverageRespectsCastTiming()
+{
+    AssertTrue(
+        HealerAoePositioningController.ShouldSkipCoverageMoveForGcdTiming(
+            moveDistance: 7f,
+            gcdRemaining: 0.8f,
+            gcdElapsed: 1.7f,
+            gcdTotal: 2.5f,
+            bossModSafetyMovementActive: false,
+            out var lateReason),
+        "healer coverage should not start a move that would clip the next cast");
+    AssertContains("too late", lateReason, "late healer coverage timing reason");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldSkipCoverageMoveForGcdTiming(
+            moveDistance: 3f,
+            gcdRemaining: 0.8f,
+            gcdElapsed: 1.7f,
+            gcdTotal: 2.5f,
+            bossModSafetyMovementActive: false,
+            out _),
+        "short healer coverage moves should be allowed inside the non-interrupt window");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldSkipCoverageMoveForGcdTiming(
+            moveDistance: 7f,
+            gcdRemaining: 0.8f,
+            gcdElapsed: 1.7f,
+            gcdTotal: 2.5f,
+            bossModSafetyMovementActive: true,
+            out _),
+        "BossMod safety movement should be allowed to take precedence over cast clipping concerns");
+
+    AssertTrue(
+        HealerAoePositioningController.IsBossModSafetyMovementActive(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: true,
+            bossModGoalZoneActive: false,
+            bmrMoveImminent: true),
+        "imminent BossMod movement with safety hints should count as BossMod taking control");
+
+    AssertFalse(
+        HealerAoePositioningController.IsBossModSafetyMovementActive(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: true,
+            bossModGoalZoneActive: false,
+            bmrMoveImminent: false),
+        "passive forbidden zones alone should not bypass cast timing");
 }
 
 static void PackMovementCombinesWithBossModForbiddenZones()

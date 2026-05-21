@@ -55,9 +55,13 @@ internal sealed class HealerAoePositioningController(
     private const float PreferredCoverageSlack = 5f;
     private const float PreferredCoveragePointRadius = 5f;
     private const float MaxCoverageComfortScoreBonus = 0.15f;
+    private const float EstimatedCombatMoveSpeed = 6f;
+    private const float CoverageArrivalBufferSeconds = 0.15f;
+    private const float GcdElapsedResetTolerance = 0.2f;
     private const int MinimumCoverageGain = 2;
     private const float PreferredScore = GoalZoneScorePolicy.NormalPreference;
     private const float TankCoverageBonus = 0.25f;
+    private static readonly TimeSpan FallbackGcdWindow = TimeSpan.FromMilliseconds(2500);
 
     private FieldInfo? goalZonesField;
     private FieldInfo? forcedMovementField;
@@ -75,6 +79,11 @@ internal sealed class HealerAoePositioningController(
     private HealerCoverageOverlaySnapshot? lastOverlay;
     private HealerCoverageGoalPlan? lastPlan;
     private Delegate? lastGoalDelegate;
+    private HealerCoverageMoveDecision? coverageMoveDecision;
+    private long healerCoverageGcdWindowId;
+    private long evaluatedHealerCoverageGcdWindowId = -1;
+    private float lastObservedGcdElapsed = -1f;
+    private DateTime fallbackHealerCoverageGcdWindowStartedAt = DateTime.MinValue;
     private bool bmrMoveRequested;
     private bool bmrMoveImminent;
 
@@ -117,6 +126,11 @@ internal sealed class HealerAoePositioningController(
         this.lastOverlay = null;
         this.lastPlan = null;
         this.lastGoalDelegate = null;
+        this.coverageMoveDecision = null;
+        this.healerCoverageGcdWindowId = 0;
+        this.evaluatedHealerCoverageGcdWindowId = -1;
+        this.lastObservedGcdElapsed = -1f;
+        this.fallbackHealerCoverageGcdWindowStartedAt = DateTime.MinValue;
         this.bmrMoveRequested = false;
         this.bmrMoveImminent = false;
     }
@@ -190,6 +204,9 @@ internal sealed class HealerAoePositioningController(
 
         var tank = PartyAllyProvider.SelectBestTank(services, player);
         var plan = this.BuildPlan(player, members, tank);
+        var now = DateTime.UtcNow;
+        rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var upcomingGcd, out _);
+        var gcdWindowId = this.UpdateHealerCoverageGcdWindow(upcomingGcd, now);
 
         this.lastDistanceToCenter = plan.DistanceToCenter;
         this.lastCoveredMembers = plan.BestCoveredCount;
@@ -204,7 +221,8 @@ internal sealed class HealerAoePositioningController(
             plan.BestCoveredCount,
             plan.TotalMembers,
             plan.DistanceToCenter);
-        var partyAoeHealPending = this.TryGetUpcomingPartyAoeHeal(out var partyAoeHealActionName);
+        var partyAoeHealPending = upcomingGcd != null && IsPartyAoeHealAction(upcomingGcd);
+        var partyAoeHealActionName = partyAoeHealPending ? upcomingGcd?.ActionName ?? "<none>" : "<none>";
         var forcedMovementActive = VectorLengthSquared(this.forcedMovementField?.GetValue(hints)) > 0.01f;
         var forbiddenSafetyActive = this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 };
         var bossModGoalZoneActive = goalZones.Count > 0;
@@ -250,6 +268,18 @@ internal sealed class HealerAoePositioningController(
             this.lastPlan = plan;
         }
 
+        if (this.TryUseHealerCoverageMoveDecision(gcdWindowId, player, plan, contributions))
+        {
+            return;
+        }
+
+        if (this.evaluatedHealerCoverageGcdWindowId == gcdWindowId)
+        {
+            this.lastReason = "healer coverage move already chosen this GCD";
+            this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: false);
+            return;
+        }
+
         if (shouldMove && ShouldYieldCoverageForSafety(
                 forcedMovementActive,
                 forbiddenSafetyActive,
@@ -266,6 +296,19 @@ internal sealed class HealerAoePositioningController(
             this.lastReason = partyAoeHealPending
                 ? $"party AoE heal coverage point too far: {plan.DistanceToCenter:0.0}y"
                 : $"coverage point too far: {plan.DistanceToCenter:0.0}y";
+        }
+        else if (shouldMove &&
+                 ShouldSkipCoverageMoveForGcdTiming(
+                     plan.DistanceToCenter,
+                     upcomingGcd?.GcdRemaining ?? -1f,
+                     upcomingGcd?.GcdElapsed ?? -1f,
+                     upcomingGcd?.GcdTotal ?? -1f,
+                     IsBossModSafetyMovementActive(forcedMovementActive, forbiddenSafetyActive, bossModGoalZoneActive, this.bmrMoveImminent),
+                     out var timingSkipReason))
+        {
+            shouldMove = false;
+            this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
+            this.lastReason = timingSkipReason;
         }
         else if (!shouldMove && restoresTankCoverage && plan.DistanceToCenter > MaxTankCoverageRestoreDistance)
         {
@@ -286,7 +329,6 @@ internal sealed class HealerAoePositioningController(
 
         if (shouldMove)
         {
-            contributions.Add(new(this.lastGoalDelegate!, priority, "Healer coverage zone", plan.OptimalCenter, MechanicWhisperConfidence.Confident));
             var prefix = partyAoeHealCatchUp
                 ? $"party AoE heal ({partyAoeHealActionName}); "
                 : criticalCoverageCatchUp
@@ -306,11 +348,98 @@ internal sealed class HealerAoePositioningController(
                     ? "mechanic healer comfort; "
                     : "healer comfort; "
                 : string.Empty;
-            this.lastReason = $"{prefix}covering {plan.CurrentCoveredCount}/{plan.TotalMembers}, can cover {plan.BestCoveredCount}/{plan.TotalMembers}";
+            this.coverageMoveDecision = new(
+                gcdWindowId,
+                plan.OptimalCenter,
+                this.lastGoalDelegate!,
+                plan.CreateOverlay(player.Position.Y, injected: true),
+                plan.BestCoveredCount,
+                plan.TotalMembers,
+                priority,
+                prefix);
+            this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
+            this.InjectHealerCoverageMoveDecision(this.coverageMoveDecision, plan.CurrentCoveredCount, contributions);
+            return;
         }
 
         this.lastInjected = shouldMove;
         this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: shouldMove);
+    }
+
+    private long UpdateHealerCoverageGcdWindow(RsrAoeActionSnapshot? action, DateTime now)
+    {
+        var newWindow = this.healerCoverageGcdWindowId == 0;
+        if (action != null && AoeRepositionPolicy.HasReliableGcdTiming(action.GcdRemaining, action.GcdElapsed, action.GcdTotal))
+        {
+            if (this.lastObservedGcdElapsed >= 0f &&
+                action.GcdElapsed + GcdElapsedResetTolerance < this.lastObservedGcdElapsed)
+            {
+                newWindow = true;
+            }
+
+            this.lastObservedGcdElapsed = action.GcdElapsed;
+            this.fallbackHealerCoverageGcdWindowStartedAt = now.Subtract(TimeSpan.FromSeconds(Math.Max(0f, action.GcdElapsed)));
+        }
+        else
+        {
+            if (this.fallbackHealerCoverageGcdWindowStartedAt == DateTime.MinValue ||
+                now - this.fallbackHealerCoverageGcdWindowStartedAt >= FallbackGcdWindow)
+            {
+                newWindow = true;
+                this.fallbackHealerCoverageGcdWindowStartedAt = now;
+            }
+
+            this.lastObservedGcdElapsed = -1f;
+        }
+
+        if (newWindow)
+        {
+            this.healerCoverageGcdWindowId++;
+            this.coverageMoveDecision = null;
+            this.evaluatedHealerCoverageGcdWindowId = -1;
+        }
+
+        return this.healerCoverageGcdWindowId;
+    }
+
+    private bool TryUseHealerCoverageMoveDecision(
+        long gcdWindowId,
+        IBattleChara player,
+        HealerCoverageGoalPlan plan,
+        ICollection<BossModGoalContribution> contributions)
+    {
+        var decision = this.coverageMoveDecision;
+        if (decision == null || decision.GcdWindowId != gcdWindowId)
+        {
+            return false;
+        }
+
+        var playerPosition = new Vector2(player.Position.X, player.Position.Z);
+        if (plan.CurrentCoveredCount >= decision.BestCoveredCount ||
+            Vector2.Distance(playerPosition, decision.Center) <= 0.75f)
+        {
+            this.coverageMoveDecision = null;
+            this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
+            this.lastInjected = false;
+            this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: false);
+            this.lastReason = "healer coverage position reached for this GCD";
+            return true;
+        }
+
+        this.InjectHealerCoverageMoveDecision(decision, plan.CurrentCoveredCount, contributions);
+        this.lastReason = $"{decision.ReasonPrefix}holding healer coverage move for this GCD ({plan.CurrentCoveredCount}/{decision.TotalMembers} -> {decision.BestCoveredCount}/{decision.TotalMembers})";
+        return true;
+    }
+
+    private void InjectHealerCoverageMoveDecision(
+        HealerCoverageMoveDecision decision,
+        int currentCoveredCount,
+        ICollection<BossModGoalContribution> contributions)
+    {
+        contributions.Add(new(decision.Goal, decision.Priority, "Healer coverage zone", decision.Center, MechanicWhisperConfidence.Confident));
+        this.lastInjected = true;
+        this.lastOverlay = decision.Overlay;
+        this.lastReason = $"{decision.ReasonPrefix}covering {currentCoveredCount}/{decision.TotalMembers}, can cover {decision.BestCoveredCount}/{decision.TotalMembers}";
     }
 
     private HealerCoverageGoalPlan BuildPlan(IBattleChara player, IReadOnlyList<IBattleChara> members, IBattleChara? tank)
@@ -833,6 +962,40 @@ internal sealed class HealerAoePositioningController(
         return forcedMovementActive;
     }
 
+    internal static bool ShouldSkipCoverageMoveForGcdTiming(
+        float moveDistance,
+        float gcdRemaining,
+        float gcdElapsed,
+        float gcdTotal,
+        bool bossModSafetyMovementActive,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (bossModSafetyMovementActive || !AoeRepositionPolicy.HasReliableGcdTiming(gcdRemaining, gcdElapsed, gcdTotal))
+        {
+            return false;
+        }
+
+        var requiredSeconds = moveDistance / EstimatedCombatMoveSpeed + CoverageArrivalBufferSeconds;
+        if (gcdRemaining >= requiredSeconds)
+        {
+            return false;
+        }
+
+        reason = $"healer coverage move too late for next cast ({moveDistance:0.0}y needs {requiredSeconds:0.0}s, {gcdRemaining:0.0}s left)";
+        return true;
+    }
+
+    internal static bool IsBossModSafetyMovementActive(
+        bool forcedMovementActive,
+        bool forbiddenSafetyActive,
+        bool bossModGoalZoneActive,
+        bool bmrMoveImminent)
+    {
+        return forcedMovementActive ||
+               bmrMoveImminent && (forbiddenSafetyActive || bossModGoalZoneActive);
+    }
+
     private bool IsDowntimeLikely()
     {
         var target = services.TargetManager.Target;
@@ -848,19 +1011,6 @@ internal sealed class HealerAoePositioningController(
     }
 
     private static bool IsFiniteTimelineValue(float value) => !float.IsNaN(value) && !float.IsInfinity(value) && value < float.MaxValue * 0.5f;
-
-    private bool TryGetUpcomingPartyAoeHeal(out string actionName)
-    {
-        actionName = "<none>";
-        if (!rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var action, out _) ||
-            !IsPartyAoeHealAction(action))
-        {
-            return false;
-        }
-
-        actionName = action.ActionName;
-        return true;
-    }
 
     private static bool IsKnownOffensivePartyHeal(string actionName)
     {
@@ -909,6 +1059,16 @@ internal sealed class HealerAoePositioningController(
                    Vector2.DistanceSquared(this.Center, other.Center) <= 9f;
         }
     }
+
+    private sealed record HealerCoverageMoveDecision(
+        long GcdWindowId,
+        Vector2 Center,
+        Delegate Goal,
+        HealerCoverageOverlaySnapshot Overlay,
+        int BestCoveredCount,
+        int TotalMembers,
+        BossModGoalPriority Priority,
+        string ReasonPrefix);
 
     private sealed class HealerCoverageGoalPlan
     {
