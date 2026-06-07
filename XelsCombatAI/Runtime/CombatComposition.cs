@@ -73,6 +73,7 @@ internal sealed class CombatComposition : IDisposable
             dashStyleController,
             facingController,
             rotationSolverActions,
+            () => presetController?.LastPositional ?? Positional.Any,
             () => aoePackPositioningController.RsrHenchedActive,
             () => aoePackPositioningController.Status.TrashPull);
         var escapeGapCloserController = new EscapeGapCloserController(
@@ -83,6 +84,7 @@ internal sealed class CombatComposition : IDisposable
             gapCloserController,
             dashStyleController,
             facingController,
+            () => presetController?.LastPositional ?? Positional.Any,
             () => aoeGoalHook.MovementDiagnostics);
         var combatLogWriter = new CombatLogWriter(Path.Combine(configDirectory, "combat-logs"), log);
         presetController = new BossModPresetController(

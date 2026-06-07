@@ -199,6 +199,10 @@ internal sealed class DashStyleController(Configuration config, JobRangeProvider
         {
             score += 1.5f;
         }
+        else if (reason.StartsWith("positional", StringComparison.Ordinal))
+        {
+            score += 6f;
+        }
         else if (string.Equals(reason, "ally anchor", StringComparison.Ordinal))
         {
             score += 1f;

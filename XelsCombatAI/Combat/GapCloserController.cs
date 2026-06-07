@@ -19,6 +19,7 @@ internal sealed class GapCloserController(
     DashStyleController dashStyleController,
     FacingController facingController,
     RotationSolverActionReflection rotationSolverActions,
+    Func<Positional> positionalIntent,
     Func<bool> rsrHenchedActive,
     Func<TrashPullDiagnostics> trashPullDiagnostics)
 {
@@ -1064,7 +1065,8 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (!dashStyleController.ReengageStyleActive)
+        var desiredPositional = this.ResolveDesiredDashPositional(player, target);
+        if (!dashStyleController.ReengageStyleActive && !PositionalDashPolicy.IsActive(desiredPositional))
         {
             return currentDecision == null &&
                    this.TryRequestDirectForwardDashFacing(
@@ -1078,12 +1080,25 @@ internal sealed class GapCloserController(
                        safeMovementDestination);
         }
 
+        if (currentDestination.HasValue &&
+            PositionalDashPolicy.IsActive(desiredPositional) &&
+            PositionalDashPolicy.IsSatisfied(desiredPositional, currentDestination.Value, target.Position, target.Rotation))
+        {
+            return false;
+        }
+
         var currentMaxMeleeError = currentDestination.HasValue
             ? this.CalculateMaxMeleeLandingError(player, currentDestination.Value, target)
             : float.PositiveInfinity;
         var candidates = new List<DashStyleCandidate<float>>();
-        foreach (var candidate in this.EnumerateForwardDashFacingCandidates(player, target, dashDistance))
+        foreach (var candidate in this.EnumerateForwardDashFacingCandidates(player, target, dashDistance, desiredPositional))
         {
+            if (PositionalDashPolicy.IsActive(desiredPositional) &&
+                !PositionalDashPolicy.IsSatisfied(desiredPositional, candidate.Destination, target.Position, target.Rotation))
+            {
+                continue;
+            }
+
             var destinationDistanceToHitbox = Geometry.DistanceToHitbox(candidate.Destination, player.HitboxRadius, target.Position, target.HitboxRadius);
             if (destinationDistanceToHitbox >= currentDistanceToHitbox || destinationDistanceToHitbox > requiredLandingRange)
             {
@@ -1111,7 +1126,8 @@ internal sealed class GapCloserController(
             if (currentDecision != null)
             {
                 var candidateError = this.CalculateMaxMeleeLandingError(player, candidate.Destination, target);
-                if (candidateError + DirectionalDashBetterLandingThreshold >= currentMaxMeleeError)
+                if (!PositionalDashPolicy.IsActive(desiredPositional) &&
+                    candidateError + DirectionalDashBetterLandingThreshold >= currentMaxMeleeError)
                 {
                     continue;
                 }
@@ -1124,7 +1140,7 @@ internal sealed class GapCloserController(
                 target,
                 safeMovementDestination,
                 decision,
-                "directional dash"));
+                PositionalDashPolicy.IsActive(desiredPositional) ? "positional dash" : "directional dash"));
         }
 
         if (!dashStyleController.TrySelectBest(candidates, out var selected))
@@ -1209,10 +1225,12 @@ internal sealed class GapCloserController(
         out MobilityDecisionDiagnostics selectedDecision,
         out string styleReason)
     {
+        var desiredPositional = this.ResolveDesiredDashPositional(player, target);
+        var targetRotation = target?.Rotation ?? 0f;
         if (dashStyleController.ReengageStyleActive)
         {
             var candidates = new List<DashStyleCandidate<Vector3>>();
-            foreach (var candidate in this.EnumerateShukuchiCandidates(player.Position, targetPosition, targetHitboxRadius))
+            foreach (var candidate in this.EnumerateShukuchiCandidates(player.Position, targetPosition, targetRotation, targetHitboxRadius, desiredPositional))
             {
                 if (Vector3.Distance(player.Position, candidate) > CombatConstants.GapCloserMaxRange)
                 {
@@ -1235,6 +1253,9 @@ internal sealed class GapCloserController(
                 {
                     var reason = styleOpportunity.Reason is "knockback recovery" or "capped charge" or "pack surf"
                         ? styleOpportunity.Reason
+                        : PositionalDashPolicy.IsActive(desiredPositional) &&
+                          PositionalDashPolicy.IsSatisfied(desiredPositional, candidate, targetPosition, targetRotation)
+                            ? "positional Shukuchi"
                         : "precision Shukuchi";
                     candidates.Add(dashStyleController.ScoreCandidate(
                         candidate,
@@ -1271,7 +1292,13 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        foreach (var candidate in this.EnumerateShukuchiCandidates(player.Position, targetPosition, targetHitboxRadius))
+        var positionalCandidates = PositionalDashPolicy.IsActive(desiredPositional)
+            ? new List<DashStyleCandidate<Vector3>>()
+            : null;
+        MobilityDecisionDiagnostics? firstFallbackDecision = null;
+        var firstFallbackDestination = default(Vector3);
+
+        foreach (var candidate in this.EnumerateShukuchiCandidates(player.Position, targetPosition, targetRotation, targetHitboxRadius, desiredPositional))
         {
             if (Vector3.Distance(player.Position, candidate) > CombatConstants.GapCloserMaxRange)
             {
@@ -1292,6 +1319,27 @@ internal sealed class GapCloserController(
                 requireVnavReachable: false,
                 out var decision))
             {
+                if (PositionalDashPolicy.IsActive(desiredPositional) &&
+                    PositionalDashPolicy.IsSatisfied(desiredPositional, candidate, targetPosition, targetRotation))
+                {
+                    positionalCandidates!.Add(dashStyleController.ScoreCandidate(
+                        candidate,
+                        player,
+                        candidate,
+                        target,
+                        safeMovementDestination,
+                        decision,
+                        "positional Shukuchi"));
+                    continue;
+                }
+
+                if (positionalCandidates != null)
+                {
+                    firstFallbackDecision ??= decision;
+                    firstFallbackDestination = candidate;
+                    continue;
+                }
+
                 destination = candidate;
                 selectedDecision = decision;
                 styleReason = string.Empty;
@@ -1300,6 +1348,24 @@ internal sealed class GapCloserController(
             }
 
             this.lastGapCloserSafety = decision.RiskReason;
+        }
+
+        if (positionalCandidates != null && dashStyleController.TrySelectBest(positionalCandidates, out var selectedPositional))
+        {
+            destination = selectedPositional.Destination;
+            selectedDecision = selectedPositional.Decision;
+            styleReason = selectedPositional.Reason;
+            this.lastGapCloserSafety = $"Shukuchi ready ({selectedPositional.Decision.IntentLabel}, {selectedPositional.Reason})";
+            return true;
+        }
+
+        if (firstFallbackDecision != null)
+        {
+            destination = firstFallbackDestination;
+            selectedDecision = firstFallbackDecision;
+            styleReason = string.Empty;
+            this.lastGapCloserSafety = $"Shukuchi ready ({firstFallbackDecision.IntentLabel})";
+            return true;
         }
 
         destination = default;
@@ -1540,10 +1606,18 @@ internal sealed class GapCloserController(
         return player.StatusList.Any(status => status.RemainingTime > 0f && statusIds.Contains(status.StatusId));
     }
 
-    private IEnumerable<DirectionalDashFacingCandidate> EnumerateForwardDashFacingCandidates(IBattleChara player, IBattleChara target, float dashDistance)
+    private IEnumerable<DirectionalDashFacingCandidate> EnumerateForwardDashFacingCandidates(IBattleChara player, IBattleChara target, float dashDistance, Positional desiredPositional)
     {
         var targetSurface = this.CalculateTargetMaxMeleeSurface();
         var ringRadius = target.HitboxRadius + player.HitboxRadius + targetSurface;
+        foreach (var idealLanding in PositionalDashPolicy.EnumeratePreferredLandings(player.Position, target.Position, target.Rotation, ringRadius, desiredPositional))
+        {
+            if (TryCreateDirectionalDashFacingCandidate(player.Position, idealLanding, dashDistance, out var candidate))
+            {
+                yield return candidate;
+            }
+        }
+
         var toTarget = target.Position - player.Position;
         toTarget.Y = 0f;
         if (toTarget.LengthSquared() > 0.0001f)
@@ -1615,9 +1689,14 @@ internal sealed class GapCloserController(
         };
     }
 
-    private IEnumerable<Vector3> EnumerateShukuchiCandidates(Vector3 playerPosition, Vector3 targetPosition, float targetHitboxRadius)
+    private IEnumerable<Vector3> EnumerateShukuchiCandidates(Vector3 playerPosition, Vector3 targetPosition, float targetRotation, float targetHitboxRadius, Positional desiredPositional)
     {
         var radius = targetHitboxRadius + CombatConstants.GapCloserDestinationMeleeRange;
+        foreach (var preferred in PositionalDashPolicy.EnumeratePreferredLandings(playerPosition, targetPosition, targetRotation, radius, desiredPositional))
+        {
+            yield return preferred;
+        }
+
         var toTarget = targetPosition - playerPosition;
         toTarget.Y = 0;
         if (toTarget.LengthSquared() > 0.0001f)
@@ -1634,6 +1713,16 @@ internal sealed class GapCloserController(
                 playerPosition.Y,
                 targetPosition.Z + MathF.Sin(angle) * radius);
         }
+    }
+
+    private Positional ResolveDesiredDashPositional(IBattleChara player, IBattleChara? target)
+    {
+        var positional = positionalIntent();
+        return target != null &&
+               PositionalDashPolicy.IsActive(positional) &&
+               !PositionalDashPolicy.IsSatisfied(positional, player.Position, target.Position, target.Rotation)
+            ? positional
+            : Positional.Any;
     }
 
     private IEnumerable<IBattleChara> EnumerateFriendlyReengageTargets(IBattleChara player, IBattleChara currentTarget, float maxRange)

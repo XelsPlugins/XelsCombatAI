@@ -6,6 +6,7 @@ using XelsCombatAI.Combat;
 using XelsCombatAI.Config;
 using XelsCombatAI.Game;
 using XelsCombatAI.Integrations;
+using XelsCombatAI.Models;
 
 CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
@@ -32,6 +33,7 @@ var tests = new (string Name, Action Body)[]
     ("configuration logging defaults/reset", ConfigurationLoggingDefaultsAndReset),
     ("target uptime range follows next GCD", TargetUptimeRangeFollowsNextGcd),
     ("positionals suppress on AoE packs", PositionalsSuppressOnAoePacks),
+    ("positional dash policy matches rear and flank", PositionalDashPolicyMatchesRearAndFlank),
     ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
     ("gap closer follows RSR auto target", GapCloserFollowsRsrAutoTarget),
     ("ranged gap closers skip boss reengage", RangedGapClosersSkipBossReengage),
@@ -387,6 +389,35 @@ static void PositionalsSuppressOnAoePacks()
         "single-target context should keep positional handling available");
 }
 
+static void PositionalDashPolicyMatchesRearAndFlank()
+{
+    var targetPosition = Vector3.Zero;
+    const float targetRotation = 0f;
+
+    AssertTrue(
+        PositionalDashPolicy.IsSatisfied(Positional.Rear, new Vector3(0f, 0f, -5f), targetPosition, targetRotation),
+        "rear candidate should satisfy rear positional");
+    AssertFalse(
+        PositionalDashPolicy.IsSatisfied(Positional.Rear, new Vector3(5f, 0f, 0f), targetPosition, targetRotation),
+        "flank candidate should not satisfy rear positional");
+    AssertTrue(
+        PositionalDashPolicy.IsSatisfied(Positional.Flank, new Vector3(5f, 0f, 0f), targetPosition, targetRotation),
+        "side candidate should satisfy flank positional");
+    AssertFalse(
+        PositionalDashPolicy.IsSatisfied(Positional.Flank, new Vector3(0f, 0f, -5f), targetPosition, targetRotation),
+        "rear candidate should not satisfy flank positional");
+
+    var flankLandings = PositionalDashPolicy.EnumeratePreferredLandings(
+        new Vector3(4f, 0f, 1f),
+        targetPosition,
+        targetRotation,
+        5f,
+        Positional.Flank).ToArray();
+    AssertEqual(2, flankLandings.Length, "flank should offer both side landings");
+    AssertApproximately(5f, flankLandings[0].X, 0.001f, "nearest flank side should be first");
+    AssertApproximately(-5f, flankLandings[1].X, 0.001f, "far flank side should remain available");
+}
+
 static void FriendlyAnchorDashRequiresMeaningfulGain()
 {
     AssertFalse(
@@ -659,6 +690,7 @@ static void LateSafetyDashContinuesWhileUnsafeAndFar()
             currentSafe: false,
             safeMovementDistance: 18f,
             minimumGapCloserDistance: 8f,
+            canAssistSafeMovement: true,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
         "late safety dash should still evaluate while unsafe and far from the BMR safe destination");
     AssertTrue(
@@ -666,13 +698,23 @@ static void LateSafetyDashContinuesWhileUnsafeAndFar()
             currentSafe: true,
             safeMovementDistance: 18f,
             minimumGapCloserDistance: 8f,
+            canAssistSafeMovement: false,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
         "late safety dash should suppress when already safe");
+    AssertFalse(
+        EscapeGapCloserController.ShouldSuppressLateEscapeGapCloser(
+            currentSafe: true,
+            safeMovementDistance: 18f,
+            minimumGapCloserDistance: 8f,
+            canAssistSafeMovement: true,
+            dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
+        "late safety dash should keep evaluating while safe when far movement assist is allowed");
     AssertTrue(
         EscapeGapCloserController.ShouldSuppressLateEscapeGapCloser(
             currentSafe: false,
             safeMovementDistance: 6f,
             minimumGapCloserDistance: 8f,
+            canAssistSafeMovement: true,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
         "late safety dash should suppress when remaining safe movement is below the dash threshold");
     AssertFalse(
@@ -680,8 +722,44 @@ static void LateSafetyDashContinuesWhileUnsafeAndFar()
             currentSafe: false,
             safeMovementDistance: 18f,
             minimumGapCloserDistance: 8f,
+            canAssistSafeMovement: false,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds - 1d),
         "early safety dash should still evaluate");
+
+    var farMovement = BossModMovementDiagnostics.Empty with
+    {
+        NavigationDetails = BossModNavigationDiagnostics.Empty with { ForceMovementIn = 3.5f }
+    };
+    AssertTrue(
+        EscapeGapCloserController.ShouldAssistSafeBossModMovement(
+            CombatStyle.Normal,
+            farMovement,
+            safeMovementDistance: 18f,
+            minimumGapCloserDistance: 8f,
+            out _),
+        "safe-first timing should assist when a far safe zone is close to walking time");
+
+    AssertFalse(
+        EscapeGapCloserController.ShouldAssistSafeBossModMovement(
+            CombatStyle.Normal,
+            farMovement,
+            safeMovementDistance: 8f,
+            minimumGapCloserDistance: 8f,
+            out _),
+        "safe-first timing should still walk for nearby safe movement");
+
+    var distantWindow = BossModMovementDiagnostics.Empty with
+    {
+        NavigationDetails = BossModNavigationDiagnostics.Empty with { ForceMovementIn = 6f }
+    };
+    AssertFalse(
+        EscapeGapCloserController.ShouldAssistSafeBossModMovement(
+            CombatStyle.GreedGCD,
+            distantWindow,
+            safeMovementDistance: 18f,
+            minimumGapCloserDistance: 8f,
+            out _),
+        "far safe-zone assist should not dash when walking has comfortable time");
 }
 
 static void HostileRelayDashRequiresTargetMomentum()
@@ -2972,6 +3050,14 @@ static void AssertEqual<T>(T expected, T actual, string name)
     if (!expected.Equals(actual))
     {
         throw new InvalidOperationException($"{name}: expected {expected}, got {actual}.");
+    }
+}
+
+static void AssertApproximately(float expected, float actual, float tolerance, string name)
+{
+    if (MathF.Abs(expected - actual) > tolerance)
+    {
+        throw new InvalidOperationException($"{name}: expected {expected:0.###}, got {actual:0.###}.");
     }
 }
 

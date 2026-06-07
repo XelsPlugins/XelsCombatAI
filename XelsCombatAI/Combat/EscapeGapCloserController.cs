@@ -16,10 +16,14 @@ internal sealed class EscapeGapCloserController(
     GapCloserController gapCloserController,
     DashStyleController dashStyleController,
     FacingController facingController,
+    Func<Positional> positionalIntent,
     Func<BossModMovementDiagnostics> bossModMovementDiagnostics)
 {
     private const float GreedGcdAssistUrgencySeconds = 2.5f;
     private const float GreedLastMomentAssistUrgencySeconds = 1.0f;
+    private const float FarSafeAssistMinimumDistance = 12f;
+    private const float FarSafeAssistBufferSeconds = 0.75f;
+    private const float WalkSpeedYalmsPerSecond = 6f;
     private DateTime nextEscapeGapCloserAttempt = DateTime.MinValue;
     private DateTime escapeDangerDetectedAt = DateTime.MinValue;
     private string lastEscapeGapCloserSafety = "not checked";
@@ -100,7 +104,10 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
-        if (currentSafe && !this.ShouldAssistSafeBossModMovement(out var safeAssistReason))
+        var safeMovementDistance = Geometry.Distance2D(player.Position, safeMovementDestination);
+        var safeAssistReason = string.Empty;
+        var canAssistSafeMovement = !currentSafe || this.ShouldAssistSafeBossModMovement(safeMovementDistance, out safeAssistReason);
+        if (!canAssistSafeMovement)
         {
             this.escapeDangerDetectedAt = DateTime.MinValue;
             this.lastEscapeGapCloserSafety = safeAssistReason;
@@ -115,11 +122,11 @@ internal sealed class EscapeGapCloserController(
             this.escapeDangerDetectedAt = now;
         }
 
-        var safeMovementDistance = Geometry.Distance2D(player.Position, safeMovementDestination);
         if (ShouldSuppressLateEscapeGapCloser(
                 currentSafe,
                 safeMovementDistance,
                 config.MinimumGapCloserDistance,
+                canAssistSafeMovement,
                 (now - this.escapeDangerDetectedAt).TotalMilliseconds))
         {
             this.lastEscapeGapCloserSafety = "already walking to safety";
@@ -181,10 +188,10 @@ internal sealed class EscapeGapCloserController(
                !JobRoles.IsTankJob(classJobId);
     }
 
-    internal static bool ShouldSuppressLateEscapeGapCloser(bool currentSafe, float safeMovementDistance, float minimumGapCloserDistance, double dangerElapsedMilliseconds)
+    internal static bool ShouldSuppressLateEscapeGapCloser(bool currentSafe, float safeMovementDistance, float minimumGapCloserDistance, bool canAssistSafeMovement, double dangerElapsedMilliseconds)
     {
         return dangerElapsedMilliseconds > CombatConstants.EscapeGapCloserDangerWindowMilliseconds &&
-               (currentSafe || safeMovementDistance < minimumGapCloserDistance);
+               ((currentSafe && !canAssistSafeMovement) || safeMovementDistance < minimumGapCloserDistance);
     }
 
     private unsafe bool TryUseFriendlyEscapeGapCloser(uint actionId, string actionName, float maxRange, Vector3 safeMovementDestination)
@@ -312,15 +319,17 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
+        var target = services.TargetManager.Target as IBattleChara;
+        var desiredPositional = this.ResolveDesiredDashPositional(player, target);
         if (dashStyleController.EscapeStyleActive)
         {
             var styleCandidates = new List<DashStyleCandidate<Vector3>>();
-            foreach (var candidate in this.EnumerateGreedyEscapeLocationCandidates(player.Position, safeMovementDestination, maxRange))
+            foreach (var candidate in this.EnumerateGreedyEscapeLocationCandidates(player.Position, safeMovementDestination, maxRange, target, desiredPositional))
             {
                 if (!mobilityEvaluator.TryValidateDashDestination(
                     player,
                     candidate,
-                    services.TargetManager.Target as IBattleChara,
+                    target,
                     safeMovementDestination,
                     MobilityIntent.Safety,
                     actionName,
@@ -339,10 +348,14 @@ internal sealed class EscapeGapCloserController(
                     candidate,
                     player,
                     candidate,
-                    services.TargetManager.Target as IBattleChara,
+                    target,
                     safeMovementDestination,
                     decision,
-                    "precision Shukuchi"));
+                    PositionalDashPolicy.IsActive(desiredPositional) &&
+                    target != null &&
+                    PositionalDashPolicy.IsSatisfied(desiredPositional, candidate, target.Position, target.Rotation)
+                        ? "positional Shukuchi"
+                        : "precision Shukuchi"));
             }
 
             if (dashStyleController.TrySelectBest(styleCandidates, out var selected))
@@ -368,12 +381,18 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
-        foreach (var candidate in this.EnumerateEscapeLocationCandidates(player.Position, maxRange))
+        var positionalCandidates = PositionalDashPolicy.IsActive(desiredPositional)
+            ? new List<DashStyleCandidate<Vector3>>()
+            : null;
+        MobilityDecisionDiagnostics? firstFallbackDecision = null;
+        var firstFallbackDestination = default(Vector3);
+
+        foreach (var candidate in this.EnumerateEscapeLocationCandidates(player.Position, maxRange, target, desiredPositional))
         {
             if (!mobilityEvaluator.TryValidateDashDestination(
                 player,
                 candidate,
-                services.TargetManager.Target as IBattleChara,
+                target,
                 safeMovementDestination,
                 MobilityIntent.Safety,
                 actionName,
@@ -388,11 +407,53 @@ internal sealed class EscapeGapCloserController(
                 continue;
             }
 
+            if (PositionalDashPolicy.IsActive(desiredPositional) &&
+                target != null &&
+                PositionalDashPolicy.IsSatisfied(desiredPositional, candidate, target.Position, target.Rotation))
+            {
+                positionalCandidates!.Add(dashStyleController.ScoreCandidate(
+                    candidate,
+                    player,
+                    candidate,
+                    target,
+                    safeMovementDestination,
+                    decision,
+                    "positional Shukuchi"));
+                continue;
+            }
+
+            if (positionalCandidates != null)
+            {
+                firstFallbackDecision ??= decision;
+                firstFallbackDestination = candidate;
+                continue;
+            }
+
             this.lastSafeEscapeDestination = candidate;
             var location = candidate;
             var used = ActionManager.Instance()->UseActionLocation(ActionType.Action, actionId, player.GameObjectId, &location);
             mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
             this.lastEscapeGapCloserSafety = used ? $"used {actionName} ({decision.IntentLabel})" : $"failed to use {actionName} ({decision.IntentLabel})";
+            return used;
+        }
+
+        if (positionalCandidates != null && dashStyleController.TrySelectBest(positionalCandidates, out var selectedPositional))
+        {
+            this.lastSafeEscapeDestination = selectedPositional.Destination;
+            var location = selectedPositional.Destination;
+            var used = ActionManager.Instance()->UseActionLocation(ActionType.Action, actionId, player.GameObjectId, &location);
+            mobilityEvaluator.RecordActionResult(selectedPositional.Decision, used, used ? "action used" : "action failed");
+            this.lastEscapeGapCloserSafety = used ? $"used {actionName} ({selectedPositional.Decision.IntentLabel}, {selectedPositional.Reason})" : $"failed to use {actionName} ({selectedPositional.Decision.IntentLabel}, {selectedPositional.Reason})";
+            return used;
+        }
+
+        if (firstFallbackDecision != null)
+        {
+            this.lastSafeEscapeDestination = firstFallbackDestination;
+            var location = firstFallbackDestination;
+            var used = ActionManager.Instance()->UseActionLocation(ActionType.Action, actionId, player.GameObjectId, &location);
+            mobilityEvaluator.RecordActionResult(firstFallbackDecision, used, used ? "action used" : "action failed");
+            this.lastEscapeGapCloserSafety = used ? $"used {actionName} ({firstFallbackDecision.IntentLabel})" : $"failed to use {actionName} ({firstFallbackDecision.IntentLabel})";
             return used;
         }
 
@@ -786,8 +847,20 @@ internal sealed class EscapeGapCloserController(
             .ThenBy(enemy => Geometry.Distance2D(player.Position, enemy.Position));
     }
 
-    private IEnumerable<Vector3> EnumerateEscapeLocationCandidates(Vector3 playerPosition, float maxRange)
+    private IEnumerable<Vector3> EnumerateEscapeLocationCandidates(Vector3 playerPosition, float maxRange, IBattleChara? target, Positional desiredPositional)
     {
+        if (target != null)
+        {
+            var ringRadius = target.HitboxRadius + CombatConstants.GapCloserDestinationMeleeRange;
+            foreach (var candidate in PositionalDashPolicy.EnumeratePreferredLandings(playerPosition, target.Position, target.Rotation, ringRadius, desiredPositional))
+            {
+                if (Geometry.Distance2D(playerPosition, candidate) <= maxRange)
+                {
+                    yield return candidate;
+                }
+            }
+        }
+
         foreach (var radius in CombatConstants.EscapeLocationRadii)
         {
             if (radius > maxRange)
@@ -806,8 +879,20 @@ internal sealed class EscapeGapCloserController(
         }
     }
 
-    private IEnumerable<Vector3> EnumerateGreedyEscapeLocationCandidates(Vector3 playerPosition, Vector3 safeMovementDestination, float maxRange)
+    private IEnumerable<Vector3> EnumerateGreedyEscapeLocationCandidates(Vector3 playerPosition, Vector3 safeMovementDestination, float maxRange, IBattleChara? target, Positional desiredPositional)
     {
+        if (target != null)
+        {
+            var ringRadius = target.HitboxRadius + CombatConstants.GapCloserDestinationMeleeRange;
+            foreach (var candidate in PositionalDashPolicy.EnumeratePreferredLandings(playerPosition, target.Position, target.Rotation, ringRadius, desiredPositional))
+            {
+                if (Geometry.Distance2D(playerPosition, candidate) <= maxRange)
+                {
+                    yield return candidate;
+                }
+            }
+        }
+
         if (Geometry.Distance2D(playerPosition, safeMovementDestination) <= maxRange)
         {
             yield return safeMovementDestination;
@@ -828,43 +913,79 @@ internal sealed class EscapeGapCloserController(
             }
         }
 
-        foreach (var candidate in this.EnumerateEscapeLocationCandidates(playerPosition, maxRange))
+        foreach (var candidate in this.EnumerateEscapeLocationCandidates(playerPosition, maxRange, target: null, Positional.Any))
         {
             yield return candidate;
         }
     }
 
-    private bool ShouldAssistSafeBossModMovement(out string reason)
+    private Positional ResolveDesiredDashPositional(IBattleChara player, IBattleChara? target)
     {
-        if (config.CombatStyle == CombatStyle.Normal)
-        {
-            reason = "current position safe; normal timing walks";
-            return false;
-        }
+        var positional = positionalIntent();
+        return target != null &&
+               PositionalDashPolicy.IsActive(positional) &&
+               !PositionalDashPolicy.IsSatisfied(positional, player.Position, target.Position, target.Rotation)
+            ? positional
+            : Positional.Any;
+    }
 
-        if (config.CombatStyle == CombatStyle.Greed)
+    private bool ShouldAssistSafeBossModMovement(float safeMovementDistance, out string reason)
+        => ShouldAssistSafeBossModMovement(
+            config.CombatStyle,
+            bossModMovementDiagnostics(),
+            safeMovementDistance,
+            config.MinimumGapCloserDistance,
+            out reason);
+
+    internal static bool ShouldAssistSafeBossModMovement(
+        CombatStyle combatStyle,
+        BossModMovementDiagnostics movement,
+        float safeMovementDistance,
+        float minimumGapCloserDistance,
+        out string reason)
+    {
+        if (combatStyle == CombatStyle.Greed)
         {
             reason = "greedy timing allows safe movement dash";
             return true;
         }
 
-        var movement = bossModMovementDiagnostics();
+        var farSafeZone = safeMovementDistance >= MathF.Max(FarSafeAssistMinimumDistance, minimumGapCloserDistance);
         if (!TryGetBossModMovementUrgency(movement, out var urgencySeconds))
         {
-            reason = $"{config.CombatStyle}: waiting for BMR movement timing";
+            reason = combatStyle == CombatStyle.Normal
+                ? "current position safe; normal timing walks"
+                : $"{combatStyle}: waiting for BMR movement timing";
             return false;
         }
 
-        var threshold = config.CombatStyle == CombatStyle.GreedLastMoment
+        if (farSafeZone)
+        {
+            var walkTime = safeMovementDistance / WalkSpeedYalmsPerSecond;
+            var farThreshold = walkTime + FarSafeAssistBufferSeconds;
+            if (urgencySeconds <= farThreshold)
+            {
+                reason = $"{combatStyle}: far safe zone {safeMovementDistance:0.0}y, BMR movement due in {urgencySeconds:0.0}s";
+                return true;
+            }
+        }
+
+        if (combatStyle == CombatStyle.Normal)
+        {
+            reason = "current position safe; normal timing walks";
+            return false;
+        }
+
+        var threshold = combatStyle == CombatStyle.GreedLastMoment
             ? GreedLastMomentAssistUrgencySeconds
             : GreedGcdAssistUrgencySeconds;
         if (urgencySeconds > threshold)
         {
-            reason = $"{config.CombatStyle}: BMR movement in {urgencySeconds:0.0}s";
+            reason = $"{combatStyle}: BMR movement in {urgencySeconds:0.0}s";
             return false;
         }
 
-        reason = $"{config.CombatStyle}: BMR movement due in {urgencySeconds:0.0}s";
+        reason = $"{combatStyle}: BMR movement due in {urgencySeconds:0.0}s";
         return true;
     }
 
