@@ -58,7 +58,7 @@ internal sealed class CombatComposition : IDisposable
         targetUptimePlanner.TargetUptimeRangeOverride = () =>
             redMageMeleeComboController.GetTargetUptimeRangeOverride() ??
             aoePackPositioningController.GetTargetUptimeRangeOverride();
-        var positionalsController = new PositionalsController(config, services, rotationSolver, rotationSolverActions, positional => presetController!.SetPositional(positional), updateDtr, () => aoePackPositioningController.Status);
+        var positionalsController = new PositionalsController(config, services, rotationSolver, rotationSolverActions, bossModSafety, positional => presetController!.SetPositional(positional), updateDtr, () => aoePackPositioningController.Status);
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
         var healerAoePositioningController = new HealerAoePositioningController(config, services, bossMod, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), mobilityDecisionEvaluator, facingController, () => mechanicPressure.Current);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);

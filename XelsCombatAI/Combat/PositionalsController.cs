@@ -10,6 +10,7 @@ internal sealed class PositionalsController(
     DalamudServices services,
     RotationSolverIpc rotationSolver,
     RotationSolverActionReflection rotationSolverActions,
+    BossModReflectionSafety bossModSafety,
     Action<Positional> setPositional,
     Action updateDtr,
     Func<AoePackPositioningStatus> aoePackStatus)
@@ -253,14 +254,21 @@ internal sealed class PositionalsController(
             target.HitboxRadius,
             target.Rotation,
             positional,
-            out var moveDistance))
+            this.IsBossModSafeOrUnknown,
+            out var moveDistance,
+            out var distanceReason))
         {
             source = "local";
-            reason = $"could not estimate walk distance for {positional}";
+            reason = distanceReason;
             return false;
         }
 
         return PositionalTrueNorthPolicy.ShouldWalkInsteadOfTrueNorth(positional, action, moveDistance, out reason);
+    }
+
+    private bool IsBossModSafeOrUnknown(Vector3 position)
+    {
+        return !bossModSafety.TryIsPositionSafe(position, out var safe, out _) || safe;
     }
 
     private Positional ResolvePositionalIntent()

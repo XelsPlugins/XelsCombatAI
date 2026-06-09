@@ -35,6 +35,7 @@ var tests = new (string Name, Action Body)[]
     ("positionals suppress on AoE packs", PositionalsSuppressOnAoePacks),
     ("positional dash policy matches rear and flank", PositionalDashPolicyMatchesRearAndFlank),
     ("positional true north policy prefers reachable movement", PositionalTrueNorthPolicyPrefersReachableMovement),
+    ("positional true north policy samples safe partial arcs", PositionalTrueNorthPolicySamplesSafePartialArcs),
     ("positional true north policy rejects mismatched action", PositionalTrueNorthPolicyRejectsMismatchedAction),
     ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
     ("gap closer follows RSR auto target", GapCloserFollowsRsrAutoTarget),
@@ -437,6 +438,30 @@ static void PositionalTrueNorthPolicyPrefersReachableMovement()
     AssertFalse(
         PositionalTrueNorthPolicy.ShouldWalkInsteadOfTrueNorth(Positional.Rear, action, moveDistance: 12f, out _),
         "late rear movement should fall back to True North");
+}
+
+static void PositionalTrueNorthPolicySamplesSafePartialArcs()
+{
+    var playerPosition = new Vector3(3f, 0f, 0f);
+    var targetPosition = Vector3.Zero;
+    const float targetRotation = 0f;
+
+    AssertTrue(
+        PositionalTrueNorthPolicy.TryEstimateWalkDistance(
+            playerPosition,
+            playerHitboxRadius: 0f,
+            targetPosition,
+            targetHitboxRadius: 0f,
+            targetRotation,
+            Positional.Rear,
+            candidateAllowed: candidate => candidate.X > 1f,
+            out var moveDistance,
+            out var reason),
+        $"partially safe rear arc should still produce a walk candidate: {reason}");
+
+    AssertTrue(
+        moveDistance < 3f,
+        $"nearest safe rear edge should be weighed before True North; got {moveDistance:0.00}y");
 }
 
 static void PositionalTrueNorthPolicyRejectsMismatchedAction()

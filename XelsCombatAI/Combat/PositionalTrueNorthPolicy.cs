@@ -1,6 +1,6 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 using System.Numerics;
 
 namespace XelsCombatAI.Combat;
@@ -10,6 +10,9 @@ internal static class PositionalTrueNorthPolicy
     private const float EstimatedCombatMoveSpeed = 6f;
     private const float ArrivalBufferSeconds = 0.2f;
     private const float FallbackActionAheadSeconds = 0.35f;
+    private const float MinimumWalkRingOffset = 0.1f;
+    private const float DistinctCandidateRadius = 0.25f;
+    private const int PositionalArcSamples = 72;
 
     public static bool ShouldWalkInsteadOfTrueNorth(Positional requiredPositional, RsrGcdActionTimingSnapshot action, float moveDistance, out string reason)
     {
@@ -62,30 +65,124 @@ internal static class PositionalTrueNorthPolicy
         Positional requiredPositional,
         out float distance)
     {
+        return TryEstimateWalkDistance(
+            playerPosition,
+            playerHitboxRadius,
+            targetPosition,
+            targetHitboxRadius,
+            targetRotation,
+            requiredPositional,
+            candidateAllowed: null,
+            out distance,
+            out _);
+    }
+
+    public static bool TryEstimateWalkDistance(
+        Vector3 playerPosition,
+        float playerHitboxRadius,
+        Vector3 targetPosition,
+        float targetHitboxRadius,
+        float targetRotation,
+        Positional requiredPositional,
+        Func<Vector3, bool>? candidateAllowed,
+        out float distance,
+        out string reason)
+    {
         distance = 0f;
+        reason = string.Empty;
         if (!PositionalDashPolicy.IsActive(requiredPositional))
         {
+            reason = $"positional {requiredPositional} does not require movement";
             return false;
         }
 
-        var ringRadius = targetHitboxRadius + playerHitboxRadius + CombatConstants.MeleeActionRange;
-        var candidates = PositionalDashPolicy.EnumeratePreferredLandings(
+        var nearest = float.PositiveInfinity;
+        var blockedCandidates = 0;
+        foreach (var candidate in EnumerateWalkCandidates(
             playerPosition,
+            playerHitboxRadius,
             targetPosition,
+            targetHitboxRadius,
             targetRotation,
-            ringRadius,
-            requiredPositional);
-        var nearest = candidates
-            .Select(candidate => Geometry.Distance2D(playerPosition, candidate))
-            .DefaultIfEmpty(float.PositiveInfinity)
-            .Min();
+            requiredPositional))
+        {
+            if (candidateAllowed?.Invoke(candidate) == false)
+            {
+                blockedCandidates++;
+                continue;
+            }
+
+            nearest = MathF.Min(nearest, Geometry.Distance2D(playerPosition, candidate));
+        }
+
         if (!float.IsFinite(nearest))
         {
+            reason = blockedCandidates > 0
+                ? $"no allowed {requiredPositional} walk candidate"
+                : $"could not estimate walk distance for {requiredPositional}";
             return false;
         }
 
         distance = nearest;
         return true;
+    }
+
+    private static IEnumerable<Vector3> EnumerateWalkCandidates(
+        Vector3 playerPosition,
+        float playerHitboxRadius,
+        Vector3 targetPosition,
+        float targetHitboxRadius,
+        float targetRotation,
+        Positional positional)
+    {
+        var minRingRadius = MathF.Max(0f, targetHitboxRadius + playerHitboxRadius + MinimumWalkRingOffset);
+        var maxRingRadius = minRingRadius + CombatConstants.MeleeActionRange;
+        var currentRadius = Geometry.Distance2D(playerPosition, targetPosition);
+        var naturalRadius = Math.Clamp(currentRadius, minRingRadius, maxRingRadius);
+
+        foreach (var candidate in PositionalDashPolicy.EnumeratePreferredLandings(
+            playerPosition,
+            targetPosition,
+            targetRotation,
+            maxRingRadius,
+            positional))
+        {
+            yield return candidate;
+        }
+
+        foreach (var radius in EnumerateCandidateRadii(naturalRadius, maxRingRadius))
+        {
+            foreach (var candidate in EnumerateArcCandidates(playerPosition, targetPosition, targetRotation, radius, positional))
+            {
+                yield return candidate;
+            }
+        }
+    }
+
+    private static IEnumerable<float> EnumerateCandidateRadii(float naturalRadius, float maxRingRadius)
+    {
+        yield return naturalRadius;
+        if (MathF.Abs(naturalRadius - maxRingRadius) > DistinctCandidateRadius)
+        {
+            yield return maxRingRadius;
+        }
+    }
+
+    private static IEnumerable<Vector3> EnumerateArcCandidates(Vector3 playerPosition, Vector3 targetPosition, float targetRotation, float radius, Positional positional)
+    {
+        var forward = Geometry.RotationToDirection(targetRotation);
+        var right = new Vector3(forward.Z, 0f, -forward.X);
+        for (var i = 0; i < PositionalArcSamples; ++i)
+        {
+            var angle = MathF.Tau * i / PositionalArcSamples;
+            var direction = forward * MathF.Cos(angle) + right * MathF.Sin(angle);
+            var candidate = targetPosition + direction * radius;
+            candidate.Y = playerPosition.Y;
+            if (PositionalDashPolicy.IsSatisfied(positional, candidate, targetPosition, targetRotation))
+            {
+                yield return candidate;
+            }
+        }
     }
 
     internal static bool TryGetActionPositional(RsrGcdActionTimingSnapshot action, out Positional positional)
