@@ -460,6 +460,7 @@ internal sealed class DecisionOverlayController(
             !config.ManagePositionals ||
             trueNorthActive() ||
             target == null ||
+            !PositionalTargetPolicy.CanApplyPositionals(target, services.DataManager) ||
             JobRoles.GetRangeRole(player) != RangeRole.Melee)
         {
             return null;

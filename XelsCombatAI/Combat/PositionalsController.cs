@@ -305,9 +305,15 @@ internal sealed class PositionalsController(
 
         var player = services.ObjectTable.LocalPlayer;
         var target = services.TargetManager.Target;
-        if (player == null || target == null)
+        if (player == null || target is not IBattleChara battleTarget)
         {
             reason = "missing player or target";
+            return false;
+        }
+
+        if (!PositionalTargetPolicy.CanApplyPositionals(battleTarget, services.DataManager))
+        {
+            reason = "target ignores positionals";
             return false;
         }
 
@@ -318,7 +324,7 @@ internal sealed class PositionalsController(
         }
 
         source = action.Source;
-        if (action.PrimaryTargetId != 0 && action.PrimaryTargetId != target.GameObjectId)
+        if (action.PrimaryTargetId != 0 && action.PrimaryTargetId != battleTarget.GameObjectId)
         {
             reason = $"RSR next GCD {action.ActionName} targets 0x{action.PrimaryTargetId:X}, not current target";
             return false;
@@ -327,9 +333,9 @@ internal sealed class PositionalsController(
         if (!PositionalTrueNorthPolicy.TryEstimateWalkDistance(
             player.Position,
             player.HitboxRadius,
-            target.Position,
-            target.HitboxRadius,
-            target.Rotation,
+            battleTarget.Position,
+            battleTarget.HitboxRadius,
+            battleTarget.Rotation,
             positional,
             this.IsBossModSafeOrUnknown,
             out var moveDistance,
@@ -353,7 +359,8 @@ internal sealed class PositionalsController(
         if (!config.ManageMovement ||
             automatedMovementSuppressed() ||
             services.ObjectTable.LocalPlayer == null ||
-            services.TargetManager.Target is not IBattleChara target)
+            services.TargetManager.Target is not IBattleChara target ||
+            !PositionalTargetPolicy.CanApplyPositionals(target, services.DataManager))
         {
             this.ClearMovementIntent();
             return;
@@ -395,6 +402,12 @@ internal sealed class PositionalsController(
         }
 
         var target = services.TargetManager.Target;
+        if (!PositionalTargetPolicy.CanApplyPositionals(target as IBattleChara, services.DataManager))
+        {
+            reason = "target ignores positionals";
+            return false;
+        }
+
         if (action.PrimaryTargetId != 0 && action.PrimaryTargetId != target?.GameObjectId)
         {
             reason = $"RSR next GCD {action.ActionName} targets 0x{action.PrimaryTargetId:X}, not current target";
@@ -432,19 +445,24 @@ internal sealed class PositionalsController(
 
         var player = services.ObjectTable.LocalPlayer;
         var target = services.TargetManager.Target;
-        if (player == null || target == null)
+        if (player == null || target is not IBattleChara battleTarget)
         {
             return false;
         }
 
-        var toPlayer = player.Position - target.Position;
+        if (!PositionalTargetPolicy.CanApplyPositionals(battleTarget, services.DataManager))
+        {
+            return true;
+        }
+
+        var toPlayer = player.Position - battleTarget.Position;
         toPlayer.Y = 0;
         if (toPlayer.LengthSquared() <= 0.0001f)
         {
             return false;
         }
 
-        var frontDot = Vector3.Dot(Geometry.RotationToDirection(target.Rotation), Vector3.Normalize(toPlayer));
+        var frontDot = Vector3.Dot(Geometry.RotationToDirection(battleTarget.Rotation), Vector3.Normalize(toPlayer));
         return positional switch
         {
             Positional.Flank => Math.Abs(frontDot) < CombatConstants.PositionalDotThreshold,
@@ -513,8 +531,7 @@ internal sealed class PositionalsController(
             player.CurrentHp == 0 ||
             services.TargetManager.Target is not IBattleChara target ||
             target.GameObjectId != intent.TargetId ||
-            target.IsDead ||
-            target.CurrentHp == 0 ||
+            !PositionalTargetPolicy.CanApplyPositionals(target, services.DataManager) ||
             this.IsCurrentPositionalCorrect(intent.Positional))
         {
             return false;

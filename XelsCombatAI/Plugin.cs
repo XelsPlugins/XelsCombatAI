@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static ITargetManager TargetManager { get; set; } = null!;
     [PluginService] private static IPartyList PartyList { get; set; } = null!;
     [PluginService] private static IGameConfig GameConfig { get; set; } = null!;
+    [PluginService] private static IDataManager DataManager { get; set; } = null!;
     [PluginService] private static ITextureProvider TextureProvider { get; set; } = null!;
 
     private readonly Configuration config;
@@ -60,7 +61,8 @@ public sealed class Plugin : IDalamudPlugin
             ObjectTable,
             TargetManager,
             PartyList,
-            GameConfig);
+            GameConfig,
+            DataManager);
 
         this.config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         this.config.Migrate();
