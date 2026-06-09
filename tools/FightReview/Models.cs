@@ -57,9 +57,12 @@ internal sealed record XcaiFrame(
     float TargetRotation,
     float TargetRadius,
     float EngagementRange,
+    string TargetUptimeRangeSource,
+    string TargetUptimeRangeReason,
     bool AutomatedMovementSuppressed,
     string ManualMovementInput,
     FacingSnapshot Facing,
+    RedMageMeleeSnapshot RedMageMelee,
     string BossModActiveModule,
     string BossModActiveZoneModule,
     string AoeReason,
@@ -68,10 +71,14 @@ internal sealed record XcaiFrame(
     BossModSnapshot BossMod,
     MobilitySnapshot Mobility,
     MotionSnapshot Motion,
+    string PositionalIntentSource,
+    string TrueNorthDecisionSource,
+    string TrueNorthDecisionReason,
     int PackTargetCount,
     int CurrentHits,
     int BestHits,
     string ActionName,
+    string ActionSource,
     string ActionShape,
     IReadOnlyList<ActorSnapshot> Actors,
     JsonElement Raw);
@@ -84,6 +91,7 @@ internal sealed record FacingSnapshot(
     float? DeltaRadians,
     bool Applied,
     string RejectionReason,
+    string SafetySource,
     int ConsensusMembers)
 {
     public static FacingSnapshot Empty { get; } = new(
@@ -94,6 +102,26 @@ internal sealed record FacingSnapshot(
         null,
         false,
         "not logged",
+        "none",
+        0);
+}
+
+internal sealed record RedMageMeleeSnapshot(
+    bool Enabled,
+    string Mode,
+    string LastReason,
+    string NextActionName,
+    string NextActionSource,
+    uint NextActionId,
+    int AffectedTargets)
+{
+    public static RedMageMeleeSnapshot Empty { get; } = new(
+        false,
+        "inactive",
+        "not logged",
+        "<none>",
+        "none",
+        0,
         0);
 }
 
@@ -286,6 +314,7 @@ internal sealed record MobilitySnapshot(
     float SafetyGain,
     float UptimeGain,
     float PathGain,
+    string SafetySource,
     string SafetyReason,
     string UptimeReason,
     string PathReason,
@@ -302,6 +331,7 @@ internal sealed record MobilitySnapshot(
         0f,
         0f,
         0f,
+        "none",
         "not logged",
         "not logged",
         "not logged",

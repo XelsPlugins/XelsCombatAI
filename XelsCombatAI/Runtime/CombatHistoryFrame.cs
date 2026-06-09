@@ -29,9 +29,15 @@ internal sealed record CombatHistoryFrame(
     string? MovementRangeStrategy,
     string? SafetyBuffer,
     float TargetUptimeRange,
+    string TargetUptimeRangeSource,
+    string TargetUptimeRangeReason,
     BossModMechanicPressure MechanicPressure,
     // Positionals
     Positional LastPositional,
+    string PositionalIntentSource,
+    string PositionalIntentReason,
+    string TrueNorthDecisionSource,
+    string TrueNorthDecisionReason,
     bool TrueNorthActive,
     uint TrueNorthCharges,
     // Gap closers
@@ -59,6 +65,7 @@ internal sealed record CombatHistoryFrame(
     int BestHits,
     bool Injected,
     string ActionName,
+    string ActionSource,
     string Shape,
     Vector3? AoeCandidate,
     Vector3? AoePrimaryTarget,

@@ -99,8 +99,14 @@ internal sealed class CombatHistory
             MovementRangeStrategy: status.LastMovementRangeStrategy,
             SafetyBuffer: status.LastForbiddenZoneCushion,
             TargetUptimeRange: status.LastTargetUptimeRange,
+            TargetUptimeRangeSource: status.TargetUptimeRangeSource,
+            TargetUptimeRangeReason: status.TargetUptimeRangeReason,
             MechanicPressure: status.MechanicPressure,
             LastPositional: status.LastPositional,
+            PositionalIntentSource: status.PositionalIntentSource,
+            PositionalIntentReason: status.PositionalIntentReason,
+            TrueNorthDecisionSource: status.TrueNorthDecisionSource,
+            TrueNorthDecisionReason: status.TrueNorthDecisionReason,
             TrueNorthActive: status.TrueNorthActive,
             TrueNorthCharges: status.TrueNorthCharges,
             GapSafety: status.LastGapCloserSafety,
@@ -125,6 +131,7 @@ internal sealed class CombatHistory
             BestHits: aoe.BestHits,
             Injected: aoe.Injected,
             ActionName: aoe.ActionName,
+            ActionSource: aoe.ActionSource,
             Shape: aoe.Shape,
             AoeCandidate: aoe.Candidate,
             AoePrimaryTarget: aoe.PrimaryTarget,
@@ -190,6 +197,7 @@ internal sealed class CombatHistory
         sb.AppendLine();
         sb.AppendLine("[Header]");
         sb.AppendLine($"Job={this.PlayerClassJobId}  PickAoeTarget={config.PickBetterAoeTarget}  KeepTrashTarget={config.KeepTrashTargetSelected}  ManagePositionals={config.ManagePositionals}  ManageTrueNorth={config.ManageTrueNorth}  SocialTurning={config.ManageSocialTurning}  SocialSpacing={config.ManageSocialSpacing}  RedMageMelee={config.UseRedMageMeleeComboMovement}  CombatStyle={config.CombatStyle}  RsrSnapshot={this.lastSeenRsrSnapshotMode}");
+        sb.AppendLine($"SourceSummary={this.BuildSourceSummary().Format()}");
         sb.AppendLine();
         sb.AppendLine("[Frames]");
 
@@ -229,8 +237,14 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "BMRHints", frame.BossModHintSummary, prev?.BossModHintSummary);
             AppendIfChanged(sb, "SafetyBuffer", frame.SafetyBuffer, prev?.SafetyBuffer);
             AppendIfChanged(sb, "TargetUptime", $"{frame.TargetUptimeRange:0.0}", prev == null ? null : $"{prev.TargetUptimeRange:0.0}");
+            AppendIfChanged(sb, "TargetUptimeSource", frame.TargetUptimeRangeSource, prev?.TargetUptimeRangeSource);
+            AppendIfChanged(sb, "TargetUptimeReason", frame.TargetUptimeRangeReason, prev?.TargetUptimeRangeReason);
             AppendIfChanged(sb, "MechanicPressure", FormatMechanicPressure(frame.MechanicPressure), prev == null ? null : FormatMechanicPressure(prev.MechanicPressure));
             AppendIfChanged(sb, "Positional", frame.LastPositional, prev?.LastPositional);
+            AppendIfChanged(sb, "PositionalIntent", frame.PositionalIntentSource, prev?.PositionalIntentSource);
+            AppendIfChanged(sb, "PositionalReason", frame.PositionalIntentReason, prev?.PositionalIntentReason);
+            AppendIfChanged(sb, "TrueNorthDecision", frame.TrueNorthDecisionSource, prev?.TrueNorthDecisionSource);
+            AppendIfChanged(sb, "TrueNorthReason", frame.TrueNorthDecisionReason, prev?.TrueNorthDecisionReason);
             AppendIfChanged(sb, "TrueNorth", frame.TrueNorthActive, prev?.TrueNorthActive);
             AppendIfChanged(sb, "TNCharges", frame.TrueNorthCharges, prev?.TrueNorthCharges);
             AppendIfChanged(sb, "Gap", frame.GapSafety, prev?.GapSafety);
@@ -257,7 +271,7 @@ internal sealed class CombatHistory
                 AppendIfChanged(sb, "Hits", $"{frame.CurrentHits}/{frame.BestHits}", $"{prev?.CurrentHits}/{prev?.BestHits}");
             AppendIfChanged(sb, "Injected", frame.Injected, prev?.Injected);
             if (frame.ActionName != "<none>")
-                AppendIfChanged(sb, "Action", $"{frame.ActionName}({frame.Shape})", prev == null ? null : $"{prev.ActionName}({prev.Shape})");
+                AppendIfChanged(sb, "Action", $"{frame.ActionName}({frame.Shape}/{frame.ActionSource})", prev == null ? null : $"{prev.ActionName}({prev.Shape}/{prev.ActionSource})");
             AppendIfChanged(sb, "AoeCandidate", FormatVector(frame.AoeCandidate), prev == null ? null : FormatVector(prev.AoeCandidate));
             AppendIfChanged(sb, "AoePrimary", FormatVector(frame.AoePrimaryTarget), prev == null ? null : FormatVector(prev.AoePrimaryTarget));
             AppendIfChanged(sb, "AoeCandidateInjected", frame.AoeCandidateInjected, prev?.AoeCandidateInjected);
@@ -332,11 +346,13 @@ internal sealed class CombatHistory
                     BossModActiveModule: "<none>",
                     BossModActiveZoneModule: "<none>",
                     Config: CombatHistoryConfigSnapshot.From(config),
-                    RsrSnapshotMode: this.lastSeenRsrSnapshotMode.ToString()),
+                    RsrSnapshotMode: this.lastSeenRsrSnapshotMode.ToString(),
+                    SourceSummary: CombatHistorySourceSummary.Empty),
                 JsonOptions));
             return sb.ToString();
         }
 
+        var sourceSummary = this.BuildSourceSummary();
         var last = this.frames[(this.head + this.count - 1) % MaxFrames]!;
         sb.AppendLine(JsonSerializer.Serialize(
             new CombatHistoryJsonHeader(
@@ -356,7 +372,8 @@ internal sealed class CombatHistory
                 BossModActiveModule: this.BossModActiveModule,
                 BossModActiveZoneModule: this.BossModActiveZoneModule,
                 Config: CombatHistoryConfigSnapshot.From(config),
-                RsrSnapshotMode: this.lastSeenRsrSnapshotMode.ToString()),
+                RsrSnapshotMode: this.lastSeenRsrSnapshotMode.ToString(),
+                SourceSummary: sourceSummary),
             JsonOptions));
 
         CombatHistoryFrame? previous = null;
@@ -428,7 +445,7 @@ internal sealed class CombatHistory
 
     private static string FormatMobility(MobilityDecisionDiagnostics mobility)
     {
-        return $"{mobility.State}/{mobility.IntentLabel}/{mobility.ActionName}/{mobility.RiskReason}";
+        return $"{mobility.State}/{mobility.IntentLabel}/{mobility.ActionName}/{mobility.SafetySource}/{mobility.RiskReason}";
     }
 
     private static string FormatFacing(FacingStatus facing)
@@ -437,21 +454,21 @@ internal sealed class CombatHistory
         var rejection = string.IsNullOrEmpty(facing.RejectionReason)
             ? "<none>"
             : facing.RejectionReason;
-        return $"{source}/{facing.Reason}/applied={facing.Applied}/reject={rejection}/members={facing.ConsensusMembers}/desired={FormatNullableFloat(facing.DesiredRotation)}/current={FormatNullableFloat(facing.CurrentRotation)}/delta={FormatNullableFloat(facing.DeltaRadians)}";
+        return $"{source}/{facing.Reason}/applied={facing.Applied}/source={facing.SafetySource}/reject={rejection}/members={facing.ConsensusMembers}/desired={FormatNullableFloat(facing.DesiredRotation)}/current={FormatNullableFloat(facing.CurrentRotation)}/delta={FormatNullableFloat(facing.DeltaRadians)}";
     }
 
     private static string FormatRedMageMelee(RedMageMeleeComboStatus status)
     {
         var candidate = FormatVector(status.CandidateDestination);
         var landing = FormatVector(status.LastJumpLanding);
-        return $"enabled={status.Enabled}/mode={status.Mode}/reason={status.LastReason}/mana={status.WhiteMana}:{status.BlackMana}/stacks={status.ManaStacks}/next={status.NextActionName}({status.NextActionId})/targets={status.AffectedTargets}/candidate={candidate}/jump={landing}";
+        return $"enabled={status.Enabled}/mode={status.Mode}/reason={status.LastReason}/mana={status.WhiteMana}:{status.BlackMana}/stacks={status.ManaStacks}/next={status.NextActionName}({status.NextActionId}/{status.NextActionSource})/targets={status.AffectedTargets}/candidate={candidate}/jump={landing}";
     }
 
     private static string FormatMechanicPressure(BossModMechanicPressure pressure)
     {
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"{pressure.PrimaryPressure}/raidwide={FormatPressureTimer(pressure.BMRRaidwideIn)}/tankbuster={FormatPressureTimer(pressure.BMRTankbusterIn)}/knockback={FormatPressureTimer(pressure.BMRKnockbackIn)}/damage={FormatPressureTimer(pressure.BMRDamageIn)}/downtime={FormatPressureTimer(pressure.BMRDowntimeIn)}/vulnerable={FormatPressureTimer(pressure.BMRVulnerableIn)}/kbRecovery={pressure.KnockbackRecoveryActive}");
+            $"{pressure.PrimaryPressure}/module={pressure.BMRActiveModuleName ?? "<none>"}/raidwide={FormatPressureTimer(pressure.BMRRaidwideIn)}:{FormatPressureTimer(pressure.BMRRaidwideDamageIn)}/tankbuster={FormatPressureTimer(pressure.BMRTankbusterIn)}:{FormatPressureTimer(pressure.BMRTankbusterDamageIn)}/knockback={FormatPressureTimer(pressure.BMRKnockbackIn)}/damage={FormatPressureTimer(pressure.BMRDamageIn)}:{pressure.NextDamageType}/special={pressure.SpecialMode}@{FormatPressureTimer(pressure.BMRSpecialModeIn)}/downtime={FormatPressureTimer(pressure.BMRDowntimeIn)}/vulnerable={FormatPressureTimer(pressure.BMRVulnerableIn)}/timeline={FormatTimelineSummary(pressure.BMRTimelineDebug)}/kbRecovery={pressure.KnockbackRecoveryActive}");
     }
 
     private static string FormatPressureTimer(float value)
@@ -459,6 +476,184 @@ internal sealed class CombatHistory
         return float.IsFinite(value) && value < float.MaxValue / 2f
             ? value.ToString("0.0", CultureInfo.InvariantCulture)
             : "none";
+    }
+
+    private static string FormatTimelineSummary(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "<none>";
+        }
+
+        var firstSeparator = value.IndexOf('|', StringComparison.Ordinal);
+        return firstSeparator > 0
+            ? value[..firstSeparator].Trim()
+            : value.Trim();
+    }
+
+    private CombatHistorySourceSummary BuildSourceSummary()
+    {
+        var positionalRsr = 0;
+        var positionalNone = 0;
+        var aoeRsr = 0;
+        var aoeLocal = 0;
+        var mobilityChecked = 0;
+        var mobilityBmrIpc = 0;
+        var mobilityBmrReflection = 0;
+        var mobilityLocal = 0;
+        var facingChecked = 0;
+        var facingBmrIpc = 0;
+        var facingBmrReflection = 0;
+        var facingLocal = 0;
+        var redMageChecked = 0;
+        var redMageRsr = 0;
+        var redMageNone = 0;
+        var targetUptimeChecked = 0;
+        var targetUptimeRsr = 0;
+        var targetUptimeLocal = 0;
+        var targetUptimeNone = 0;
+        var trueNorthChecked = 0;
+        var trueNorthRsr = 0;
+        var trueNorthLocal = 0;
+        var trueNorthNone = 0;
+
+        for (var i = 0; i < this.count; i++)
+        {
+            var frame = this.frames[(this.head + i) % MaxFrames]!;
+            if (frame.PositionalIntentSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                positionalRsr++;
+            }
+            else
+            {
+                positionalNone++;
+            }
+
+            if (!frame.TrueNorthDecisionSource.Equals("none", StringComparison.Ordinal))
+            {
+                trueNorthChecked++;
+            }
+
+            if (frame.TrueNorthDecisionSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                trueNorthRsr++;
+            }
+            else if (frame.TrueNorthDecisionSource.Contains("local", StringComparison.Ordinal))
+            {
+                trueNorthLocal++;
+            }
+            else if (frame.TrueNorthDecisionSource.Equals("none", StringComparison.Ordinal))
+            {
+                trueNorthNone++;
+            }
+
+            if (frame.ActionSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                aoeRsr++;
+            }
+            else if (frame.ActionSource.Equals("local", StringComparison.Ordinal))
+            {
+                aoeLocal++;
+            }
+
+            if (!frame.MobilityDecision.SafetySource.Equals("none", StringComparison.Ordinal))
+            {
+                mobilityChecked++;
+            }
+
+            if (frame.MobilityDecision.SafetySource.Contains("BMR IPC", StringComparison.Ordinal))
+            {
+                mobilityBmrIpc++;
+            }
+
+            if (frame.MobilityDecision.SafetySource.Contains("BMR reflection fallback", StringComparison.Ordinal))
+            {
+                mobilityBmrReflection++;
+            }
+
+            if (frame.MobilityDecision.SafetySource.Contains("local", StringComparison.Ordinal))
+            {
+                mobilityLocal++;
+            }
+
+            if (!frame.Facing.SafetySource.Equals("none", StringComparison.Ordinal))
+            {
+                facingChecked++;
+            }
+
+            if (frame.Facing.SafetySource.Contains("BMR IPC", StringComparison.Ordinal))
+            {
+                facingBmrIpc++;
+            }
+
+            if (frame.Facing.SafetySource.Contains("BMR reflection fallback", StringComparison.Ordinal))
+            {
+                facingBmrReflection++;
+            }
+
+            if (frame.Facing.SafetySource.Contains("local", StringComparison.Ordinal))
+            {
+                facingLocal++;
+            }
+
+            if (!frame.RedMageMeleeCombo.NextActionSource.Equals("none", StringComparison.Ordinal))
+            {
+                redMageChecked++;
+            }
+
+            if (frame.RedMageMeleeCombo.NextActionSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                redMageRsr++;
+            }
+            else if (frame.RedMageMeleeCombo.NextActionSource.Equals("none", StringComparison.Ordinal))
+            {
+                redMageNone++;
+            }
+
+            if (!frame.TargetUptimeRangeSource.Equals("none", StringComparison.Ordinal))
+            {
+                targetUptimeChecked++;
+            }
+
+            if (frame.TargetUptimeRangeSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                targetUptimeRsr++;
+            }
+            else if (frame.TargetUptimeRangeSource.Contains("local", StringComparison.Ordinal))
+            {
+                targetUptimeLocal++;
+            }
+            else if (frame.TargetUptimeRangeSource.Equals("none", StringComparison.Ordinal))
+            {
+                targetUptimeNone++;
+            }
+        }
+
+        return new CombatHistorySourceSummary(
+            this.count,
+            positionalRsr,
+            positionalNone,
+            aoeRsr,
+            aoeLocal,
+            mobilityChecked,
+            mobilityBmrIpc,
+            mobilityBmrReflection,
+            mobilityLocal,
+            facingChecked,
+            facingBmrIpc,
+            facingBmrReflection,
+            facingLocal,
+            redMageChecked,
+            redMageRsr,
+            redMageNone,
+            targetUptimeChecked,
+            targetUptimeRsr,
+            targetUptimeLocal,
+            targetUptimeNone,
+            trueNorthChecked,
+            trueNorthRsr,
+            trueNorthLocal,
+            trueNorthNone);
     }
 
     private uint FirstNonZero(Func<CombatHistoryFrame, uint> selector)
@@ -507,7 +702,44 @@ internal sealed class CombatHistory
         string BossModActiveModule,
         string BossModActiveZoneModule,
         CombatHistoryConfigSnapshot Config,
-        string RsrSnapshotMode);
+        string RsrSnapshotMode,
+        CombatHistorySourceSummary SourceSummary);
+
+    private sealed record CombatHistorySourceSummary(
+        int FrameCount,
+        int PositionalRsrReflectedFrames,
+        int PositionalNoneFrames,
+        int AoeRsrReflectedFrames,
+        int AoeLocalFrames,
+        int MobilityCheckedFrames,
+        int MobilityBmrIpcFrames,
+        int MobilityBmrReflectionFallbackFrames,
+        int MobilityLocalFrames,
+        int FacingCheckedFrames,
+        int FacingBmrIpcFrames,
+        int FacingBmrReflectionFallbackFrames,
+        int FacingLocalFrames,
+        int RedMageCheckedFrames,
+        int RedMageRsrReflectedFrames,
+        int RedMageNoneFrames,
+        int TargetUptimeCheckedFrames,
+        int TargetUptimeRsrReflectedFrames,
+        int TargetUptimeLocalFrames,
+        int TargetUptimeNoneFrames,
+        int TrueNorthCheckedFrames,
+        int TrueNorthRsrReflectedFrames,
+        int TrueNorthLocalFrames,
+        int TrueNorthNoneFrames)
+    {
+        public static CombatHistorySourceSummary Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        public string Format()
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"frames={this.FrameCount}, positional=RSRReflect:{this.PositionalRsrReflectedFrames}/None:{this.PositionalNoneFrames}, trueNorth=RSRReflect:{this.TrueNorthRsrReflectedFrames}/Local:{this.TrueNorthLocalFrames}/None:{this.TrueNorthNoneFrames}/Checked:{this.TrueNorthCheckedFrames}, aoe=RSR:{this.AoeRsrReflectedFrames}/Local:{this.AoeLocalFrames}, mobility=BMRIPC:{this.MobilityBmrIpcFrames}/Local:{this.MobilityLocalFrames}/Checked:{this.MobilityCheckedFrames}, facing=BMRIPC:{this.FacingBmrIpcFrames}/BMRReflection:{this.FacingBmrReflectionFallbackFrames}/Local:{this.FacingLocalFrames}/Checked:{this.FacingCheckedFrames}, redMage=RSRReflect:{this.RedMageRsrReflectedFrames}/None:{this.RedMageNoneFrames}/Checked:{this.RedMageCheckedFrames}, targetUptime=RSRReflect:{this.TargetUptimeRsrReflectedFrames}/Local:{this.TargetUptimeLocalFrames}/None:{this.TargetUptimeNoneFrames}/Checked:{this.TargetUptimeCheckedFrames}");
+        }
+    }
 
     private sealed record CombatHistoryConfigSnapshot(
         bool PickAoeTarget,

@@ -132,6 +132,7 @@ internal static class ArtifactWriter
     {
         var sb = new StringBuilder();
         var uptime = UptimeScoring.Analyze(review.Xcai);
+        var sourceSummary = BuildSourceSummary(review.Xcai.Frames);
         sb.AppendLine("# Fight Review");
         sb.AppendLine();
         sb.AppendLine("Review premise: uptime is the primary positive signal: staying in usable target range gives RSR freedom to act, melee/tank ranged fallback is partial uptime, melee range is better, trash pack positions should hit more targets, and healer uptime is scored together with visible party heal coverage. BMR remains the safety authority. Normal profile BMR pressure is safety context; Greed profiles are expected to preserve uptime until BMR actually requires movement. Fight review still flags danger, downtime, unhuman-like movement, manual corrections, vnavmesh issues, and poor recovery.");
@@ -153,6 +154,16 @@ internal static class ArtifactWriter
         }
 
         var runScore = BuildRunScore(review, uptime);
+        sb.AppendLine();
+        sb.AppendLine("## Source Usage");
+        sb.AppendLine();
+        sb.AppendLine($"- Positionals: RSR reflected `{sourceSummary.PositionalRsrReflectedFrames}`, none `{sourceSummary.PositionalNoneFrames}`");
+        sb.AppendLine($"- True North decision source: RSR reflected `{sourceSummary.TrueNorthRsrReflectedFrames}`, local `{sourceSummary.TrueNorthLocalFrames}`, none `{sourceSummary.TrueNorthNoneFrames}`, checked `{sourceSummary.TrueNorthCheckedFrames}`");
+        sb.AppendLine($"- AoE action source: RSR reflected `{sourceSummary.AoeRsrReflectedFrames}`, local `{sourceSummary.AoeLocalFrames}`");
+        sb.AppendLine($"- Mobility safety source: BMR IPC `{sourceSummary.MobilityBmrIpcFrames}`, local `{sourceSummary.MobilityLocalFrames}`, checked `{sourceSummary.MobilityCheckedFrames}`");
+        sb.AppendLine($"- Facing safety source: BMR IPC `{sourceSummary.FacingBmrIpcFrames}`, BMR reflection fallback `{sourceSummary.FacingBmrReflectionFallbackFrames}`, local `{sourceSummary.FacingLocalFrames}`, checked `{sourceSummary.FacingCheckedFrames}`");
+        sb.AppendLine($"- Red Mage next action source: RSR reflected `{sourceSummary.RedMageRsrReflectedFrames}`, none `{sourceSummary.RedMageNoneFrames}`, checked `{sourceSummary.RedMageCheckedFrames}`");
+        sb.AppendLine($"- Target uptime range source: RSR reflected `{sourceSummary.TargetUptimeRsrReflectedFrames}`, local `{sourceSummary.TargetUptimeLocalFrames}`, none `{sourceSummary.TargetUptimeNoneFrames}`, checked `{sourceSummary.TargetUptimeCheckedFrames}`");
         sb.AppendLine();
         sb.AppendLine("## Run Score");
         sb.AppendLine();
@@ -232,6 +243,7 @@ internal static class ArtifactWriter
     {
         var uptime = UptimeScoring.Analyze(review.Xcai);
         var runScore = BuildRunScore(review, uptime);
+        var sourceSummary = BuildSourceSummary(review.Xcai.Frames);
         var categoryScores = review.Incidents
             .GroupBy(incident => incident.Category, StringComparer.Ordinal)
             .Select(group => new
@@ -290,6 +302,7 @@ internal static class ArtifactWriter
                 review.Xcai.Header.ContentFinderConditionId,
                 review.Xcai.Header.BossModActiveModule,
                 review.Xcai.Header.CombatStyle,
+                SourceSummary = sourceSummary,
                 MatchConfidence = review.Match.Confidence,
                 MatchEvidence = review.Match.Evidence
             },
@@ -876,12 +889,14 @@ function draw(){
   const mobilityRow = `<div>Dash: <code>${esc(mobility.State || 'NotChecked')}</code> ${esc(mobility.IntentLabel || 'none')} | ${esc(mobility.ActionName || '<none>')} | safety +${(mobility.SafetyGain ?? 0).toFixed(1)}y | uptime +${(mobility.UptimeGain ?? 0).toFixed(1)} | ${esc(mobility.RiskReason || 'not logged')}</div>`;
   const facing = frame?.Facing || {};
   const facingDelta = facing.DeltaRadians == null ? 'n/a' : `${(Math.abs(facing.DeltaRadians) * 180 / Math.PI).toFixed(0)}deg`;
-  const facingRow = `<div>Facing: <code>${esc(facing.Source || 'None')}</code> ${esc(facing.Reason || 'not logged')} | ${facing.Applied ? 'applied' : esc(facing.RejectionReason || 'not applied')} | delta ${facingDelta} | allies ${facing.ConsensusMembers ?? 0}</div>`;
+  const facingRow = `<div>Facing: <code>${esc(facing.Source || 'None')}</code> ${esc(facing.Reason || 'not logged')} | ${facing.Applied ? 'applied' : esc(facing.RejectionReason || 'not applied')} | source <code>${esc(facing.SafetySource || 'none')}</code> | delta ${facingDelta} | allies ${facing.ConsensusMembers ?? 0}</div>`;
+  const rdm = frame?.RedMageMelee || {};
+  const rdmRow = `<div>RDM melee: <code>${esc(rdm.Mode || 'inactive')}</code> ${esc(rdm.LastReason || 'not logged')} | next <code>${esc(rdm.NextActionName || '<none>')}</code> | source <code>${esc(rdm.NextActionSource || 'none')}</code></div>`;
   const tp = frame?.TrashPull || {};
   const trashRow = `<div>Trash pull: <code>${esc(tp.Phase || 'None')}</code> confidence ${(tp.Confidence ?? 0).toFixed(2)} | behind ${tp.BehindDistance?.toFixed?.(1) ?? 'n/a'}y | tank ${tp.TankSpeed?.toFixed?.(1) ?? '0.0'}y/s | pack ${tp.PackSpeed?.toFixed?.(1) ?? '0.0'}y/s</div><div>Tank lead: <code>${tp.LeadCandidateActive ? 'active' : esc(tp.LeadRejectionReason || 'inactive')}</code>${tp.LeadClampApplied ? ' | clamped behind tank' : ''}</div>`;
   const rm = frame?.Planner?.RouteMemory || {};
   const routeRow = `<div>Route memory: <code>${rm.Active ? esc(rm.Source || 'active') : esc(rm.State || 'inactive')}</code> | ${esc(rm.Reason || 'not logged')} | offset ${rm.OffsetSide ?? 0}:${(rm.OffsetDistance ?? 0).toFixed(1)}y | vnav <code>${esc(rm.VnavStatus || 'None')}</code> | budget ${rm.QueryBudgetUsed ?? 0}/${rm.QueryBudgetLimit ?? 0}</div>`;
-  document.getElementById('details').innerHTML = frame ? `<div class="detail"><h2>T+${frame.T.toFixed(2)}s</h2><div>Planner: <code>${esc(frame.Planner.ChosenSource)}</code> ${esc(frame.Planner.SwitchReason)}</div><div>Suppress: <code>${esc(frame.Planner.SuppressionReason)}</code></div><div>Manual: <code>${frame.AutomatedMovementSuppressed}</code> ${esc(frame.ManualMovementInput)}</div><div>Range: ${frame.Motion.TargetSurfaceDistance?.toFixed?.(1) ?? 'n/a'} | speed: ${frame.Motion.PlayerSpeed?.toFixed?.(1) ?? 'n/a'} | party: ${partySpeed?.toFixed?.(1) ?? 'n/a'}</div>${trashRow}${routeRow}${safetyRow}${losRow}${mobilityRow}${facingRow}<div>AoE hits: ${frame.CurrentHits}/${frame.BestHits} | pack: ${frame.PackTargetCount}</div><div>Action: <code>${esc(frame.ActionName || 'n/a')}</code> ${esc(frame.ActionShape || '')}</div><div>BMR: <code>${esc(frame.BossModActiveModule || frame.BossModActiveZoneModule || encounter?.Oid || 'none')}</code>${state ? ` | state: <code>${esc(state.Name)}</code>` : ''}</div><div>BMR avoid/move pressure: <code>${hasBmrPressure(frame) ? 'yes' : 'no'}</code> | forbidden: ${frame.BossMod?.ForbiddenZones ?? 0}/${frame.Planner?.BmrForbiddenZones ?? 0} | move: ${frame.Planner?.BmrMoveRequested || frame.Planner?.BmrMoveImminent ? 'yes' : 'no'}${greedNote}</div><div>Planner steer: <code>${esc(frame.BossMod?.PlannerSteer || 'not logged')}</code></div><div>Mechanic whisper: <code>${esc(frame.BossMod?.MechanicWhisper || 'not logged')}</code></div><h2>Nearby Mechanics</h2>${mechanicRows || '<div class="nearby-event">No aligned BMR cast/icon/tether within 5s.</div>'}</div>` : '';
+  document.getElementById('details').innerHTML = frame ? `<div class="detail"><h2>T+${frame.T.toFixed(2)}s</h2><div>Planner: <code>${esc(frame.Planner.ChosenSource)}</code> ${esc(frame.Planner.SwitchReason)}</div><div>Suppress: <code>${esc(frame.Planner.SuppressionReason)}</code></div><div>Manual: <code>${frame.AutomatedMovementSuppressed}</code> ${esc(frame.ManualMovementInput)}</div><div>Range: ${frame.Motion.TargetSurfaceDistance?.toFixed?.(1) ?? 'n/a'} | speed: ${frame.Motion.PlayerSpeed?.toFixed?.(1) ?? 'n/a'} | party: ${partySpeed?.toFixed?.(1) ?? 'n/a'} | uptime source <code>${esc(frame.TargetUptimeRangeSource || 'none')}</code> ${esc(frame.TargetUptimeRangeReason || '')}</div>${trashRow}${routeRow}${safetyRow}${losRow}${mobilityRow}${facingRow}${rdmRow}<div>AoE hits: ${frame.CurrentHits}/${frame.BestHits} | pack: ${frame.PackTargetCount}</div><div>Action: <code>${esc(frame.ActionName || 'n/a')}</code> ${esc(frame.ActionShape || '')}</div><div>BMR: <code>${esc(frame.BossModActiveModule || frame.BossModActiveZoneModule || encounter?.Oid || 'none')}</code>${state ? ` | state: <code>${esc(state.Name)}</code>` : ''}</div><div>BMR avoid/move pressure: <code>${hasBmrPressure(frame) ? 'yes' : 'no'}</code> | forbidden: ${frame.BossMod?.ForbiddenZones ?? 0}/${frame.Planner?.BmrForbiddenZones ?? 0} | move: ${frame.Planner?.BmrMoveRequested || frame.Planner?.BmrMoveImminent ? 'yes' : 'no'}${greedNote}</div><div>Planner steer: <code>${esc(frame.BossMod?.PlannerSteer || 'not logged')}</code></div><div>Mechanic whisper: <code>${esc(frame.BossMod?.MechanicWhisper || 'not logged')}</code></div><h2>Nearby Mechanics</h2>${mechanicRows || '<div class="nearby-event">No aligned BMR cast/icon/tether within 5s.</div>'}</div>` : '';
 }
 document.getElementById('incidents').innerHTML = incidents.map(i => `<div class="incident ${i.Severity}"><b>T+${i.T.toFixed(2)} ${i.Category}</b><br>${i.Evidence}<br><code>${i.SuggestedGoal}</code></div>`).join('');
 resize();
@@ -972,6 +987,170 @@ resize();
                 destinationChangesPerMinute,
                 manualCorrectionCount),
             BuildRunPenalties(safetyPenalty, efficiencyPenalty, humanPenalty, resourcePenalty, uptimeScore));
+    }
+
+    private static SourceUsageSummary BuildSourceSummary(IReadOnlyList<XcaiFrame> frames)
+    {
+        var positionalRsr = 0;
+        var positionalNone = 0;
+        var aoeRsr = 0;
+        var aoeLocal = 0;
+        var mobilityChecked = 0;
+        var mobilityBmrIpc = 0;
+        var mobilityBmrReflection = 0;
+        var mobilityLocal = 0;
+        var facingChecked = 0;
+        var facingBmrIpc = 0;
+        var facingBmrReflection = 0;
+        var facingLocal = 0;
+        var redMageChecked = 0;
+        var redMageRsr = 0;
+        var redMageNone = 0;
+        var targetUptimeChecked = 0;
+        var targetUptimeRsr = 0;
+        var targetUptimeLocal = 0;
+        var targetUptimeNone = 0;
+        var trueNorthChecked = 0;
+        var trueNorthRsr = 0;
+        var trueNorthLocal = 0;
+        var trueNorthNone = 0;
+
+        foreach (var frame in frames)
+        {
+            if (frame.PositionalIntentSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                positionalRsr++;
+            }
+            else if (frame.PositionalIntentSource.Equals("none", StringComparison.Ordinal))
+            {
+                positionalNone++;
+            }
+
+            if (!frame.TrueNorthDecisionSource.Equals("none", StringComparison.Ordinal))
+            {
+                trueNorthChecked++;
+            }
+
+            if (frame.TrueNorthDecisionSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                trueNorthRsr++;
+            }
+            else if (frame.TrueNorthDecisionSource.Contains("local", StringComparison.Ordinal))
+            {
+                trueNorthLocal++;
+            }
+            else if (frame.TrueNorthDecisionSource.Equals("none", StringComparison.Ordinal))
+            {
+                trueNorthNone++;
+            }
+
+            if (frame.ActionSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                aoeRsr++;
+            }
+            else if (frame.ActionSource.Equals("local", StringComparison.Ordinal))
+            {
+                aoeLocal++;
+            }
+
+            if (!frame.Mobility.SafetySource.Equals("none", StringComparison.Ordinal))
+            {
+                mobilityChecked++;
+            }
+
+            if (frame.Mobility.SafetySource.Contains("BMR IPC", StringComparison.Ordinal))
+            {
+                mobilityBmrIpc++;
+            }
+
+            if (frame.Mobility.SafetySource.Contains("BMR reflection fallback", StringComparison.Ordinal))
+            {
+                mobilityBmrReflection++;
+            }
+
+            if (frame.Mobility.SafetySource.Contains("local", StringComparison.Ordinal))
+            {
+                mobilityLocal++;
+            }
+
+            if (!frame.Facing.SafetySource.Equals("none", StringComparison.Ordinal))
+            {
+                facingChecked++;
+            }
+
+            if (frame.Facing.SafetySource.Contains("BMR IPC", StringComparison.Ordinal))
+            {
+                facingBmrIpc++;
+            }
+
+            if (frame.Facing.SafetySource.Contains("BMR reflection fallback", StringComparison.Ordinal))
+            {
+                facingBmrReflection++;
+            }
+
+            if (frame.Facing.SafetySource.Contains("local", StringComparison.Ordinal))
+            {
+                facingLocal++;
+            }
+
+            if (!frame.RedMageMelee.NextActionSource.Equals("none", StringComparison.Ordinal))
+            {
+                redMageChecked++;
+            }
+
+            if (frame.RedMageMelee.NextActionSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                redMageRsr++;
+            }
+            else if (frame.RedMageMelee.NextActionSource.Equals("none", StringComparison.Ordinal))
+            {
+                redMageNone++;
+            }
+
+            if (!frame.TargetUptimeRangeSource.Equals("none", StringComparison.Ordinal))
+            {
+                targetUptimeChecked++;
+            }
+
+            if (frame.TargetUptimeRangeSource.Equals("RSR reflected", StringComparison.Ordinal))
+            {
+                targetUptimeRsr++;
+            }
+            else if (frame.TargetUptimeRangeSource.Contains("local", StringComparison.Ordinal))
+            {
+                targetUptimeLocal++;
+            }
+            else if (frame.TargetUptimeRangeSource.Equals("none", StringComparison.Ordinal))
+            {
+                targetUptimeNone++;
+            }
+        }
+
+        return new SourceUsageSummary(
+            frames.Count,
+            positionalRsr,
+            positionalNone,
+            aoeRsr,
+            aoeLocal,
+            mobilityChecked,
+            mobilityBmrIpc,
+            mobilityBmrReflection,
+            mobilityLocal,
+            facingChecked,
+            facingBmrIpc,
+            facingBmrReflection,
+            facingLocal,
+            redMageChecked,
+            redMageRsr,
+            redMageNone,
+            targetUptimeChecked,
+            targetUptimeRsr,
+            targetUptimeLocal,
+            targetUptimeNone,
+            trueNorthChecked,
+            trueNorthRsr,
+            trueNorthLocal,
+            trueNorthNone);
     }
 
     private static IReadOnlyList<AgentRunPenalty> BuildRunPenalties(int safetyPenalty, int efficiencyPenalty, int humanPenalty, float resourcePenalty, float uptimeScore)
@@ -1302,6 +1481,32 @@ resize();
         string Interpretation,
         AgentRunMetrics Metrics,
         IReadOnlyList<AgentRunPenalty> Penalties);
+
+    private sealed record SourceUsageSummary(
+        int FrameCount,
+        int PositionalRsrReflectedFrames,
+        int PositionalNoneFrames,
+        int AoeRsrReflectedFrames,
+        int AoeLocalFrames,
+        int MobilityCheckedFrames,
+        int MobilityBmrIpcFrames,
+        int MobilityBmrReflectionFallbackFrames,
+        int MobilityLocalFrames,
+        int FacingCheckedFrames,
+        int FacingBmrIpcFrames,
+        int FacingBmrReflectionFallbackFrames,
+        int FacingLocalFrames,
+        int RedMageCheckedFrames,
+        int RedMageRsrReflectedFrames,
+        int RedMageNoneFrames,
+        int TargetUptimeCheckedFrames,
+        int TargetUptimeRsrReflectedFrames,
+        int TargetUptimeLocalFrames,
+        int TargetUptimeNoneFrames,
+        int TrueNorthCheckedFrames,
+        int TrueNorthRsrReflectedFrames,
+        int TrueNorthLocalFrames,
+        int TrueNorthNoneFrames);
 
     private sealed record AgentRunMetrics(
         float TotalSeconds,

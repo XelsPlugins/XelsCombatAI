@@ -27,6 +27,7 @@ internal sealed class CombatRuntime(
     PassageOfArmsPositioningController passageOfArmsPositioningController,
     HealerAoePositioningController healerAoePositioningController,
     SurvivabilityZonePositioningController survivabilityZonePositioningController,
+    PictomancerStarryMusePositioningController pictomancerStarryMusePositioningController,
     ArenaEdgePositioningController arenaEdgePositioningController,
     TankBehaviorController tankBehaviorController,
     RedMageMeleeComboController redMageMeleeComboController,
@@ -237,6 +238,7 @@ internal sealed class CombatRuntime(
         passageOfArmsPositioningController.Reset();
         healerAoePositioningController.Reset();
         survivabilityZonePositioningController.Reset();
+        pictomancerStarryMusePositioningController.Reset();
         tankBehaviorController.Reset();
         redMageMeleeComboController.Reset();
         if (resetBossModHook)
@@ -300,9 +302,15 @@ internal sealed class CombatRuntime(
             rotationSolverIpc.Diagnostics,
             rotationSolverActions.RedMageMeleeDiagnostics,
             presetController.LastPositional,
+            positionalsController.LastIntentSource,
+            positionalsController.LastIntentReason,
+            positionalsController.LastTrueNorthDecisionSource,
+            positionalsController.LastTrueNorthDecisionReason,
             positionalsController.GetTrueNorthCharges(),
             positionalsController.HasActiveTrueNorth(),
             presetController.LastTargetUptimeRange,
+            presetController.LastTargetUptimeRangeSource,
+            presetController.LastTargetUptimeRangeReason,
             presetController.LastMovement,
             presetController.LastMovementRangeStrategy,
             presetController.LastForbiddenZoneCushion,

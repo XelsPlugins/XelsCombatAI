@@ -481,7 +481,7 @@ internal sealed class EscapeGapCloserController(
         }
 
         var destination = player.Position + Geometry.RotationToDirection(player.Rotation) * CombatConstants.FixedForwardGapCloserRange;
-        if (!mobilityEvaluator.TryValidateDashDestination(
+        if (!mobilityEvaluator.TryValidateFixedDashDestination(
             player,
             destination,
             services.TargetManager.Target as IBattleChara,
@@ -493,6 +493,8 @@ internal sealed class EscapeGapCloserController(
             requireSafetyProgress: true,
             requireUptimeProgress: false,
             requireVnavReachable: true,
+            fixedDashRange: CombatConstants.FixedForwardGapCloserRange,
+            fixedDashBackwards: false,
             out var decision))
         {
             if (this.TryRequestFixedEscapeDashFacing(player, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, safeMovementDestination, backward: false))
@@ -531,7 +533,7 @@ internal sealed class EscapeGapCloserController(
         }
 
         var destination = player.Position - Geometry.RotationToDirection(player.Rotation) * backstepDistance;
-        if (!mobilityEvaluator.TryValidateDashDestination(
+        if (!mobilityEvaluator.TryValidateFixedDashDestination(
             player,
             destination,
             services.TargetManager.Target as IBattleChara,
@@ -543,6 +545,8 @@ internal sealed class EscapeGapCloserController(
             requireSafetyProgress: true,
             requireUptimeProgress: false,
             requireVnavReachable: true,
+            fixedDashRange: backstepDistance,
+            fixedDashBackwards: true,
             out var decision))
         {
             if (this.TryRequestFixedEscapeDashFacing(player, actionId, actionName, backstepDistance, safeMovementDestination, backward: true))
@@ -591,7 +595,7 @@ internal sealed class EscapeGapCloserController(
                     continue;
                 }
 
-                if (!mobilityEvaluator.TryValidateDashDestination(
+                if (!mobilityEvaluator.TryValidateTargetBackstepDashDestination(
                     player,
                     destination,
                     services.TargetManager.Target as IBattleChara,
@@ -603,6 +607,8 @@ internal sealed class EscapeGapCloserController(
                     requireSafetyProgress: true,
                     requireUptimeProgress: false,
                     requireVnavReachable: true,
+                    enemy.Position,
+                    backstepDistance,
                     out var decision))
                 {
                     this.lastEscapeGapCloserSafety = decision.RiskReason;
@@ -649,7 +655,7 @@ internal sealed class EscapeGapCloserController(
                 continue;
             }
 
-            if (!mobilityEvaluator.TryValidateDashDestination(
+            if (!mobilityEvaluator.TryValidateTargetBackstepDashDestination(
                 player,
                 destination,
                 services.TargetManager.Target as IBattleChara,
@@ -661,6 +667,8 @@ internal sealed class EscapeGapCloserController(
                 requireSafetyProgress: true,
                 requireUptimeProgress: false,
                 requireVnavReachable: true,
+                enemy.Position,
+                backstepDistance,
                 out var decision))
             {
                 this.lastEscapeGapCloserSafety = decision.RiskReason;

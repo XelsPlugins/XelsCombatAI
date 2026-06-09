@@ -20,6 +20,7 @@ internal sealed record RedMageMeleeComboStatus(
     byte BlackMana,
     byte ManaStacks,
     string NextActionName,
+    string NextActionSource,
     uint NextActionId,
     int AffectedTargets,
     Vector3? CandidateDestination,
@@ -64,6 +65,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
     private DateTime activeComboTrackUntilUtc = DateTime.MinValue;
     private Vector3? lastCandidateDestination;
     private Vector3? lastJumpLanding;
+    private string lastNextActionSource = "none";
     private RedMageMeleeComboStatus status = new(
         false,
         "inactive",
@@ -72,6 +74,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         0,
         0,
         "<none>",
+        "none",
         0,
         0,
         null,
@@ -115,6 +118,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         this.activeComboTrackUntilUtc = DateTime.MinValue;
         this.lastCandidateDestination = null;
         this.lastJumpLanding = null;
+        this.lastNextActionSource = "none";
         this.status = this.status with
         {
             Enabled = false,
@@ -233,6 +237,8 @@ internal sealed class RedMageMeleeComboController : IDisposable
                 "Corps-a-corps",
                 ActionUse.RedMageCorpsACorpsActionId,
                 requireUptimeProgress: true,
+                backdashEnemyPosition: null,
+                backdashRange: null,
                 out var validation))
         {
             this.UpdateStatus(decision, $"jump rejected: {validation.RiskReason}");
@@ -311,6 +317,8 @@ internal sealed class RedMageMeleeComboController : IDisposable
                 "Displacement",
                 ActionUse.RedMageDisplacementActionId,
                 requireUptimeProgress: false,
+                backdashEnemyPosition: target.Position,
+                backdashRange: DisplacementDistance,
                 out var validation))
         {
             if (IsTransientNavigationValidationFailure(validation.RiskReason))
@@ -367,12 +375,15 @@ internal sealed class RedMageMeleeComboController : IDisposable
         string actionName,
         uint actionId,
         bool requireUptimeProgress,
+        Vector3? backdashEnemyPosition,
+        float? backdashRange,
         out MobilityDecisionDiagnostics decision)
     {
         var safeMovementDestination = bossModSafety.TryGetSafeMovementIntent(player.Position, out var safeDestination, out _)
             ? safeDestination
             : (Vector3?)null;
-        if (!mobilityEvaluator.TryValidateDashDestination(
+        var valid = backdashEnemyPosition.HasValue && backdashRange.HasValue
+            ? mobilityEvaluator.TryValidateTargetBackstepDashDestination(
                 player,
                 destination,
                 target,
@@ -384,7 +395,23 @@ internal sealed class RedMageMeleeComboController : IDisposable
                 requireSafetyProgress: false,
                 requireUptimeProgress: requireUptimeProgress,
                 requireVnavReachable: false,
-                out decision))
+                backdashEnemyPosition.Value,
+                backdashRange.Value,
+                out decision)
+            : mobilityEvaluator.TryValidateDashDestination(
+                player,
+                destination,
+                target,
+                safeMovementDestination,
+                intent,
+                actionName,
+                actionId,
+                0f,
+                requireSafetyProgress: false,
+                requireUptimeProgress: requireUptimeProgress,
+                requireVnavReachable: false,
+                out decision);
+        if (!valid)
         {
             return false;
         }
@@ -491,6 +518,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         }
 
         var hasRsrAction = rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var nextAction, out var rsrReason);
+        this.lastNextActionSource = hasRsrAction ? nextAction!.Source : "none";
         if (!hasRsrAction && !string.Equals(rotationSolverActions.Status, "available", StringComparison.Ordinal))
         {
             if (this.TryBuildStayCloseDecision(player, target, currentSurface, whiteMana, blackMana, manaStacks, "<none>", 0, 0, $"RSR unavailable: {rsrReason}", out decision))
@@ -506,6 +534,10 @@ internal sealed class RedMageMeleeComboController : IDisposable
         var actionName = hasRsrAction ? nextAction!.ActionName : "<none>";
         var affectedTargets = hasRsrAction ? nextAction!.AffectedTargetCount : 0;
         var hasRsrMeleeIntent = rotationSolverActions.TryGetRedMageMeleeIntent(out var rsrMeleeIntent, out _);
+        if (hasRsrMeleeIntent && rsrMeleeIntent != null && !hasRsrAction)
+        {
+            this.lastNextActionSource = rsrMeleeIntent.Source;
+        }
         if (exitPending && currentSurface <= ExitAttemptMaxSurfaceRange)
         {
             decision = new(
@@ -812,6 +844,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         this.stayCloseUntilUtc = DateTime.MinValue;
         this.activeComboTrack = RedMageComboTrack.None;
         this.activeComboTrackUntilUtc = DateTime.MinValue;
+        this.lastNextActionSource = "none";
     }
 
     private void ClearStayCloseIfRanged(ulong targetObjectId, float currentSurface)
@@ -1136,6 +1169,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
             blackMana,
             manaStacks,
             nextActionName,
+            this.lastNextActionSource,
             nextActionId,
             affectedTargets,
             this.lastCandidateDestination,

@@ -46,15 +46,17 @@ internal sealed record FacingStatus(
     float? DeltaRadians,
     bool Applied,
     string RejectionReason,
+    string SafetySource,
     int ConsensusMembers)
 {
-    public static FacingStatus Empty { get; } = new(null, "not checked", null, null, null, false, "not checked", 0);
+    public static FacingStatus Empty { get; } = new(null, "not checked", null, null, null, false, "not checked", "none", 0);
 }
 
 internal sealed class FacingController(
     Configuration config,
     DalamudServices services,
     BossModIpc bossMod,
+    Func<BossModMechanicPressure> mechanicPressure,
     ManualMovementInputDetector manualMovement,
     LocalPlayerFacingActuator actuator)
 {
@@ -148,6 +150,7 @@ internal sealed class FacingController(
                 Source = FacingRequestSource.SocialTurning,
                 Reason = reason,
                 RejectionReason = reason,
+                SafetySource = "none",
                 ConsensusMembers = consensusMembers
             };
             return;
@@ -248,16 +251,16 @@ internal sealed class FacingController(
 
     private bool TryApplyRequest(FacingRequest request, DateTime now, bool suppressAutomatedMovement, BossModMovementDiagnostics bossModMovement)
     {
-        if (!this.CanApplyFacing(request, suppressAutomatedMovement, bossModMovement, out var rejectionReason))
+        if (!this.CanApplyFacing(request, suppressAutomatedMovement, bossModMovement, out var rejectionReason, out var safetySource))
         {
-            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, null, null, false, rejectionReason, this.stableSocialMembers);
+            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, null, null, false, rejectionReason, safetySource, this.stableSocialMembers);
             return false;
         }
 
         var player = services.ObjectTable.LocalPlayer;
         if (player == null)
         {
-            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, null, null, false, "missing player", this.stableSocialMembers);
+            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, null, null, false, "missing player", "local", this.stableSocialMembers);
             return false;
         }
 
@@ -266,21 +269,21 @@ internal sealed class FacingController(
         var absDelta = MathF.Abs(delta);
         if (absDelta <= request.ToleranceRadians)
         {
-            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, false, "within tolerance", this.stableSocialMembers);
+            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, false, "within tolerance", safetySource, this.stableSocialMembers);
             return true;
         }
 
         var correction = this.CalculateCorrection(request, delta, absDelta);
         if (MathF.Abs(correction) <= 0.001f)
         {
-            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, false, "correction too small", this.stableSocialMembers);
+            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, false, "correction too small", safetySource, this.stableSocialMembers);
             return true;
         }
 
         var nextRotation = Geometry.NormalizeRadians(currentRotation + correction);
         if (!actuator.TrySetRotation(player, nextRotation, out rejectionReason))
         {
-            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, false, rejectionReason, this.stableSocialMembers);
+            this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, false, rejectionReason, "local", this.stableSocialMembers);
             return false;
         }
 
@@ -289,7 +292,7 @@ internal sealed class FacingController(
             this.nextSocialCorrection = now.Add(SocialCorrectionCooldown);
         }
 
-        this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, true, string.Empty, this.stableSocialMembers);
+        this.Status = new FacingStatus(request.Source, request.Reason, request.DesiredRotation, currentRotation, delta, true, string.Empty, safetySource, this.stableSocialMembers);
         return true;
     }
 
@@ -309,9 +312,10 @@ internal sealed class FacingController(
         return MathF.CopySign(MathF.Min(absDelta, request.MaxCorrectionRadians), delta);
     }
 
-    private bool CanApplyFacing(FacingRequest request, bool suppressAutomatedMovement, BossModMovementDiagnostics bossModMovement, out string reason)
+    private bool CanApplyFacing(FacingRequest request, bool suppressAutomatedMovement, BossModMovementDiagnostics bossModMovement, out string reason, out string safetySource)
     {
         reason = string.Empty;
+        safetySource = "local";
 
         if (!config.Enabled)
         {
@@ -368,7 +372,7 @@ internal sealed class FacingController(
             return false;
         }
 
-        if (this.HasBossModSafetyPressure(request, bossModMovement, out reason))
+        if (this.HasBossModSafetyPressure(request, bossModMovement, out reason, out safetySource))
         {
             return false;
         }
@@ -377,12 +381,37 @@ internal sealed class FacingController(
         return true;
     }
 
-    private bool HasBossModSafetyPressure(FacingRequest request, BossModMovementDiagnostics bossModMovement, out string reason)
+    private bool HasBossModSafetyPressure(FacingRequest request, BossModMovementDiagnostics bossModMovement, out string reason, out string safetySource)
     {
+        safetySource = "local";
+        var pressure = mechanicPressure();
+        if (IsBlockingSpecialMode(pressure))
+        {
+            reason = FormatBossModSpecialModeReason(pressure);
+            safetySource = "BMR IPC";
+            return true;
+        }
+
         if (IsBlockingSpecialMode(bossModMovement.HintDetails.ImminentSpecialMode))
         {
-            reason = $"BossMod special mode active: {bossModMovement.HintDetails.ImminentSpecialMode}";
+            reason = $"BossMod reflected special mode active: {bossModMovement.HintDetails.ImminentSpecialMode}";
+            safetySource = "BMR reflection fallback";
             return true;
+        }
+
+        var player = services.ObjectTable.LocalPlayer;
+        if (player != null &&
+            this.TryGetBossModIpcMovementDirection(player.Position, out var ipcDirection, out _))
+        {
+            if (!this.CanAssistBossModMovementDirection(request, player.Position, ipcDirection, out reason))
+            {
+                safetySource = "BMR IPC";
+                return true;
+            }
+
+            reason = string.Empty;
+            safetySource = "BMR IPC";
+            return false;
         }
 
         var activeBossModMovement =
@@ -396,13 +425,41 @@ internal sealed class FacingController(
         if (activeBossModMovement &&
             !this.CanAssistBossModMovement(request, bossModMovement, out reason))
         {
+            safetySource = "BMR reflection fallback";
             return true;
         }
 
         if (activeBossModMovement)
         {
             reason = string.Empty;
+            safetySource = "BMR reflection fallback";
             return false;
+        }
+
+        if (bossMod.TryGetForbiddenDirectionCount(out var ipcForbiddenDirections, out _) &&
+            ipcForbiddenDirections > 0)
+        {
+            if (!CanAssistPassiveBossModPressure(request))
+            {
+                reason = "BossMod forbidden direction active";
+                safetySource = "BMR IPC";
+                return true;
+            }
+
+            safetySource = "BMR IPC";
+        }
+
+        if (bossMod.TryGetForbiddenZoneCount(out var ipcForbiddenZones, out _) &&
+            ipcForbiddenZones > 0)
+        {
+            if (!CanAssistPassiveBossModPressure(request))
+            {
+                reason = "BossMod danger zone active";
+                safetySource = "BMR IPC";
+                return true;
+            }
+
+            safetySource = "BMR IPC";
         }
 
         if (bossModMovement.HintDetails.ForbiddenDirections.GetValueOrDefault() > 0)
@@ -410,8 +467,11 @@ internal sealed class FacingController(
             if (!CanAssistPassiveBossModPressure(request))
             {
                 reason = "BossMod forbidden direction active";
+                safetySource = "BMR reflection fallback";
                 return true;
             }
+
+            safetySource = "BMR reflection fallback";
         }
 
         if (bossModMovement.HintDetails.ForbiddenZones.GetValueOrDefault() > 0)
@@ -419,8 +479,11 @@ internal sealed class FacingController(
             if (!CanAssistPassiveBossModPressure(request))
             {
                 reason = "BossMod danger zone active";
+                safetySource = "BMR reflection fallback";
                 return true;
             }
+
+            safetySource = "BMR reflection fallback";
         }
 
         reason = string.Empty;
@@ -454,6 +517,23 @@ internal sealed class FacingController(
             return false;
         }
 
+        return this.CanAssistBossModMovementDirection(request, player.Position, bossModDirection, out reason);
+    }
+
+    private bool CanAssistBossModMovementDirection(FacingRequest request, Vector3 playerPosition, Vector2 bossModDirection, out string reason)
+    {
+        if (request.BossModPolicy != FacingBossModPolicy.AssistBmrMovementDash)
+        {
+            reason = "BossMod movement active";
+            return false;
+        }
+
+        if (!TryGetHorizontalDirection(playerPosition, request.DashDestination, out var dashDirection))
+        {
+            reason = "dash direction unavailable";
+            return false;
+        }
+
         var dot = Vector2.Dot(dashDirection, bossModDirection);
         if (dot < BmrAssistDirectionDot)
         {
@@ -464,7 +544,7 @@ internal sealed class FacingController(
         var dashDestination = request.DashDestination.GetValueOrDefault();
         if (request.AssistDestination.HasValue)
         {
-            var currentDistance = Geometry.Distance2D(player.Position, request.AssistDestination.Value);
+            var currentDistance = Geometry.Distance2D(playerPosition, request.AssistDestination.Value);
             var landingDistance = Geometry.Distance2D(dashDestination, request.AssistDestination.Value);
             if (currentDistance - landingDistance < BmrAssistMinimumDestinationGain)
             {
@@ -481,6 +561,25 @@ internal sealed class FacingController(
     {
         return request.DashDestination.HasValue &&
                request.BossModPolicy is FacingBossModPolicy.AssistValidatedDash or FacingBossModPolicy.AssistBmrMovementDash;
+    }
+
+    private bool TryGetBossModIpcMovementDirection(Vector3 playerPosition, out Vector2 direction, out string reason)
+    {
+        if (!bossMod.TryGetNavigationTarget(out var target, out reason))
+        {
+            direction = default;
+            return false;
+        }
+
+        var destination = new Vector3(target.X, playerPosition.Y, target.Z);
+        if (!TryGetHorizontalDirection(playerPosition, destination, out direction))
+        {
+            reason = $"{reason}; BMR IPC navigation target direction unavailable";
+            return false;
+        }
+
+        reason = $"{reason}; BMR IPC navigation target";
+        return true;
     }
 
     private static bool TryGetBossModMovementDirection(Vector3 playerPosition, BossModMovementDiagnostics bossModMovement, out Vector2 direction, out string reason)
@@ -758,6 +857,25 @@ internal sealed class FacingController(
                value.Contains("NoMovement", StringComparison.Ordinal) ||
                value.Contains("Freezing", StringComparison.Ordinal) ||
                value.Contains("Misdirection", StringComparison.Ordinal);
+    }
+
+    private static bool IsBlockingSpecialMode(BossModMechanicPressure pressure)
+    {
+        return pressure.MovementLockSoon ||
+               pressure.FreezingSoon ||
+               pressure.MisdirectionActive;
+    }
+
+    private static string FormatBossModSpecialModeReason(BossModMechanicPressure pressure)
+    {
+        return pressure.PrimaryPressure switch
+        {
+            BossModMechanicPressureKind.Pyretic => string.Create(CultureInfo.InvariantCulture, $"BossMod IPC pyretic in {pressure.BMRSpecialModeIn:0.0}s"),
+            BossModMechanicPressureKind.NoMovement => string.Create(CultureInfo.InvariantCulture, $"BossMod IPC no-movement in {pressure.BMRSpecialModeIn:0.0}s"),
+            BossModMechanicPressureKind.Freezing => string.Create(CultureInfo.InvariantCulture, $"BossMod IPC freezing movement check in {pressure.BMRSpecialModeIn:0.0}s"),
+            BossModMechanicPressureKind.Misdirection => "BossMod IPC misdirection active",
+            _ => string.Create(CultureInfo.InvariantCulture, $"BossMod IPC special mode {pressure.SpecialMode} in {pressure.BMRSpecialModeIn:0.0}s")
+        };
     }
 
     private static bool IsFiniteTimelineValue(float value)

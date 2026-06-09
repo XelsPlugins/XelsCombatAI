@@ -20,6 +20,7 @@ internal sealed record RsrAoeActionSnapshot(
     uint ActionId,
     uint AdjustedActionId,
     string ActionName,
+    string Source,
     RsrAoeShape Shape,
     float Range,
     float EffectRange,
@@ -41,6 +42,7 @@ internal sealed record RsrGcdActionTimingSnapshot(
     uint ActionId,
     uint AdjustedActionId,
     string ActionName,
+    string Source,
     ulong PrimaryTargetId,
     float GcdRemaining,
     float GcdElapsed,
@@ -59,16 +61,19 @@ internal sealed record RsrRedMageMeleeIntent(
     RsrRedMageMeleeTrack Track,
     uint ActionId,
     string ActionName,
+    string Source,
     int AffectedTargets,
     string Reason,
     bool SuppressLocalFallback);
 
-internal sealed class RotationSolverActionReflection(IDalamudPluginInterface pluginInterface, IPluginLog log)
+internal sealed class RotationSolverActionReflection(IDalamudPluginInterface pluginInterface, IPluginLog log) : IDisposable
 {
     private const string ActionUpdaterTypeName = "RotationSolver.Updaters.ActionUpdater";
     private const string DataCenterTypeName = "RotationSolver.Basic.DataCenter";
     private const string RebornRedMageRotationName = "RotationSolver.RebornRotations.Magical.RDM_Reborn";
     private const string BeirutaRedMageRotationName = "RotationSolver.ExtraRotations.Magical.BeirutaRDM";
+    private const string ReflectedIpcMigrationContract = "NeedsIPC=NextGCDAction.ID,AdjustedID,Action,Target,PreviewTarget,TargetInfo,Config,Setting; DataCenter.DefaultGCDRemain,DefaultGCDElapsed,DefaultGCDTotal,CalculatedActionAhead,CurrentRotation";
+    private const string ReflectedActionSource = "RSR reflected";
     private static readonly TimeSpan LoadedCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ContractProbeInterval = TimeSpan.FromSeconds(5);
 
@@ -86,21 +91,36 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
     private string status = "unresolved";
     private string redMageMeleeDiagnostics = "not checked";
     private string lastRedMageMeleeQuery = "not checked";
+    private uint lastReflectedNextGcdAdjustedId;
+    private DateTime lastReflectedNextGcdReadUtc = DateTime.MinValue;
 
     public string Status => this.status;
-    public string Diagnostics => string.Join(
-        "; ",
-        $"Status={this.status}",
-        $"ActionUpdaterType={this.actionUpdaterType != null}",
-        $"NextGCDActionProperty={this.nextGcdActionProperty != null}",
-        $"DataCenterType={this.dataCenterType != null}",
-        $"CurrentRotationProperty={this.currentRotationProperty != null}",
-        $"DefaultGCDRemainProperty={this.defaultGcdRemainProperty != null}",
-        $"DefaultGCDElapsedProperty={this.defaultGcdElapsedProperty != null}",
-        $"DefaultGCDTotalProperty={this.defaultGcdTotalProperty != null}",
-        $"CalculatedActionAheadProperty={this.calculatedActionAheadProperty != null}",
-        $"NextResolveUtc={this.nextResolveAttempt:O}");
+    public string Diagnostics
+    {
+        get
+        {
+            return string.Join(
+                "; ",
+                $"Status={this.status}",
+                $"ActionUpdaterType={this.actionUpdaterType != null}",
+                $"NextGCDActionProperty={this.nextGcdActionProperty != null}",
+                $"DataCenterType={this.dataCenterType != null}",
+                $"CurrentRotationProperty={this.currentRotationProperty != null}",
+                $"DefaultGCDRemainProperty={this.defaultGcdRemainProperty != null}",
+                $"DefaultGCDElapsedProperty={this.defaultGcdElapsedProperty != null}",
+                $"DefaultGCDTotalProperty={this.defaultGcdTotalProperty != null}",
+                $"CalculatedActionAheadProperty={this.calculatedActionAheadProperty != null}",
+                $"LastReflectedNextGCDAdjustedId={this.lastReflectedNextGcdAdjustedId}",
+                $"LastReflectedNextGCDReadUtc={FormatTimestamp(this.lastReflectedNextGcdReadUtc)}",
+                ReflectedIpcMigrationContract,
+                $"NextResolveUtc={this.nextResolveAttempt:O}");
+        }
+    }
     public string RedMageMeleeDiagnostics => this.GetRedMageMeleeDiagnostics();
+
+    public void Dispose()
+    {
+    }
 
     public void Reset()
     {
@@ -118,6 +138,17 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
         this.status = "unresolved";
         this.redMageMeleeDiagnostics = "not checked";
         this.lastRedMageMeleeQuery = "not checked";
+    }
+
+    private void RecordReflectedNextGcdAdjustedId(uint adjustedId)
+    {
+        this.lastReflectedNextGcdAdjustedId = adjustedId;
+        this.lastReflectedNextGcdReadUtc = DateTime.UtcNow;
+    }
+
+    private static string FormatTimestamp(DateTime timestamp)
+    {
+        return timestamp == DateTime.MinValue ? "<none>" : timestamp.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     public bool TryGetUpcomingGcdTiming([NotNullWhen(true)] out RsrGcdActionTimingSnapshot? snapshot, out string reason)
@@ -157,6 +188,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             var actionRow = GetPropertyValue(action, actionType, "Action");
             var actionId = Convert.ToUInt32(GetPropertyValue(action, actionType, "ID") ?? 0u);
             var adjustedId = Convert.ToUInt32(GetPropertyValue(action, actionType, "AdjustedID") ?? actionId);
+            this.RecordReflectedNextGcdAdjustedId(adjustedId);
             var name = actionRow != null
                 ? GetPropertyValue(actionRow, actionRow.GetType(), "Name")?.ToString() ?? adjustedId.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 : adjustedId.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -169,12 +201,13 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
                 actionId,
                 adjustedId,
                 name,
+                ReflectedActionSource,
                 primaryId,
                 gcdRemaining,
                 gcdElapsed,
                 gcdTotal,
                 gcdActionAhead);
-            reason = "available";
+            reason = "RSR reflected next GCD timing available";
             return true;
         }
         catch (Exception ex)
@@ -260,6 +293,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             var isFriendly = setting != null && Convert.ToBoolean(GetPropertyValue(setting, setting.GetType(), "IsFriendly") ?? false);
             var actionId = Convert.ToUInt32(GetPropertyValue(action, actionType, "ID") ?? 0u);
             var adjustedId = Convert.ToUInt32(GetPropertyValue(action, actionType, "AdjustedID") ?? actionId);
+            this.RecordReflectedNextGcdAdjustedId(adjustedId);
             var name = GetPropertyValue(actionRow, actionRow.GetType(), "Name")?.ToString() ?? adjustedId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var gcdRemaining = ReadStaticFloat(this.defaultGcdRemainProperty, -1f);
             var gcdElapsed = ReadStaticFloat(this.defaultGcdElapsedProperty, -1f);
@@ -320,6 +354,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
                 actionId,
                 adjustedId,
                 name,
+                ReflectedActionSource,
                 (RsrAoeShape)resolvedCastType,
                 Math.Max(1f, resolvedRange),
                 Math.Max(1f, effectRange),
@@ -336,7 +371,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
                 gcdElapsed,
                 gcdTotal,
                 gcdActionAhead);
-            reason = "available";
+            reason = "RSR reflected next GCD action available";
             return true;
         }
         catch (Exception ex)
@@ -935,7 +970,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
 
     private static RsrRedMageMeleeIntent NoRedMageIntent(string rotationName, string reason)
     {
-        return new(rotationName, RsrRedMageMeleeTrack.None, 0, "<none>", 0, reason, true);
+        return new(rotationName, RsrRedMageMeleeTrack.None, 0, "<none>", ReflectedActionSource, 0, reason, true);
     }
 
     private static RsrRedMageMeleeIntent CreateRedMageMeleeIntent(
@@ -952,6 +987,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
             track,
             actionId,
             GetRedMageMeleeActionName(actionId),
+            ReflectedActionSource,
             affectedTargets,
             reason,
             true);

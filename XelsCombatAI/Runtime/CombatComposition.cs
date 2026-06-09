@@ -8,16 +8,20 @@ namespace XelsCombatAI.Runtime;
 
 internal sealed class CombatComposition : IDisposable
 {
-    private CombatComposition(CombatRuntime runtime, DecisionOverlayController decisionOverlay, JobRangeProvider jobRangeProvider)
+    private CombatComposition(CombatRuntime runtime, DecisionOverlayController decisionOverlay, JobRangeProvider jobRangeProvider, RotationSolverActionReflection rotationSolverActions, PictomancerStarryMusePositioningController pictomancerStarryMusePositioningController)
     {
         this.Runtime = runtime;
         this.DecisionOverlay = decisionOverlay;
         this.JobRangeProvider = jobRangeProvider;
+        this.RotationSolverActions = rotationSolverActions;
+        this.PictomancerStarryMusePositioningController = pictomancerStarryMusePositioningController;
     }
 
     public CombatRuntime Runtime { get; }
     public DecisionOverlayController DecisionOverlay { get; }
     public JobRangeProvider JobRangeProvider { get; }
+    private RotationSolverActionReflection RotationSolverActions { get; }
+    private PictomancerStarryMusePositioningController PictomancerStarryMusePositioningController { get; }
 
     public static CombatComposition Create(
         Configuration config,
@@ -32,15 +36,14 @@ internal sealed class CombatComposition : IDisposable
         var bossModGate = new BossModRuntimeGate();
         var bossMod = new BossModIpc(pluginInterface, log, bossModGate);
         var mechanicPressure = new BossModMechanicPressureMonitor();
-        var avarice = new AvariceIpc(pluginInterface, log);
-        var bossModSafety = new BossModReflectionSafety(pluginInterface, log, bossModGate);
+        var bossModSafety = new BossModReflectionSafety(pluginInterface, log, bossModGate, bossMod);
         var vnavmesh = new VNavmeshIpc(pluginInterface);
         var manualMovement = new ManualMovementInputDetector();
         var autoFaceTargetOptionController = new AutoFaceTargetOptionController(config, services);
         var manualCorrectionFeedback = new ManualCorrectionFeedback();
         var rotationSolver = new RotationSolverIpc(pluginInterface, log);
         var rotationSolverActions = new RotationSolverActionReflection(pluginInterface, log);
-        var dependencyChecker = new DependencyChecker(config, services, bossMod, avarice, rotationSolver);
+        var dependencyChecker = new DependencyChecker(config, services, bossMod, rotationSolver);
         var jobRangeProvider = new JobRangeProvider(services);
         jobRangeProvider.Initialize();
         var targetUptimePlanner = new TargetUptimePlanner(services, bossMod, jobRangeProvider, rotationSolverActions);
@@ -49,7 +52,7 @@ internal sealed class CombatComposition : IDisposable
         var mobilityDecisionEvaluator = new MobilityDecisionEvaluator(bossModSafety, vnavmesh, jobRangeProvider);
         var arenaEdgePositioningController = new ArenaEdgePositioningController(config, services);
         var dashStyleController = new DashStyleController(config, jobRangeProvider, arenaEdgePositioningController);
-        var facingController = new FacingController(config, services, bossMod, manualMovement, new LocalPlayerFacingActuator());
+        var facingController = new FacingController(config, services, bossMod, () => mechanicPressure.Current, manualMovement, new LocalPlayerFacingActuator());
         var redMageMeleeComboController = new RedMageMeleeComboController(config, services, rotationSolverActions, bossModSafety, mobilityDecisionEvaluator, facingController, () => targetUptimePlanner.CurrentTargetHasBossModule());
         var aoePackPositioningController = new AoePackPositioningController(config, services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), jobRangeProvider, () => mechanicPressure.Current);
         targetUptimePlanner.TargetUptimeRangeOverride = () =>
@@ -59,10 +62,11 @@ internal sealed class CombatComposition : IDisposable
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
         var healerAoePositioningController = new HealerAoePositioningController(config, services, bossMod, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), mobilityDecisionEvaluator, facingController, () => mechanicPressure.Current);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
+        var pictomancerStarryMusePositioningController = new PictomancerStarryMusePositioningController(config, services, rotationSolverActions, mobilityDecisionEvaluator, facingController, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
         var bossCenterAvoidanceController = new BossCenterAvoidanceController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
         var socialSpacingPositioningController = new SocialSpacingPositioningController(config, services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true);
         var tankBehaviorController = new TankBehaviorController(config, services, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
-        IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController, tankBehaviorController];
+        IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, pictomancerStarryMusePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController, tankBehaviorController];
         var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, legacyMovementContributors, manualCorrectionFeedback);
         var gapCloserController = new GapCloserController(
             config,
@@ -100,6 +104,7 @@ internal sealed class CombatComposition : IDisposable
             gapCloserController,
             escapeGapCloserController,
             redMageMeleeComboController,
+            pictomancerStarryMusePositioningController,
             () => mechanicPressure.Current);
 
         runtime = new CombatRuntime(
@@ -119,6 +124,7 @@ internal sealed class CombatComposition : IDisposable
             passageOfArmsPositioningController,
             healerAoePositioningController,
             survivabilityZonePositioningController,
+            pictomancerStarryMusePositioningController,
             arenaEdgePositioningController,
             tankBehaviorController,
             redMageMeleeComboController,
@@ -143,6 +149,7 @@ internal sealed class CombatComposition : IDisposable
             passageOfArmsPositioningController,
             healerAoePositioningController,
             survivabilityZonePositioningController,
+            pictomancerStarryMusePositioningController,
             bossModSafety,
             mobilityDecisionEvaluator,
             gapCloserController,
@@ -150,11 +157,13 @@ internal sealed class CombatComposition : IDisposable
             redMageMeleeComboController,
             rotationSolverActions);
 
-        return new CombatComposition(runtime, decisionOverlay, jobRangeProvider);
+        return new CombatComposition(runtime, decisionOverlay, jobRangeProvider, rotationSolverActions, pictomancerStarryMusePositioningController);
     }
 
     public void Dispose()
     {
         this.JobRangeProvider.Dispose();
+        this.RotationSolverActions.Dispose();
+        this.PictomancerStarryMusePositioningController.Dispose();
     }
 }

@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Numerics;
-using ECommons.EzSharedDataManager;
 using FFXIVClientStructs.FFXIV.Client.Game;
 
 namespace XelsCombatAI.Combat;
@@ -18,11 +17,19 @@ internal sealed class PositionalsController(
     private bool? trueNorthStrategy;
 
     public bool? RsrTrueNorthDisabled { get; private set; }
+    public string LastIntentSource { get; private set; } = "none";
+    public string LastIntentReason { get; private set; } = "not evaluated";
+    public string LastTrueNorthDecisionSource { get; private set; } = "none";
+    public string LastTrueNorthDecisionReason { get; private set; } = "not evaluated";
 
     public void Reset()
     {
         this.RsrTrueNorthDisabled = null;
         this.trueNorthStrategy = null;
+        this.LastIntentSource = "none";
+        this.LastIntentReason = "reset";
+        this.LastTrueNorthDecisionSource = "none";
+        this.LastTrueNorthDecisionReason = "reset";
     }
 
     public void Apply()
@@ -35,6 +42,8 @@ internal sealed class PositionalsController(
         if (ShouldSuppressPositionalsForAoePack(aoePackStatus()))
         {
             this.trueNorthStrategy = null;
+            this.LastTrueNorthDecisionSource = "local";
+            this.LastTrueNorthDecisionReason = "positionals suppressed for AoE pack";
             setPositional(Positional.Any);
             return;
         }
@@ -42,10 +51,12 @@ internal sealed class PositionalsController(
         if (config.ManageTrueNorth)
         {
             this.EnsureRsrTrueNorthDisabled();
-            var positional = ReadAvaricePositional();
+            var positional = this.ResolvePositionalIntent();
             if (positional == Positional.Any)
             {
                 this.trueNorthStrategy = null;
+                this.LastTrueNorthDecisionSource = "none";
+                this.LastTrueNorthDecisionReason = "no positional intent";
                 setPositional(Positional.Any);
             }
             else
@@ -54,17 +65,23 @@ internal sealed class PositionalsController(
                     this.trueNorthStrategy = this.HasActiveTrueNorth() || this.GetTrueNorthCharges() > 0;
                 if (this.IsCurrentPositionalCorrect(positional))
                 {
+                    this.LastTrueNorthDecisionSource = "local";
+                    this.LastTrueNorthDecisionReason = $"already at {positional}";
                     setPositional(positional);
                 }
                 else if (this.trueNorthStrategy == true)
                 {
-                    if (this.ShouldWalkForUpcomingPositional(positional))
+                    var shouldWalk = this.ShouldWalkForUpcomingPositional(positional, out var walkSource, out var walkReason);
+                    this.LastTrueNorthDecisionSource = walkSource;
+                    this.LastTrueNorthDecisionReason = walkReason;
+                    if (shouldWalk)
                     {
                         setPositional(positional);
                         return;
                     }
 
-                    this.TryUseTrueNorth(positional);
+                    var usedTrueNorth = this.TryUseTrueNorth(positional);
+                    this.LastTrueNorthDecisionReason = $"{walkReason}; {(usedTrueNorth ? "used True North" : "True North unavailable")}";
                     var pending = !this.HasActiveTrueNorth() && !this.IsOutsideMeleeRange();
                     setPositional(Positional.Any);
                     if (pending && this.IsOutsideMeleeRange())
@@ -74,13 +91,17 @@ internal sealed class PositionalsController(
                 }
                 else
                 {
+                    this.LastTrueNorthDecisionSource = "local";
+                    this.LastTrueNorthDecisionReason = "True North unavailable; walking to positional";
                     setPositional(positional);
                 }
             }
         }
         else
         {
-            setPositional(this.HasTrueNorthCoverage() ? Positional.Any : ReadAvaricePositional());
+            this.LastTrueNorthDecisionSource = "local";
+            this.LastTrueNorthDecisionReason = "Manage True North disabled";
+            setPositional(this.HasTrueNorthCoverage() ? Positional.Any : this.ResolvePositionalIntent());
         }
     }
 
@@ -194,10 +215,13 @@ internal sealed class PositionalsController(
         return true;
     }
 
-    private bool ShouldWalkForUpcomingPositional(Positional positional)
+    private bool ShouldWalkForUpcomingPositional(Positional positional, out string source, out string reason)
     {
+        source = "local";
+        reason = string.Empty;
         if (!config.ManageMovement)
         {
+            reason = "movement management disabled";
             return false;
         }
 
@@ -205,16 +229,20 @@ internal sealed class PositionalsController(
         var target = services.TargetManager.Target;
         if (player == null || target == null)
         {
+            reason = "missing player or target";
             return false;
         }
 
-        if (!rotationSolverActions.TryGetUpcomingGcdTiming(out var action, out _))
+        if (!rotationSolverActions.TryGetUpcomingGcdTiming(out var action, out reason))
         {
+            source = "none";
             return false;
         }
 
+        source = action.Source;
         if (action.PrimaryTargetId != 0 && action.PrimaryTargetId != target.GameObjectId)
         {
+            reason = $"RSR next GCD {action.ActionName} targets 0x{action.PrimaryTargetId:X}, not current target";
             return false;
         }
 
@@ -227,25 +255,54 @@ internal sealed class PositionalsController(
             positional,
             out var moveDistance))
         {
+            source = "local";
+            reason = $"could not estimate walk distance for {positional}";
             return false;
         }
 
-        return PositionalTrueNorthPolicy.ShouldWalkInsteadOfTrueNorth(positional, action, moveDistance, out _);
+        return PositionalTrueNorthPolicy.ShouldWalkInsteadOfTrueNorth(positional, action, moveDistance, out reason);
     }
 
-    private static Positional ReadAvaricePositional()
+    private Positional ResolvePositionalIntent()
     {
-        if (!EzSharedData.TryGet<uint[]>(CombatConstants.AvaricePositionalStatusKey, out var status) || status.Length < 2)
+        if (this.TryReadRsrPositionalIntent(out var rsrPositional, out var rsrReason))
         {
-            return Positional.Any;
+            this.LastIntentSource = "RSR reflected";
+            this.LastIntentReason = rsrReason;
+            return rsrPositional;
         }
 
-        return status[1] switch
+        this.LastIntentSource = "none";
+        this.LastIntentReason = string.IsNullOrWhiteSpace(rsrReason)
+            ? "no positional intent"
+            : rsrReason;
+        return Positional.Any;
+    }
+
+    private bool TryReadRsrPositionalIntent(out Positional positional, out string reason)
+    {
+        positional = Positional.Any;
+        reason = string.Empty;
+        if (!rotationSolverActions.TryGetUpcomingGcdTiming(out var action, out reason))
         {
-            1 => Positional.Rear,
-            2 => Positional.Flank,
-            _ => Positional.Any
-        };
+            return false;
+        }
+
+        var target = services.TargetManager.Target;
+        if (action.PrimaryTargetId != 0 && action.PrimaryTargetId != target?.GameObjectId)
+        {
+            reason = $"RSR next GCD {action.ActionName} targets 0x{action.PrimaryTargetId:X}, not current target";
+            return false;
+        }
+
+        if (!PositionalTrueNorthPolicy.TryGetActionPositional(action, out positional))
+        {
+            reason = $"RSR next GCD {action.ActionName} is not a known positional";
+            return false;
+        }
+
+        reason = $"RSR next GCD {action.ActionName} requires {positional}";
+        return true;
     }
 
     private bool IsOutsideMeleeRange()

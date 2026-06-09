@@ -17,6 +17,7 @@ internal sealed class DecisionOverlayController(
     PassageOfArmsPositioningController passageOfArmsPositioningController,
     HealerAoePositioningController healerAoePositioningController,
     SurvivabilityZonePositioningController survivabilityZonePositioningController,
+    PictomancerStarryMusePositioningController pictomancerStarryMusePositioningController,
     BossModReflectionSafety bossModSafety,
     MobilityDecisionEvaluator mobilityDecisionEvaluator,
     GapCloserController gapCloserController,
@@ -311,6 +312,31 @@ internal sealed class DecisionOverlayController(
                     new DecisionOverlayMarker(DecisionOverlayState.Active, survZone.CasterPosition, 0.35f, survZone.ZoneName[..3]),
                     new DecisionOverlayMarker(state, survZone.ZoneCenter, 0.25f, "Zone")
                 ]);
+        }
+
+        pictomancerStarryMusePositioningController.RefreshOverlay();
+        var starryMuse = pictomancerStarryMusePositioningController.Overlay;
+        if (starryMuse != null)
+        {
+            var state = !config.Enabled || !config.ManageMovement || !config.ManagePictomancerStarryMuse
+                ? DecisionOverlayState.Suppressed
+                : starryMuse.Injected
+                ? starryMuse.PlayerInZone ? DecisionOverlayState.Active : DecisionOverlayState.Candidate
+                : DecisionOverlayState.Future;
+            var reason = state == DecisionOverlayState.Suppressed
+                ? this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManagePictomancerStarryMuse, "Stay in Starry Muse"))
+                : null;
+            yield return new(
+                DecisionOverlaySource.StarryMuse,
+                state,
+                starryMuse.PlayerInZone ? "Stay in Starry Muse" : "Move into Starry Muse",
+                reason ?? "Pictomancer ground buff",
+                43,
+                [new(DecisionOverlayShapeKind.Circle, state, starryMuse.ZoneCenter, starryMuse.Radius, 0f, 0f, 0f, "Starry Muse")],
+                starryMuse.PlayerInZone
+                    ? []
+                    : [new DecisionOverlayLine(state, player.Position, starryMuse.PreferredPosition, "move into Starry Muse")],
+                [new DecisionOverlayMarker(state, starryMuse.PreferredPosition, 0.25f, "Starry")]);
         }
 
         this.AddGapCloserSnapshot(player, target, out var gapCloserSnapshot);

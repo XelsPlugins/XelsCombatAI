@@ -10,6 +10,7 @@ internal sealed record AoePackPositioningStatus(
     string RsrReflectionDiagnostics,
     uint ActionId,
     string ActionName,
+    string ActionSource,
     string Shape,
     int CurrentHits,
     int BestHits,

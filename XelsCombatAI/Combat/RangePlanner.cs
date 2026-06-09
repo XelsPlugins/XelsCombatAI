@@ -12,17 +12,23 @@ internal sealed class TargetUptimePlanner(
     RotationSolverActionReflection rotationSolverActions)
 {
     public Func<float?> TargetUptimeRangeOverride { get; set; } = () => null;
+    public string LastTargetUptimeRangeSource { get; private set; } = "none";
+    public string LastTargetUptimeRangeReason { get; private set; } = "not checked";
 
     public float CalculateTargetUptimeRange()
     {
         var overrideRange = this.TargetUptimeRangeOverride();
         if (overrideRange.HasValue)
         {
+            this.LastTargetUptimeRangeSource = "local override";
+            this.LastTargetUptimeRangeReason = $"controller override range {overrideRange.Value:0.0}y";
             return overrideRange.Value;
         }
 
         if (!this.HasUsableHostileTarget())
         {
+            this.LastTargetUptimeRangeSource = "local";
+            this.LastTargetUptimeRangeReason = "no usable hostile target";
             return Configuration.InternalDisabledUptimeRange;
         }
 
@@ -30,9 +36,14 @@ internal sealed class TargetUptimePlanner(
         if (rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var action, out _) &&
             !action.IsFriendly)
         {
-            return ResolveTargetUptimeRange(rangeRole, jobRangeProvider.EngagementRange, action.Range);
+            var range = ResolveTargetUptimeRange(rangeRole, jobRangeProvider.EngagementRange, action.Range);
+            this.LastTargetUptimeRangeSource = action.Source;
+            this.LastTargetUptimeRangeReason = $"next GCD {action.ActionName} action range {action.Range:0.0}y -> uptime range {range:0.0}y";
+            return range;
         }
 
+        this.LastTargetUptimeRangeSource = "local";
+        this.LastTargetUptimeRangeReason = $"job engagement range {jobRangeProvider.EngagementRange:0.0}y";
         return jobRangeProvider.EngagementRange;
     }
 

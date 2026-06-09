@@ -6,7 +6,6 @@ internal sealed class DependencyChecker(
     Configuration config,
     DalamudServices services,
     BossModIpc bossMod,
-    AvariceIpc avarice,
     RotationSolverIpc rotationSolver)
 {
     public bool DependenciesAvailable(out string missing, bool forceRefresh = false)
@@ -23,11 +22,6 @@ internal sealed class DependencyChecker(
         if (!this.IsBossModAvailable())
         {
             missingParts.Add("BossMod Reborn is not loaded or its IPC is unavailable");
-        }
-
-        if (!this.IsAvariceAvailable())
-        {
-            missingParts.Add("Avarice is not loaded");
         }
 
         missing = string.Join("; ", missingParts);
@@ -67,11 +61,6 @@ internal sealed class DependencyChecker(
     public bool IsBossModAvailable()
     {
         return this.CanProbeDependencies(out _) && bossMod.IsIpcReady();
-    }
-
-    public bool IsAvariceAvailable()
-    {
-        return this.CanProbeDependencies(out _) && avarice.IsAvailable();
     }
 
     public bool IsRotationSolverAvailable()

@@ -131,6 +131,7 @@ internal sealed class AoePackPositioningController(
                 $"{rotationSolverActions.Diagnostics}; Restore={this.rsrRestoreStatus}",
                 activePlan?.ActionId ?? this.lastAction?.AdjustedActionId ?? 0,
                 activePlan?.ActionName ?? this.lastAction?.ActionName ?? "<none>",
+                this.ResolveActionSource(activePlan),
                 activePlan?.Shape ?? this.lastAction?.Shape.ToString() ?? "<none>",
                 activePlan?.CurrentHits ?? this.lastCurrentHits,
                 activePlan?.BestHits ?? this.lastBestHits,
@@ -149,6 +150,16 @@ internal sealed class AoePackPositioningController(
     public AoePackOverlaySnapshot? Overlay => this.lastInjected ? this.lastOverlay : null;
     public AoePackOverlaySnapshot? SuggestedCandidate => this.lastInjected ? null : this.lastSuggestion;
     public bool RsrHenchedActive => this.rsrHenchedActive;
+
+    private string ResolveActionSource(AoePackOverlaySnapshot? activePlan)
+    {
+        if (this.lastAction != null)
+        {
+            return this.lastAction.Source;
+        }
+
+        return activePlan != null ? "local" : "none";
+    }
 
     public void SetHookState(string state)
     {

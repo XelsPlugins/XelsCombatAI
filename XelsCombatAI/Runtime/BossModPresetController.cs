@@ -12,10 +12,13 @@ internal sealed class BossModPresetController(
     GapCloserController gapCloserController,
     EscapeGapCloserController escapeGapCloserController,
     RedMageMeleeComboController redMageMeleeComboController,
+    PictomancerStarryMusePositioningController pictomancerStarryMusePositioningController,
     Func<BossModMechanicPressure> mechanicPressure)
 {
     public Positional LastPositional { get; private set; } = Positional.Any;
     public float LastTargetUptimeRange { get; private set; } = -1f;
+    public string LastTargetUptimeRangeSource { get; private set; } = "none";
+    public string LastTargetUptimeRangeReason { get; private set; } = "not checked";
     public bool? LastMovement { get; private set; }
     public string? LastMovementRangeStrategy { get; private set; }
     public string? LastForbiddenZoneCushion { get; private set; }
@@ -92,7 +95,10 @@ internal sealed class BossModPresetController(
     {
         try
         {
-            this.SetTargetUptimeRange(targetUptimePlanner.CalculateTargetUptimeRange());
+            var targetUptimeRange = targetUptimePlanner.CalculateTargetUptimeRange();
+            this.LastTargetUptimeRangeSource = targetUptimePlanner.LastTargetUptimeRangeSource;
+            this.LastTargetUptimeRangeReason = targetUptimePlanner.LastTargetUptimeRangeReason;
+            this.SetTargetUptimeRange(targetUptimeRange);
 
             this.SetForbiddenZoneCushion(config.ManageForbiddenZoneDistance
                 ? MapForbiddenZoneCushion(config.PreferredForbiddenZoneDistance)
@@ -133,6 +139,8 @@ internal sealed class BossModPresetController(
         this.InitializedPreset = false;
         this.LastPositional = Positional.Any;
         this.LastTargetUptimeRange = -1f;
+        this.LastTargetUptimeRangeSource = "none";
+        this.LastTargetUptimeRangeReason = "reset";
         this.LastMovement = null;
         this.LastMovementRangeStrategy = null;
         this.LastForbiddenZoneCushion = null;
@@ -288,6 +296,11 @@ internal sealed class BossModPresetController(
         }
 
         if (this.ShouldHoldOptionalDashForMechanicPressure())
+        {
+            return;
+        }
+
+        if (pictomancerStarryMusePositioningController.TryUseStarryMuseSmudge())
         {
             return;
         }

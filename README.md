@@ -5,8 +5,7 @@ A Dalamud plugin that automatically manages your BossMod Reborn movement and pos
 ## Requirements
 
 - [BossMod Reborn](https://github.com/FFXIV-CombatReborn/BossmodReborn)
-- [Avarice](https://puni.sh/api/repository/veyn) (for positional management)
-- [RotationSolver Reborn](https://github.com/FFXIV-CombatReborn/RotationSolverReborn) (optional, required for Manage True North, AoE pack positioning, and Red Mage melee combo movement)
+- [RotationSolver Reborn](https://github.com/FFXIV-CombatReborn/RotationSolverReborn) (optional, used for primary positional intent and required for Manage True North, AoE pack positioning, and Red Mage melee combo movement)
 
 ## What it does
 
@@ -87,6 +86,8 @@ While you are casting, advisory movement goals are suppressed so comfort, uptime
 ### Job Specific tab
 
 **Black Mage** — Stay in existing Ley Lines and choose whether to use Between the Lines, Retrace, or walking to return to them.
+
+**Pictomancer** — Stay in your existing Starry Muse ground effect when safe. When Gap closers and the PCT dash allow-list are enabled, Smudge can be used as a return tool only when walking cannot reasonably get back within the current GCD, the fixed 15y landing ends inside the circle, BossMod accepts the dash as safe, and navigation confirms the landing is reachable.
 
 **Red Mage** — Optionally move for the enchanted melee combo. Boss/single-target behavior waits for `50 Black Mana / 50 White Mana`, stays ranged during Manafication's extended-range sword combo, and moves into melee range when the RDM gauge state says Enchanted Riposte or a melee continuation is needed. Trash AoE behavior uses RSR target context, moves close enough for Enchanted Moulinet's cone when there are 3+ affected targets and the combo is available, and stays in cone range through Moulinet continuations. After Enchanted Redoublement or Enchanted Moulinet Trois lands, it prefers a safe Displacement out; if Displacement or its facing setup is unsafe, unavailable, or blocked by navigation checks, it stays close unless BossMod moves you for safety.
 

@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Numerics;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
 using Dalamud.Plugin.Services;
@@ -69,6 +70,21 @@ internal sealed class BossModIpc
     private ICallGateSubscriber<float>? nextVulnerableIn;
     private ICallGateSubscriber<float>? nextVulnerableEndIn;
     private ICallGateSubscriber<float>? nextDamageIn;
+    private ICallGateSubscriber<int>? nextDamageType;
+    private ICallGateSubscriber<float>? nextRaidwideDamageIn;
+    private ICallGateSubscriber<float>? nextTankbusterDamageIn;
+    private ICallGateSubscriber<float>? specialModeIn;
+    private ICallGateSubscriber<int>? specialModeType;
+    private ICallGateSubscriber<bool>? hasActiveModule;
+    private ICallGateSubscriber<string?>? activeModuleName;
+    private ICallGateSubscriber<Vector3, bool>? isPositionSafe;
+    private ICallGateSubscriber<Vector3, Vector3, bool>? isDashSafe;
+    private ICallGateSubscriber<float, bool, bool>? isFixedDashSafe;
+    private ICallGateSubscriber<Vector3, float, bool>? isBackdashSafe;
+    private ICallGateSubscriber<Vector3?>? navigationTargetPos;
+    private ICallGateSubscriber<int>? forbiddenZonesCount;
+    private ICallGateSubscriber<int>? forbiddenDirectionsCount;
+    private ICallGateSubscriber<string?>? timelineDebug;
     private DateTime nextFailureLog = DateTime.MinValue;
 
     public BossModIpc(IDalamudPluginInterface pluginInterface, IPluginLog log, BossModRuntimeGate gate)
@@ -324,7 +340,191 @@ internal sealed class BossModIpc
             this.InvokeOptional(this.nextDowntimeEndIn, float.MaxValue),
             this.InvokeOptional(this.nextVulnerableIn, float.MaxValue),
             this.InvokeOptional(this.nextVulnerableEndIn, float.MaxValue),
+            this.InvokeOptional(this.nextRaidwideDamageIn, float.MaxValue),
+            this.InvokeOptional(this.nextTankbusterDamageIn, float.MaxValue),
+            this.InvokeOptional(this.nextDamageType, 0),
+            this.InvokeOptional(this.specialModeIn, float.MaxValue),
+            this.InvokeOptional(this.specialModeType, 0),
+            this.InvokeOptional(this.hasActiveModule, false),
+            this.InvokeOptional(this.activeModuleName, null),
+            this.InvokeOptional(this.timelineDebug, "<unavailable>") ?? "<unavailable>",
             DateTime.MinValue);
+    }
+
+    public bool TryIsPositionSafe(Vector3 position, out bool safe, out string reason)
+    {
+        safe = false;
+        reason = string.Empty;
+        if (!this.IsAvailable() || this.isPositionSafe is not { } subscriber)
+        {
+            reason = "BMR IPC position safety unavailable";
+            return false;
+        }
+
+        if (this.TryInvoke(subscriber, () => subscriber.InvokeFunc(position), out safe))
+        {
+            reason = safe ? "BMR IPC position safe" : "BMR IPC reports position dangerous";
+            return true;
+        }
+
+        reason = "BMR IPC position safety failed";
+        return false;
+    }
+
+    public bool TryIsDashSafe(Vector3 from, Vector3 to, out bool safe, out string reason)
+    {
+        safe = false;
+        reason = string.Empty;
+        if (!this.IsAvailable() || this.isDashSafe is not { } subscriber)
+        {
+            reason = "BMR IPC dash safety unavailable";
+            return false;
+        }
+
+        if (this.TryInvoke(subscriber, () => subscriber.InvokeFunc(from, to), out safe))
+        {
+            reason = safe ? "BMR IPC dash safe" : "BMR IPC reports dash dangerous";
+            return true;
+        }
+
+        reason = "BMR IPC dash safety failed";
+        return false;
+    }
+
+    public bool TryIsFixedDashSafe(float range, bool backwards, out bool safe, out string reason)
+    {
+        safe = false;
+        reason = string.Empty;
+        if (!this.IsAvailable() || this.isFixedDashSafe is not { } subscriber)
+        {
+            reason = "BMR IPC fixed dash safety unavailable";
+            return false;
+        }
+
+        if (this.TryInvoke(subscriber, () => subscriber.InvokeFunc(range, backwards), out safe))
+        {
+            reason = safe ? "BMR IPC fixed dash safe" : "BMR IPC reports fixed dash dangerous";
+            return true;
+        }
+
+        reason = "BMR IPC fixed dash safety failed";
+        return false;
+    }
+
+    public bool TryIsBackdashSafe(Vector3 enemyPosition, float range, out bool safe, out string reason)
+    {
+        safe = false;
+        reason = string.Empty;
+        if (!this.IsAvailable() || this.isBackdashSafe is not { } subscriber)
+        {
+            reason = "BMR IPC backdash safety unavailable";
+            return false;
+        }
+
+        if (this.TryInvoke(subscriber, () => subscriber.InvokeFunc(enemyPosition, range), out safe))
+        {
+            reason = safe ? "BMR IPC backdash safe" : "BMR IPC reports backdash dangerous";
+            return true;
+        }
+
+        reason = "BMR IPC backdash safety failed";
+        return false;
+    }
+
+    public bool TryGetNavigationTarget(out Vector3 destination, out string reason)
+    {
+        destination = default;
+        reason = string.Empty;
+        if (!this.IsAvailable() || this.navigationTargetPos is not { } subscriber)
+        {
+            reason = "BMR IPC navigation target unavailable";
+            return false;
+        }
+
+        if (!this.TryInvoke(subscriber, () => subscriber.InvokeFunc(), out var ipcDestination))
+        {
+            reason = "BMR IPC navigation target failed";
+            return false;
+        }
+
+        if (!ipcDestination.HasValue)
+        {
+            reason = "BMR IPC navigation target not set";
+            return false;
+        }
+
+        destination = ipcDestination.Value;
+        reason = "BMR IPC navigation target available";
+        return true;
+    }
+
+    public bool TryGetForbiddenZoneCount(out int count, out string reason)
+    {
+        count = 0;
+        reason = string.Empty;
+        if (!this.IsAvailable() || this.forbiddenZonesCount is not { } subscriber)
+        {
+            reason = "BMR IPC forbidden zone count unavailable";
+            return false;
+        }
+
+        if (this.TryInvoke(subscriber, () => subscriber.InvokeFunc(), out count))
+        {
+            reason = "BMR IPC forbidden zone count available";
+            return true;
+        }
+
+        reason = "BMR IPC forbidden zone count failed";
+        return false;
+    }
+
+    public bool TryGetForbiddenDirectionCount(out int count, out string reason)
+    {
+        count = 0;
+        reason = string.Empty;
+        if (!this.IsAvailable() || this.forbiddenDirectionsCount is not { } subscriber)
+        {
+            reason = "BMR IPC forbidden direction count unavailable";
+            return false;
+        }
+
+        if (this.TryInvoke(subscriber, () => subscriber.InvokeFunc(), out count))
+        {
+            reason = "BMR IPC forbidden direction count available";
+            return true;
+        }
+
+        reason = "BMR IPC forbidden direction count failed";
+        return false;
+    }
+
+    public bool TryGetSpecialMode(out BossModSpecialMode mode, out float activationIn, out string reason)
+    {
+        mode = BossModSpecialMode.Normal;
+        activationIn = float.MaxValue;
+        reason = string.Empty;
+        if (!this.IsAvailable())
+        {
+            reason = "BMR IPC special mode unavailable";
+            return false;
+        }
+
+        var specialModeType = this.specialModeType;
+        var specialModeIn = this.specialModeIn;
+        if (specialModeType == null ||
+            specialModeIn == null ||
+            !this.TryInvoke(specialModeType, () => specialModeType.InvokeFunc(), out var modeValue) ||
+            !this.TryInvoke(specialModeIn, () => specialModeIn.InvokeFunc(), out activationIn))
+        {
+            reason = "BMR IPC special mode failed";
+            return false;
+        }
+
+        mode = Enum.IsDefined(typeof(BossModSpecialMode), modeValue)
+            ? (BossModSpecialMode)modeValue
+            : BossModSpecialMode.Normal;
+        reason = "BMR IPC special mode available";
+        return true;
     }
 
     private bool Invoke(ICallGateSubscriber subscriber, Func<bool> action)
@@ -388,6 +588,125 @@ internal sealed class BossModIpc
             : this.Invoke(subscriber, () => subscriber.InvokeFunc(), fallback);
     }
 
+    private int InvokeOptional(ICallGateSubscriber<int>? subscriber, int fallback)
+    {
+        return subscriber == null
+            ? fallback
+            : this.Invoke(subscriber, () => subscriber.InvokeFunc(), fallback);
+    }
+
+    private bool InvokeOptional(ICallGateSubscriber<bool>? subscriber, bool fallback)
+    {
+        return subscriber == null
+            ? fallback
+            : this.Invoke(subscriber, () => subscriber.InvokeFunc());
+    }
+
+    private string? InvokeOptional(ICallGateSubscriber<string?>? subscriber, string? fallback)
+    {
+        return subscriber == null
+            ? fallback
+            : this.Invoke(subscriber, () => subscriber.InvokeFunc()) ?? fallback;
+    }
+
+    private int Invoke(ICallGateSubscriber subscriber, Func<int> action, int fallback)
+    {
+        if (!this.CanInvoke(subscriber))
+        {
+            return fallback;
+        }
+
+        try
+        {
+            return action();
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return fallback;
+        }
+    }
+
+    private bool TryInvoke(ICallGateSubscriber subscriber, Func<bool> action, out bool result)
+    {
+        result = false;
+        if (!this.CanInvoke(subscriber))
+        {
+            return false;
+        }
+
+        try
+        {
+            result = action();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return false;
+        }
+    }
+
+    private bool TryInvoke(ICallGateSubscriber subscriber, Func<int> action, out int result)
+    {
+        result = 0;
+        if (!this.CanInvoke(subscriber))
+        {
+            return false;
+        }
+
+        try
+        {
+            result = action();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return false;
+        }
+    }
+
+    private bool TryInvoke(ICallGateSubscriber subscriber, Func<float> action, out float result)
+    {
+        result = float.MaxValue;
+        if (!this.CanInvoke(subscriber))
+        {
+            return false;
+        }
+
+        try
+        {
+            result = action();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return false;
+        }
+    }
+
+    private bool TryInvoke(ICallGateSubscriber subscriber, Func<Vector3?> action, out Vector3? result)
+    {
+        result = null;
+        if (!this.CanInvoke(subscriber))
+        {
+            return false;
+        }
+
+        try
+        {
+            result = action();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.LogRecoverableFailure(ex, "BossMod IPC invocation failed.");
+            return false;
+        }
+    }
+
     private bool CanInvoke(ICallGateSubscriber subscriber)
     {
         if (!this.gate.IsOpen || !this.EnsureSubscribers())
@@ -444,7 +763,22 @@ internal sealed class BossModIpc
             this.nextDowntimeEndIn != null &&
             this.nextVulnerableIn != null &&
             this.nextVulnerableEndIn != null &&
-            this.nextDamageIn != null)
+            this.nextDamageIn != null &&
+            this.nextDamageType != null &&
+            this.nextRaidwideDamageIn != null &&
+            this.nextTankbusterDamageIn != null &&
+            this.specialModeIn != null &&
+            this.specialModeType != null &&
+            this.hasActiveModule != null &&
+            this.activeModuleName != null &&
+            this.isPositionSafe != null &&
+            this.isDashSafe != null &&
+            this.isFixedDashSafe != null &&
+            this.isBackdashSafe != null &&
+            this.navigationTargetPos != null &&
+            this.forbiddenZonesCount != null &&
+            this.forbiddenDirectionsCount != null &&
+            this.timelineDebug != null)
         {
             return true;
         }
@@ -469,6 +803,21 @@ internal sealed class BossModIpc
             this.nextVulnerableIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextVulnerableIn");
             this.nextVulnerableEndIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Timeline.NextVulnerableEndIn");
             this.nextDamageIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Hints.NextDamageIn");
+            this.nextDamageType = this.pluginInterface.GetIpcSubscriber<int>("BossMod.Hints.NextDamageType");
+            this.nextRaidwideDamageIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Hints.NextRaidwideDamageIn");
+            this.nextTankbusterDamageIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Hints.NextTankbusterDamageIn");
+            this.specialModeIn = this.pluginInterface.GetIpcSubscriber<float>("BossMod.Hints.SpecialModeIn");
+            this.specialModeType = this.pluginInterface.GetIpcSubscriber<int>("BossMod.Hints.SpecialModeType");
+            this.hasActiveModule = this.pluginInterface.GetIpcSubscriber<bool>("BossMod.HasActiveModule");
+            this.activeModuleName = this.pluginInterface.GetIpcSubscriber<string?>("BossMod.ActiveModuleName");
+            this.isPositionSafe = this.pluginInterface.GetIpcSubscriber<Vector3, bool>("BossMod.Hints.IsPositionSafe");
+            this.isDashSafe = this.pluginInterface.GetIpcSubscriber<Vector3, Vector3, bool>("BossMod.Hints.IsDashSafe");
+            this.isFixedDashSafe = this.pluginInterface.GetIpcSubscriber<float, bool, bool>("BossMod.Hints.IsFixedDashSafe");
+            this.isBackdashSafe = this.pluginInterface.GetIpcSubscriber<Vector3, float, bool>("BossMod.Hints.IsBackdashSafe");
+            this.navigationTargetPos = this.pluginInterface.GetIpcSubscriber<Vector3?>("BossMod.AI.NaviTargetPos");
+            this.forbiddenZonesCount = this.pluginInterface.GetIpcSubscriber<int>("BossMod.Hints.ForbiddenZonesCount");
+            this.forbiddenDirectionsCount = this.pluginInterface.GetIpcSubscriber<int>("BossMod.Hints.ForbiddenDirectionsCount");
+            this.timelineDebug = this.pluginInterface.GetIpcSubscriber<string?>("BossMod.Debug.TimelineWalk");
             return true;
         }
         catch (Exception ex)
@@ -499,6 +848,21 @@ internal sealed class BossModIpc
         this.nextVulnerableIn = null;
         this.nextVulnerableEndIn = null;
         this.nextDamageIn = null;
+        this.nextDamageType = null;
+        this.nextRaidwideDamageIn = null;
+        this.nextTankbusterDamageIn = null;
+        this.specialModeIn = null;
+        this.specialModeType = null;
+        this.hasActiveModule = null;
+        this.activeModuleName = null;
+        this.isPositionSafe = null;
+        this.isDashSafe = null;
+        this.isFixedDashSafe = null;
+        this.isBackdashSafe = null;
+        this.navigationTargetPos = null;
+        this.forbiddenZonesCount = null;
+        this.forbiddenDirectionsCount = null;
+        this.timelineDebug = null;
     }
 
     private void LogRecoverableFailure(Exception ex, string message)

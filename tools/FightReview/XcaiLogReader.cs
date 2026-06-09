@@ -162,9 +162,12 @@ internal static class XcaiLogReader
             ReadFloat(frame, "TargetRotation"),
             ReadFloat(frame, "TargetRadius"),
             ReadFloat(frame, "TargetUptimeRange"),
+            ReadString(frame, "TargetUptimeRangeSource", "none"),
+            ReadString(frame, "TargetUptimeRangeReason", "not logged"),
             ReadBool(frame, "AutomatedMovementSuppressed"),
             ReadString(frame, "ManualMovementInput", "unknown"),
             ParseFacing(frame),
+            ParseRedMageMelee(frame),
             ReadString(frame, "BossModActiveModule", "<none>"),
             ReadString(frame, "BossModActiveZoneModule", "<none>"),
             ReadString(frame, "Reason", "<none>"),
@@ -173,10 +176,14 @@ internal static class XcaiLogReader
             bossMod,
             ParseMobility(frame),
             ParseMotion(motion),
+            ReadString(frame, "PositionalIntentSource", "none"),
+            ReadString(frame, "TrueNorthDecisionSource", "none"),
+            ReadString(frame, "TrueNorthDecisionReason", "not logged"),
             ReadInt(frame, "Targets"),
             ReadInt(frame, "CurrentHits"),
             ReadInt(frame, "BestHits"),
             ReadString(frame, "ActionName", "<none>"),
+            ReadString(frame, "ActionSource", "none"),
             ReadString(frame, "Shape", "<none>"),
             ParseActors(frame),
             frame.Clone());
@@ -197,7 +204,25 @@ internal static class XcaiLogReader
             ReadNullableFloat(facing, "DeltaRadians"),
             ReadBool(facing, "Applied"),
             ReadString(facing, "RejectionReason", string.Empty),
+            ReadString(facing, "SafetySource", "none"),
             ReadInt(facing, "ConsensusMembers"));
+    }
+
+    private static RedMageMeleeSnapshot ParseRedMageMelee(JsonElement frame)
+    {
+        if (!frame.TryGetProperty("RedMageMeleeCombo", out var redMage) || redMage.ValueKind != JsonValueKind.Object)
+        {
+            return RedMageMeleeSnapshot.Empty;
+        }
+
+        return new RedMageMeleeSnapshot(
+            ReadBool(redMage, "Enabled"),
+            ReadString(redMage, "Mode", "inactive"),
+            ReadString(redMage, "LastReason", "not logged"),
+            ReadString(redMage, "NextActionName", "<none>"),
+            ReadString(redMage, "NextActionSource", "none"),
+            ReadUInt(redMage, "NextActionId"),
+            ReadInt(redMage, "AffectedTargets"));
     }
 
     private static TrashPullSnapshot ParseTrashPull(JsonElement frame)
@@ -350,6 +375,7 @@ internal static class XcaiLogReader
             ReadFloat(mobility, "SafetyGain"),
             ReadFloat(mobility, "UptimeGain"),
             ReadFloat(mobility, "PathGain"),
+            ReadString(mobility, "SafetySource", "none"),
             ReadString(mobility, "SafetyReason", "not logged"),
             ReadString(mobility, "UptimeReason", "not logged"),
             ReadString(mobility, "PathReason", "not logged"),

@@ -10,7 +10,7 @@ internal static class StatusReporter
 {
     public static string Build(RuntimeStatus status)
     {
-        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, MechanicPressure={status.MechanicPressure.PrimaryPressure}, LastPositional={status.LastPositional}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, BmrRange={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, Facing={FormatFacingSummary(status.Facing)}, Mobility={status.MobilityDecision.State}/{status.MobilityDecision.IntentLabel}, TrashPull={status.AoePackPositioning.TrashPull.Phase}/{status.AoePackPositioning.TrashPull.Reason}, AoEPack={status.AoePackPositioning.LastReason}, HealerCoverage={status.HealerCoveragePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, RedMageMelee={status.RedMageMeleeCombo.Mode}/{status.RedMageMeleeCombo.LastReason}, Initialized={status.InitializedPreset}";
+        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, MechanicPressure={status.MechanicPressure.PrimaryPressure}, LastPositional={status.LastPositional}, PositionalIntent={status.PositionalIntentSource}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, BmrRange={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, Facing={FormatFacingSummary(status.Facing)}, Mobility={status.MobilityDecision.State}/{status.MobilityDecision.IntentLabel}/{status.MobilityDecision.SafetySource}, TrashPull={status.AoePackPositioning.TrashPull.Phase}/{status.AoePackPositioning.TrashPull.Reason}, AoEPack={status.AoePackPositioning.LastReason}, HealerCoverage={status.HealerCoveragePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, RedMageMelee={status.RedMageMeleeCombo.Mode}/{status.RedMageMeleeCombo.LastReason}, Initialized={status.InitializedPreset}";
     }
 
     public static string BuildDebug(Configuration config, RuntimeStatus status)
@@ -51,6 +51,14 @@ internal static class StatusReporter
         Append(builder, "BMRTankbusterIn", status.MechanicPressure.BMRTankbusterIn);
         Append(builder, "BMRKnockbackIn", status.MechanicPressure.BMRKnockbackIn);
         Append(builder, "BMRDamageIn", status.MechanicPressure.BMRDamageIn);
+        Append(builder, "BMRRaidwideDamageIn", status.MechanicPressure.BMRRaidwideDamageIn);
+        Append(builder, "BMRTankbusterDamageIn", status.MechanicPressure.BMRTankbusterDamageIn);
+        Append(builder, "BMRNextDamageType", status.MechanicPressure.NextDamageType);
+        Append(builder, "BMRSpecialModeIn", status.MechanicPressure.BMRSpecialModeIn);
+        Append(builder, "BMRSpecialModeType", status.MechanicPressure.SpecialMode);
+        Append(builder, "BMRHasActiveModule", status.MechanicPressure.BMRHasActiveModule);
+        Append(builder, "BMRActiveModuleName", status.MechanicPressure.BMRActiveModuleName ?? "<none>");
+        Append(builder, "BMRTimelineDebug", status.MechanicPressure.BMRTimelineDebug);
         Append(builder, "BMRDowntimeIn", status.MechanicPressure.BMRDowntimeIn);
         Append(builder, "BMRDowntimeEndIn", status.MechanicPressure.BMRDowntimeEndIn);
         Append(builder, "BMRVulnerableIn", status.MechanicPressure.BMRVulnerableIn);
@@ -58,9 +66,13 @@ internal static class StatusReporter
         Append(builder, "RaidwideSoon", status.MechanicPressure.RaidwideSoon);
         Append(builder, "TankbusterSoon", status.MechanicPressure.TankbusterSoon);
         Append(builder, "KnockbackSoon", status.MechanicPressure.KnockbackSoon);
+        Append(builder, "SharedDamageSoon", status.MechanicPressure.SharedDamageSoon);
         Append(builder, "DamageSoon", status.MechanicPressure.DamageSoon);
         Append(builder, "DowntimeSoon", status.MechanicPressure.DowntimeSoon);
         Append(builder, "VulnerableSoon", status.MechanicPressure.VulnerableSoon);
+        Append(builder, "MovementLockSoon", status.MechanicPressure.MovementLockSoon);
+        Append(builder, "FreezingSoon", status.MechanicPressure.FreezingSoon);
+        Append(builder, "MisdirectionActive", status.MechanicPressure.MisdirectionActive);
         Append(builder, "KnockbackRecoveryActive", status.MechanicPressure.KnockbackRecoveryActive);
         builder.AppendLine();
 
@@ -74,14 +86,21 @@ internal static class StatusReporter
         Append(builder, "DeltaRadians", status.Facing.DeltaRadians);
         Append(builder, "Applied", status.Facing.Applied);
         Append(builder, "RejectionReason", status.Facing.RejectionReason);
+        Append(builder, "SafetySource", status.Facing.SafetySource);
         Append(builder, "ConsensusMembers", status.Facing.ConsensusMembers);
         builder.AppendLine();
 
         AppendSection(builder, "BossMod Strategy Cache");
         Append(builder, "LastPositional", status.LastPositional);
+        Append(builder, "PositionalIntentSource", status.PositionalIntentSource);
+        Append(builder, "PositionalIntentReason", status.PositionalIntentReason);
+        Append(builder, "TrueNorthDecisionSource", status.TrueNorthDecisionSource);
+        Append(builder, "TrueNorthDecisionReason", status.TrueNorthDecisionReason);
         Append(builder, "TrueNorthCharges", status.TrueNorthCharges);
         Append(builder, "TrueNorthActive", status.TrueNorthActive);
         Append(builder, "LastTargetUptimeRange", status.LastTargetUptimeRange);
+        Append(builder, "TargetUptimeRangeSource", status.TargetUptimeRangeSource);
+        Append(builder, "TargetUptimeRangeReason", status.TargetUptimeRangeReason);
         Append(builder, "LastMovement", status.LastMovement);
         Append(builder, "LastMovementRangeStrategy", status.LastMovementRangeStrategy);
         Append(builder, "LastSafetyBuffer", status.LastForbiddenZoneCushion);
@@ -99,6 +118,7 @@ internal static class StatusReporter
         Append(builder, "RedMageBlackMana", status.RedMageMeleeCombo.BlackMana);
         Append(builder, "RedMageManaStacks", status.RedMageMeleeCombo.ManaStacks);
         Append(builder, "RedMageNextAction", $"{status.RedMageMeleeCombo.NextActionName} ({status.RedMageMeleeCombo.NextActionId})");
+        Append(builder, "RedMageNextActionSource", status.RedMageMeleeCombo.NextActionSource);
         Append(builder, "RedMageAffectedTargets", status.RedMageMeleeCombo.AffectedTargets);
         Append(builder, "RedMageCandidateDestination", status.RedMageMeleeCombo.CandidateDestination);
         Append(builder, "RedMageLastJumpLanding", status.RedMageMeleeCombo.LastJumpLanding);
@@ -133,6 +153,7 @@ internal static class StatusReporter
         Append(builder, "MobilityAction", status.MobilityDecision.ActionName);
         Append(builder, "MobilityDestination", status.MobilityDecision.Destination);
         Append(builder, "MobilitySafetyGain", status.MobilityDecision.SafetyGain);
+        Append(builder, "MobilitySafetySource", status.MobilityDecision.SafetySource);
         Append(builder, "MobilityUptimeGain", status.MobilityDecision.UptimeGain);
         Append(builder, "MobilityPathGain", status.MobilityDecision.PathGain);
         Append(builder, "MobilitySafetyReason", status.MobilityDecision.SafetyReason);
@@ -173,6 +194,7 @@ internal static class StatusReporter
         Append(builder, "RsrReflectionDiagnostics", status.AoePackPositioning.RsrReflectionDiagnostics);
         Append(builder, "ActionId", status.AoePackPositioning.ActionId);
         Append(builder, "ActionName", status.AoePackPositioning.ActionName);
+        Append(builder, "ActionSource", status.AoePackPositioning.ActionSource);
         Append(builder, "Shape", status.AoePackPositioning.Shape);
         Append(builder, "CurrentHits", status.AoePackPositioning.CurrentHits);
         Append(builder, "BestHits", status.AoePackPositioning.BestHits);
@@ -272,7 +294,7 @@ internal static class StatusReporter
             : string.IsNullOrEmpty(facing.RejectionReason)
                 ? "ready"
                 : facing.RejectionReason;
-        return $"{source}/{facing.Reason}/{state}";
+        return $"{source}/{facing.Reason}/{state}/{facing.SafetySource}";
     }
 
     private static string BuildReflectionHealthSummary(RuntimeStatus status)

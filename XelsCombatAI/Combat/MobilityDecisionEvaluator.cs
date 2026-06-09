@@ -33,6 +33,7 @@ internal sealed record MobilityDecisionDiagnostics(
     Vector3? Destination,
     float MoveDistance,
     float SafetyGain,
+    string SafetySource,
     float UptimeGain,
     float PathGain,
     string SafetyReason,
@@ -50,6 +51,7 @@ internal sealed record MobilityDecisionDiagnostics(
         null,
         0f,
         0f,
+        "none",
         0f,
         0f,
         "not checked",
@@ -88,6 +90,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             null,
             0f,
             0f,
+            "none",
             0f,
             0f,
             "idle",
@@ -122,6 +125,113 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         bool requireVnavReachable,
         out MobilityDecisionDiagnostics decision)
     {
+        return this.TryValidateDashDestinationCore(
+            player,
+            destination,
+            target,
+            safeMovementDestination,
+            requestedIntent,
+            actionName,
+            actionId,
+            minimumDistance,
+            requireSafetyProgress,
+            requireUptimeProgress,
+            requireVnavReachable,
+            fixedDashRange: null,
+            fixedDashBackwards: false,
+            backdashEnemyPosition: null,
+            backdashRange: null,
+            out decision);
+    }
+
+    public bool TryValidateFixedDashDestination(
+        IBattleChara player,
+        Vector3 destination,
+        IBattleChara? target,
+        Vector3? safeMovementDestination,
+        MobilityIntent requestedIntent,
+        string actionName,
+        uint actionId,
+        float minimumDistance,
+        bool requireSafetyProgress,
+        bool requireUptimeProgress,
+        bool requireVnavReachable,
+        float fixedDashRange,
+        bool fixedDashBackwards,
+        out MobilityDecisionDiagnostics decision)
+    {
+        return this.TryValidateDashDestinationCore(
+            player,
+            destination,
+            target,
+            safeMovementDestination,
+            requestedIntent,
+            actionName,
+            actionId,
+            minimumDistance,
+            requireSafetyProgress,
+            requireUptimeProgress,
+            requireVnavReachable,
+            fixedDashRange,
+            fixedDashBackwards,
+            backdashEnemyPosition: null,
+            backdashRange: null,
+            out decision);
+    }
+
+    public bool TryValidateTargetBackstepDashDestination(
+        IBattleChara player,
+        Vector3 destination,
+        IBattleChara? target,
+        Vector3? safeMovementDestination,
+        MobilityIntent requestedIntent,
+        string actionName,
+        uint actionId,
+        float minimumDistance,
+        bool requireSafetyProgress,
+        bool requireUptimeProgress,
+        bool requireVnavReachable,
+        Vector3 backdashEnemyPosition,
+        float backdashRange,
+        out MobilityDecisionDiagnostics decision)
+    {
+        return this.TryValidateDashDestinationCore(
+            player,
+            destination,
+            target,
+            safeMovementDestination,
+            requestedIntent,
+            actionName,
+            actionId,
+            minimumDistance,
+            requireSafetyProgress,
+            requireUptimeProgress,
+            requireVnavReachable,
+            fixedDashRange: null,
+            fixedDashBackwards: false,
+            backdashEnemyPosition,
+            backdashRange,
+            out decision);
+    }
+
+    private bool TryValidateDashDestinationCore(
+        IBattleChara player,
+        Vector3 destination,
+        IBattleChara? target,
+        Vector3? safeMovementDestination,
+        MobilityIntent requestedIntent,
+        string actionName,
+        uint actionId,
+        float minimumDistance,
+        bool requireSafetyProgress,
+        bool requireUptimeProgress,
+        bool requireVnavReachable,
+        float? fixedDashRange,
+        bool fixedDashBackwards,
+        Vector3? backdashEnemyPosition,
+        float? backdashRange,
+        out MobilityDecisionDiagnostics decision)
+    {
         var moveDistance = IsFinite(destination) ? Geometry.Distance2D(player.Position, destination) : 0f;
         if (!IsFinite(destination))
         {
@@ -133,7 +243,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             return this.Reject(requestedIntent, actionName, actionId, destination, moveDistance, $"landing under {minimumDistance:0}y", out decision);
         }
 
-        var safety = this.EvaluateSafety(player, destination, safeMovementDestination);
+        var safety = this.EvaluateSafety(player, destination, safeMovementDestination, fixedDashRange, fixedDashBackwards, backdashEnemyPosition, backdashRange);
         if (!safety.CanLand)
         {
             return this.Reject(requestedIntent, actionName, actionId, destination, moveDistance, safety.RiskReason, safety, null, out decision);
@@ -189,6 +299,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             destination,
             moveDistance,
             safety.Gain,
+            safety.Source,
             uptime.Gain,
             path.Gain,
             safety.Reason,
@@ -249,6 +360,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             destination,
             moveDistance,
             safety.Gain,
+            safety.Source,
             uptime.Gain,
             path.Gain,
             safety.Reason,
@@ -332,6 +444,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             destination,
             moveDistance,
             0f,
+            "none",
             0f,
             0f,
             "not evaluated",
@@ -378,6 +491,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             destination,
             moveDistance,
             safety.Gain,
+            safety.Source,
             uptime?.Gain ?? 0f,
             path?.Gain ?? 0f,
             safety.Reason,
@@ -388,22 +502,43 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         return false;
     }
 
-    private SafetyEvaluation EvaluateSafety(IBattleChara player, Vector3 destination, Vector3? safeMovementDestination)
+    private SafetyEvaluation EvaluateSafety(
+        IBattleChara player,
+        Vector3 destination,
+        Vector3? safeMovementDestination,
+        float? fixedDashRange = null,
+        bool fixedDashBackwards = false,
+        Vector3? backdashEnemyPosition = null,
+        float? backdashRange = null)
     {
         var currentSafeKnown = bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out var currentReason);
         if (!bossModSafety.TryIsPositionSafe(destination, out var destinationSafe, out var destinationReason))
         {
-            return new(false, 0f, destinationReason, destinationReason);
+            return new(false, 0f, ResolveSafetySource(destinationReason), destinationReason, destinationReason);
         }
 
         if (!destinationSafe)
         {
-            return new(false, 0f, "landing is unsafe", "landing is unsafe");
+            return new(false, 0f, ResolveSafetySource(destinationReason), "landing is unsafe", "landing is unsafe");
         }
 
-        if (!bossModSafety.TryIsDashSafe(player.Position, destination, out var dashReason))
+        bool dashSafe;
+        string dashReason;
+        if (backdashEnemyPosition.HasValue && backdashRange.HasValue)
         {
-            return new(false, 0f, dashReason, dashReason);
+            dashSafe = bossModSafety.TryIsBackdashSafe(backdashEnemyPosition.Value, backdashRange.Value, player.Position, destination, out dashReason);
+        }
+        else if (fixedDashRange.HasValue)
+        {
+            dashSafe = bossModSafety.TryIsFixedDashSafe(fixedDashRange.Value, fixedDashBackwards, player.Position, destination, out dashReason);
+        }
+        else
+        {
+            dashSafe = bossModSafety.TryIsDashSafe(player.Position, destination, out dashReason);
+        }
+        if (!dashSafe)
+        {
+            return new(false, 0f, ResolveSafetySource(dashReason), dashReason, dashReason);
         }
 
         var gain = 0f;
@@ -428,63 +563,65 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             reason = $"{reason}; current safety unknown: {currentReason}";
         }
 
-        return new(true, gain, reason, "landing accepted");
+        return new(true, gain, ResolveSafetySource(currentReason, destinationReason, dashReason), reason, "landing accepted");
     }
 
     private SafetyEvaluation EvaluateGreedyUnsafeEscapeSafety(IBattleChara player, Vector3 destination, Vector3 safeMovementDestination)
     {
         if (!bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out var currentReason))
         {
-            return new(false, 0f, currentReason, currentReason);
+            return new(false, 0f, ResolveSafetySource(currentReason), currentReason, currentReason);
         }
 
         if (currentSafe)
         {
-            return new(false, 0f, "current position safe", "current position safe");
+            return new(false, 0f, ResolveSafetySource(currentReason), "current position safe", "current position safe");
         }
 
         if (!bossModSafety.TryIsPositionSafe(destination, out var destinationSafe, out var destinationReason))
         {
-            return new(false, 0f, destinationReason, destinationReason);
+            return new(false, 0f, ResolveSafetySource(currentReason, destinationReason), destinationReason, destinationReason);
         }
 
         if (destinationSafe)
         {
-            return new(false, 0f, "landing is safe; normal escape validation required", "landing is safe; normal escape validation required");
+            return new(false, 0f, ResolveSafetySource(currentReason, destinationReason), "landing is safe; normal escape validation required", "landing is safe; normal escape validation required");
         }
 
         if (!bossModSafety.TryCanAttemptDashNow(out var dashReason))
         {
-            return new(false, 0f, dashReason, dashReason);
+            return new(false, 0f, ResolveSafetySource(currentReason, destinationReason, dashReason), dashReason, dashReason);
         }
 
+        var source = ResolveSafetySource(currentReason, destinationReason, dashReason);
         var currentDistance = Geometry.Distance2D(player.Position, safeMovementDestination);
         var landingDistance = Geometry.Distance2D(destination, safeMovementDestination);
         var gain = currentDistance - landingDistance;
         if (gain < GreedyUnsafeEscapeMinimumGain)
         {
-            return new(false, MathF.Max(0f, gain), $"escape gain {gain:0.0}y", "not enough escape gain");
+            return new(false, MathF.Max(0f, gain), source, $"escape gain {gain:0.0}y", "not enough escape gain");
         }
 
         if (!TryDirectionDot(player.Position, destination, safeMovementDestination, out var dot))
         {
-            return new(false, gain, "could not compare escape direction", "landing direction not aligned");
+            return new(false, gain, source, "could not compare escape direction", "landing direction not aligned");
         }
 
         if (dot < GreedyUnsafeEscapeMinimumDirectionDot)
         {
-            return new(false, gain, $"escape direction dot {dot:0.00}", "landing direction not aligned");
+            return new(false, gain, source, $"escape direction dot {dot:0.00}", "landing direction not aligned");
         }
 
         var landing = this.EvaluateStrictLandingSupport(player.Position, destination);
         if (!landing.CanLand)
         {
-            return new(false, gain, landing.Reason, landing.Reason);
+            return new(false, gain, CombineSafetySources(source, "local"), landing.Reason, landing.Reason);
         }
 
         return new(
             true,
             gain,
+            CombineSafetySources(source, "local"),
             $"unsafe emergency landing; closer to BMR safe movement by {gain:0.0}y; {landing.Reason}",
             "unsafe emergency landing accepted");
     }
@@ -599,7 +736,55 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         return float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
     }
 
-    private sealed record SafetyEvaluation(bool CanLand, float Gain, string Reason, string RiskReason);
+    private static string ResolveSafetySource(params string[] reasons)
+    {
+        var source = "none";
+        foreach (var reason in reasons)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                continue;
+            }
+
+            if (reason.Contains("BMR IPC", StringComparison.Ordinal))
+            {
+                source = CombineSafetySources(source, "BMR IPC");
+            }
+
+            if (reason.Contains("BMR reflection fallback", StringComparison.Ordinal) ||
+                reason.Contains("BMR reflection", StringComparison.Ordinal) ||
+                reason.Contains("reflection fallback", StringComparison.Ordinal))
+            {
+                source = CombineSafetySources(source, "BMR reflection fallback");
+            }
+
+            if (reason.Contains("local", StringComparison.OrdinalIgnoreCase))
+            {
+                source = CombineSafetySources(source, "local");
+            }
+        }
+
+        return source;
+    }
+
+    private static string CombineSafetySources(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.Equals(left, "none", StringComparison.Ordinal))
+        {
+            return string.IsNullOrWhiteSpace(right) ? "none" : right;
+        }
+
+        if (string.IsNullOrWhiteSpace(right) ||
+            string.Equals(right, "none", StringComparison.Ordinal) ||
+            left.Contains(right, StringComparison.Ordinal))
+        {
+            return left;
+        }
+
+        return $"{left} + {right}";
+    }
+
+    private sealed record SafetyEvaluation(bool CanLand, float Gain, string Source, string Reason, string RiskReason);
     private sealed record UptimeEvaluation(float Gain, string Reason);
     private sealed record PathEvaluation(float Gain, string Reason);
     private sealed record LandingSupportEvaluation(bool CanLand, string Reason);

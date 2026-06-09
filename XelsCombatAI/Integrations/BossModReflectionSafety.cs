@@ -13,7 +13,6 @@ internal sealed class BossModReflectionSafety
     private const string BossModPluginTypeName = "BossMod.Plugin";
     private const string BossModWPosTypeName = "BossMod.WPos";
     private const string BossModHintsTypeName = "BossMod.AIHints";
-    private const string BossModActionDefinitionsTypeName = "BossMod.ActionDefinitions";
     private const string BossModNormalMovementTypeName = "BossMod.Autorotation.MiscAI.NormalMovement";
     private const double DashLockSeconds = 0.8d;
     private const int MaxLineCheckSamples = 256;
@@ -21,6 +20,7 @@ internal sealed class BossModReflectionSafety
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IPluginLog log;
     private readonly BossModRuntimeGate bossModGate;
+    private readonly BossModIpc bossMod;
     private object? bossModPlugin;
     private FieldInfo? hintsField;
     private FieldInfo? imminentSpecialModeField;
@@ -28,16 +28,16 @@ internal sealed class BossModReflectionSafety
     private FieldInfo? wposXField;
     private FieldInfo? wposZField;
     private ConstructorInfo? wposConstructor;
-    private MethodInfo? isDashDangerousMethod;
     private DateTime nextResolveAttempt = DateTime.MinValue;
     private string status = "unresolved";
     private string lastUnavailableLogStatus = string.Empty;
 
-    public BossModReflectionSafety(IDalamudPluginInterface pluginInterface, IPluginLog log, BossModRuntimeGate bossModGate)
+    public BossModReflectionSafety(IDalamudPluginInterface pluginInterface, IPluginLog log, BossModRuntimeGate bossModGate, BossModIpc bossMod)
     {
         this.pluginInterface = pluginInterface;
         this.log = log;
         this.bossModGate = bossModGate;
+        this.bossMod = bossMod;
     }
 
     public string Status => this.status;
@@ -49,7 +49,6 @@ internal sealed class BossModReflectionSafety
         $"ImminentSpecialModeField={this.imminentSpecialModeField != null}",
         $"ForcedMovementField={this.forcedMovementField != null}",
         $"WPosConstructor={this.wposConstructor != null}",
-        $"IsDashDangerousMethod={this.isDashDangerousMethod != null}",
         $"NextResolveUtc={this.nextResolveAttempt:O}");
 
     public void Reset()
@@ -61,100 +60,79 @@ internal sealed class BossModReflectionSafety
         this.wposXField = null;
         this.wposZField = null;
         this.wposConstructor = null;
-        this.isDashDangerousMethod = null;
         this.nextResolveAttempt = DateTime.MinValue;
         this.status = "unresolved";
     }
 
     public bool TryIsDashSafe(Vector3 from, Vector3 to, out string reason)
     {
-        reason = string.Empty;
-
-        if (!this.EnsureResolved())
+        if (this.bossMod.TryIsDashSafe(from, to, out var ipcSafe, out var ipcReason))
         {
-            reason = this.status;
-            return false;
+            reason = ipcReason;
+            return ipcSafe;
         }
 
-        try
+        reason = $"{ipcReason}; BMR IPC dash safety unavailable";
+        return false;
+    }
+
+    public bool TryIsFixedDashSafe(float range, bool backwards, Vector3 from, Vector3 to, out string reason)
+    {
+        if (this.bossMod.TryIsFixedDashSafe(range, backwards, out var ipcSafe, out var ipcReason))
         {
-            var hints = this.hintsField!.GetValue(this.bossModPlugin);
-            if (hints == null)
-            {
-                this.ResetWithStatus("BMR hints unavailable");
-                reason = this.status;
-                return false;
-            }
-
-            if (this.HasImminentDashBlockingMode(hints))
-            {
-                reason = "BMR imminent movement lock";
-                return false;
-            }
-
-            var fromWPos = this.CreateWPos(from);
-            var toWPos = this.CreateWPos(to);
-            var dangerous = (bool)(this.isDashDangerousMethod!.Invoke(null, [fromWPos, toWPos, hints]) ?? true);
-            if (dangerous)
-            {
-                reason = "BMR reports dash destination dangerous";
-                return false;
-            }
-
-            reason = "safe";
-            return true;
+            reason = ipcReason;
+            return ipcSafe;
         }
-        catch (Exception ex)
+
+        reason = $"{ipcReason}; BMR IPC fixed-dash safety unavailable";
+        return false;
+    }
+
+    public bool TryIsBackdashSafe(Vector3 enemyPosition, float range, Vector3 from, Vector3 to, out string reason)
+    {
+        if (this.bossMod.TryIsBackdashSafe(enemyPosition, range, out var ipcSafe, out var ipcReason))
         {
-            this.log.Verbose(ex, "Could not query reflected BossMod dash safety.");
-            this.ResetWithStatus("BMR reflection query failed");
-            reason = this.status;
-            return false;
+            reason = ipcReason;
+            return ipcSafe;
         }
+
+        reason = $"{ipcReason}; BMR IPC backdash safety unavailable";
+        return false;
     }
 
     public bool TryIsPositionSafe(Vector3 position, out bool safe, out string reason)
     {
         safe = false;
-        reason = string.Empty;
-
-        if (!this.EnsureResolved())
+        if (this.bossMod.TryIsPositionSafe(position, out safe, out var ipcReason))
         {
-            reason = this.status;
-            return false;
-        }
-
-        try
-        {
-            var hints = this.hintsField!.GetValue(this.bossModPlugin);
-            if (hints == null)
-            {
-                this.ResetWithStatus("BMR hints unavailable");
-                reason = this.status;
-                return false;
-            }
-
-            var wpos = this.CreateWPos(position);
-            safe = !(bool)(this.isDashDangerousMethod!.Invoke(null, [wpos, wpos, hints]) ?? true);
-            reason = safe ? "safe" : "BMR reports current position dangerous";
+            reason = ipcReason;
             return true;
         }
-        catch (Exception ex)
-        {
-            this.log.Verbose(ex, "Could not query reflected BossMod position safety.");
-            this.ResetWithStatus("BMR reflection query failed");
-            reason = this.status;
-            return false;
-        }
+
+        reason = $"{ipcReason}; BMR IPC position safety unavailable";
+        return false;
     }
 
     public bool TryCanAttemptDashNow(out string reason)
     {
         reason = string.Empty;
+        if (this.bossMod.TryGetSpecialMode(out var ipcMode, out var ipcActivationIn, out var ipcReason))
+        {
+            if (IsBlockingSpecialMode(ipcMode, ipcActivationIn))
+            {
+                reason = string.Create(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    $"BMR IPC imminent movement lock: {ipcMode} in {ipcActivationIn:0.0}s");
+                return false;
+            }
+
+            reason = "BMR IPC dash timing allowed";
+            return true;
+        }
 
         if (!this.EnsureResolved())
         {
-            reason = this.status;
+            reason = $"{ipcReason}; reflection fallback unavailable: {this.status}";
             return false;
         }
 
@@ -164,17 +142,17 @@ internal sealed class BossModReflectionSafety
             if (hints == null)
             {
                 this.ResetWithStatus("BMR hints unavailable");
-                reason = this.status;
+                reason = $"BMR reflection fallback unavailable: {this.status}";
                 return false;
             }
 
             if (this.HasImminentDashBlockingMode(hints))
             {
-                reason = "BMR imminent movement lock";
+                reason = "BMR reflection fallback imminent movement lock";
                 return false;
             }
 
-            reason = "BMR dash timing allowed";
+            reason = "BMR reflection fallback dash timing allowed";
             return true;
         }
         catch (Exception ex)
@@ -190,16 +168,40 @@ internal sealed class BossModReflectionSafety
     {
         destination = default;
         reason = string.Empty;
+        var ipcMovementReason = "BMR IPC navigation target not checked";
+
+        if (this.bossMod.TryGetNavigationTarget(out var ipcDestination, out var ipcReason))
+        {
+            var candidate = new Vector3(ipcDestination.X, playerPosition.Y, ipcDestination.Z);
+            if (!this.TryIsPositionSafe(candidate, out var candidateSafe, out var candidateReason))
+            {
+                ipcMovementReason = $"{ipcReason}; {candidateReason}";
+            }
+            else if (!candidateSafe)
+            {
+                ipcMovementReason = $"{ipcReason}; BMR IPC navigation target not safe";
+            }
+            else
+            {
+                destination = candidate;
+                reason = $"{ipcReason}; BMR IPC navigation target confirmed safe";
+                return true;
+            }
+        }
+        else
+        {
+            ipcMovementReason = ipcReason;
+        }
 
         if (!this.EnsureResolved())
         {
-            reason = this.status;
+            reason = $"{ipcMovementReason}; BMR reflection fallback unavailable: {this.status}";
             return false;
         }
 
         if (this.forcedMovementField == null)
         {
-            reason = "BMR ForcedMovement field not found";
+            reason = $"{ipcMovementReason}; BMR reflection fallback ForcedMovement field not found";
             return false;
         }
 
@@ -208,21 +210,21 @@ internal sealed class BossModReflectionSafety
             var hints = this.hintsField!.GetValue(this.bossModPlugin);
             if (hints == null)
             {
-                reason = "BMR hints unavailable";
+                reason = "BMR reflection fallback hints unavailable";
                 return false;
             }
 
             var rawValue = this.forcedMovementField.GetValue(hints);
             if (rawValue is not Vector3 movement)
             {
-                reason = "BMR ForcedMovement not set";
+                reason = "BMR reflection fallback ForcedMovement not set";
                 return false;
             }
 
             var xz = new Vector2(movement.X, movement.Z);
             if (xz.Length() < 0.5f)
             {
-                reason = "BMR movement vector too small";
+                reason = "BMR reflection fallback movement vector too small";
                 return false;
             }
 
@@ -235,18 +237,18 @@ internal sealed class BossModReflectionSafety
 
             if (!destSafe)
             {
-                reason = "BMR inferred destination not safe";
+                reason = "BMR reflection fallback inferred destination not safe";
                 return false;
             }
 
             destination = inferredDestination;
-            reason = "BMR movement intent confirmed safe";
+            reason = "BMR reflection fallback movement intent confirmed safe";
             return true;
         }
         catch (Exception ex)
         {
             this.log.Verbose($"Could not query BMR movement intent: {ex.Message}");
-            reason = "BMR movement intent query failed";
+            reason = "BMR reflection fallback movement intent query failed";
             return false;
         }
     }
@@ -777,8 +779,7 @@ internal sealed class BossModReflectionSafety
             this.hintsField != null &&
             this.wposXField != null &&
             this.wposZField != null &&
-            this.wposConstructor != null &&
-            this.isDashDangerousMethod != null)
+            this.wposConstructor != null)
         {
             return true;
         }
@@ -802,13 +803,11 @@ internal sealed class BossModReflectionSafety
             var assembly = plugin.GetType().Assembly;
             var hintsType = assembly.GetType(BossModHintsTypeName);
             var wposType = assembly.GetType(BossModWPosTypeName);
-            var actionDefinitionsType = assembly.GetType(BossModActionDefinitionsTypeName);
-            if (hintsType == null || wposType == null || actionDefinitionsType == null)
+            if (hintsType == null || wposType == null)
             {
                 this.ResetWithStatus($"BMR safety types not found: {FormatMissing(
                     (hintsType == null, BossModHintsTypeName),
-                    (wposType == null, BossModWPosTypeName),
-                    (actionDefinitionsType == null, BossModActionDefinitionsTypeName))}");
+                    (wposType == null, BossModWPosTypeName))}");
                 return false;
             }
 
@@ -816,21 +815,14 @@ internal sealed class BossModReflectionSafety
             var wposX = wposType.GetField("X", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             var wposZ = wposType.GetField("Z", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             var wposCtor = wposType.GetConstructor([typeof(float), typeof(float)]);
-            var isDashDangerous = actionDefinitionsType.GetMethod(
-                "IsDashDangerous",
-                BindingFlags.Public | BindingFlags.Static,
-                null,
-                [wposType, wposType, hintsType],
-                null);
 
-            if (hints == null || wposX == null || wposZ == null || wposCtor == null || isDashDangerous == null)
+            if (hints == null || wposX == null || wposZ == null || wposCtor == null)
             {
                 this.ResetWithStatus($"BMR safety members not found: {FormatMissing(
                     (hints == null, "BossMod.Plugin._hints"),
                     (wposX == null, "BossMod.WPos.X"),
                     (wposZ == null, "BossMod.WPos.Z"),
-                    (wposCtor == null, "BossMod.WPos(float, float)"),
-                    (isDashDangerous == null, "BossMod.ActionDefinitions.IsDashDangerous(WPos, WPos, AIHints)"))}");
+                    (wposCtor == null, "BossMod.WPos(float, float)"))}");
                 return false;
             }
 
@@ -841,7 +833,6 @@ internal sealed class BossModReflectionSafety
             this.wposXField = wposX;
             this.wposZField = wposZ;
             this.wposConstructor = wposCtor;
-            this.isDashDangerousMethod = isDashDangerous;
             this.status = "available";
             this.lastUnavailableLogStatus = string.Empty;
             return true;
@@ -872,11 +863,6 @@ internal sealed class BossModReflectionSafety
         return FindObject(this.pluginInterface, BossModPluginTypeName, maxDepth: 8);
     }
 
-    private object CreateWPos(Vector3 position)
-    {
-        return this.wposConstructor!.Invoke([position.X, position.Z]);
-    }
-
     private bool HasImminentDashBlockingMode(object hints)
     {
         if (this.imminentSpecialModeField == null)
@@ -904,6 +890,13 @@ internal sealed class BossModReflectionSafety
                deadline <= DateTime.Now.AddSeconds(DashLockSeconds);
     }
 
+    private static bool IsBlockingSpecialMode(BossModSpecialMode mode, float activationIn)
+    {
+        return (mode is BossModSpecialMode.Pyretic or BossModSpecialMode.NoMovement) &&
+               float.IsFinite(activationIn) &&
+               activationIn <= DashLockSeconds;
+    }
+
     private void ResetWithStatus(string newStatus)
     {
         var oldStatus = this.status;
@@ -914,7 +907,6 @@ internal sealed class BossModReflectionSafety
         this.wposXField = null;
         this.wposZField = null;
         this.wposConstructor = null;
-        this.isDashDangerousMethod = null;
         this.status = newStatus;
         if (!string.Equals(oldStatus, newStatus, StringComparison.Ordinal) &&
             !string.Equals(this.lastUnavailableLogStatus, newStatus, StringComparison.Ordinal))

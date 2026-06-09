@@ -361,8 +361,47 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-        this.DrawSectionHeader("Red Mage");
+        this.DrawSectionHeader("Pictomancer");
         var movementDisabledTooltip = !this.config.ManageMovement ? "Requires Automate movement." : null;
+        if (!this.config.ManageMovement)
+        {
+            ImGui.BeginDisabled();
+        }
+
+        changed |= this.Checkbox(
+            "Stay in Starry Muse",
+            this.config.ManagePictomancerStarryMuse,
+            this.defaultConfig.ManagePictomancerStarryMuse,
+            v => this.config.ManagePictomancerStarryMuse = v,
+            "Pictomancer: tries to stay in your Starry Muse ground effect when safe.\nDoes not place Starry Muse.",
+            movementDisabledTooltip);
+        var starryDisabledTooltip = movementDisabledTooltip ?? (!this.config.ManagePictomancerStarryMuse ? "Requires Stay in Starry Muse." : null);
+        if (!this.config.ManagePictomancerStarryMuse && this.config.ManageMovement)
+        {
+            ImGui.BeginDisabled();
+        }
+
+        changed |= this.Checkbox(
+            "Use Smudge to return",
+            this.config.UsePictomancerStarryMuseSmudge,
+            this.defaultConfig.UsePictomancerStarryMuseSmudge,
+            v => this.config.UsePictomancerStarryMuseSmudge = v,
+            "Faces the Starry Muse circle and uses Smudge only when the fixed 15y landing is inside the circle and BossMod accepts the dash as safe.\nRequires Gap closers and the PCT dash allow-list.",
+            starryDisabledTooltip);
+        if (!this.config.ManagePictomancerStarryMuse && this.config.ManageMovement)
+        {
+            ImGui.EndDisabled();
+        }
+
+        if (!this.config.ManageMovement)
+        {
+            ImGui.EndDisabled();
+        }
+
+        ImGui.Unindent(8f);
+        ImGui.Spacing();
+
+        this.DrawSectionHeader("Red Mage");
         if (!this.config.ManageMovement)
         {
             ImGui.BeginDisabled();

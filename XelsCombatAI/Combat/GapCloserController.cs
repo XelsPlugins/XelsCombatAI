@@ -873,7 +873,7 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (!mobilityEvaluator.TryValidateDashDestination(
+        if (!mobilityEvaluator.TryValidateFixedDashDestination(
             player,
             destination,
             target as IBattleChara,
@@ -885,6 +885,8 @@ internal sealed class GapCloserController(
             requireSafetyProgress: false,
             requireUptimeProgress: true,
             requireVnavReachable: false,
+            fixedDashRange: CombatConstants.FixedForwardGapCloserRange,
+            fixedDashBackwards: false,
             out var decision))
         {
             this.lastGapCloserSafety = decision.RiskReason;

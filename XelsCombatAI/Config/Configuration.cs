@@ -36,7 +36,7 @@ public sealed class Configuration : IPluginConfiguration
         new("PCT", config => config.GapCloserPCT, (config, value) => config.GapCloserPCT = value)
     ];
 
-    public int Version { get; set; } = 22;
+    public int Version { get; set; } = 24;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -52,6 +52,8 @@ public sealed class Configuration : IPluginConfiguration
     public bool UseRetrace { get; set; } = true;
     public bool ReturnToLeylines { get; set; } = true;
     public bool UseRedMageMeleeComboMovement { get; set; } = false;
+    public bool ManagePictomancerStarryMuse { get; set; } = true;
+    public bool UsePictomancerStarryMuseSmudge { get; set; } = true;
     public bool UseGapCloser { get; set; } = false;
     public bool UsePhantomGapClosers { get; set; } = false;
     public bool GapCloserPLD { get; set; } = true;
@@ -377,6 +379,16 @@ public sealed class Configuration : IPluginConfiguration
             this.ManageSocialSpacing = true;
             this.Version = 22;
         }
+
+        if (this.Version < 23)
+            this.Version = 23;
+
+        if (this.Version < 24)
+        {
+            this.ManagePictomancerStarryMuse = true;
+            this.UsePictomancerStarryMuseSmudge = true;
+            this.Version = 24;
+        }
     }
 
     internal void Clamp()
@@ -396,6 +408,8 @@ public sealed class Configuration : IPluginConfiguration
         this.PreferredForbiddenZoneDistance = DefaultPreferredForbiddenZoneDistance;
         this.MinimumGapCloserDistance = DefaultMinimumGapCloserDistance;
         this.UseRedMageMeleeComboMovement = false;
+        this.ManagePictomancerStarryMuse = true;
+        this.UsePictomancerStarryMuseSmudge = true;
         this.TankIgnoreFrontConeMovement = false;
         this.TankKeepFrontConeAwayFromParty = false;
         this.TankTargetLostTrashAggro = false;
@@ -419,6 +433,8 @@ public sealed class Configuration : IPluginConfiguration
         this.UseRetrace = true;
         this.ReturnToLeylines = true;
         this.UseRedMageMeleeComboMovement = false;
+        this.ManagePictomancerStarryMuse = true;
+        this.UsePictomancerStarryMuseSmudge = true;
         this.UseGapCloser = false;
         this.UsePhantomGapClosers = false;
         this.SetAllGapCloserJobs(true);

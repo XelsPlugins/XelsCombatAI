@@ -67,6 +67,10 @@ internal static class ActionUse
     public const uint RedMageGrandImpactReadyStatusId = 3877;
     public const uint SwiftcastStatusId = 167;
     public const uint SageIcarusActionId = 24295;
+    public const uint PictomancerStarryMuseActionId = 34675;
+    public const uint PictomancerStarryMuseStatusId = 3685;
+    public const uint PictomancerHyperphantasiaStatusId = 3688;
+    public const uint PictomancerInspirationStatusId = 3689;
     public const uint PictomancerSmudgeActionId = 34684;
     public const uint DancerEnAvantActionId = 16010;
     public const uint BardRepellingShotActionId = 112;

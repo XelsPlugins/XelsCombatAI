@@ -531,7 +531,7 @@ internal sealed class HealerAoePositioningController(
             return false;
         }
 
-        if (!mobilityEvaluator.TryValidateDashDestination(
+        if (!mobilityEvaluator.TryValidateFixedDashDestination(
             player,
             destination,
             services.TargetManager.Target as IBattleChara,
@@ -543,6 +543,8 @@ internal sealed class HealerAoePositioningController(
             requireSafetyProgress: false,
             requireUptimeProgress: false,
             requireVnavReachable: true,
+            fixedDashRange: CombatConstants.FixedForwardGapCloserRange,
+            fixedDashBackwards: false,
             out var decision))
         {
             this.lastReason = $"Aetherial Shift coverage rejected: {decision.RiskReason}";

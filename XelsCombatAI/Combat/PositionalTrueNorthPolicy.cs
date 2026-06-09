@@ -27,7 +27,7 @@ internal static class PositionalTrueNorthPolicy
 
         if (actionPositional != requiredPositional)
         {
-            reason = $"Avarice {requiredPositional} does not match RSR next GCD {action.ActionName} {actionPositional}";
+            reason = $"positional intent {requiredPositional} does not match RSR next GCD {action.ActionName} {actionPositional}";
             return false;
         }
 
@@ -105,7 +105,7 @@ internal static class PositionalTrueNorthPolicy
     internal static float EstimateMovementSeconds(float moveDistance)
         => moveDistance / EstimatedCombatMoveSpeed + ArrivalBufferSeconds;
 
-    private static bool TryGetActionPositional(uint actionId, out Positional positional)
+    internal static bool TryGetActionPositional(uint actionId, out Positional positional)
     {
         positional = actionId switch
         {
