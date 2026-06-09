@@ -20,13 +20,13 @@ While you are in combat, the plugin automatically:
 - **Picks better AoE and trash targets** when target choice affects how many enemies you hit
 - **Can help tanks recover trash aggro** by selecting nearby enemies that peel to party members, or by using ranged attacks/Provoke without walking to them
 - **Can adjust tank behavior for persistent front cleaves** by ignoring BossMod cone movement and preferring tank spots that keep the cleave away from the visible party
-- **Keeps healers in comfortable party-healing range** by pre-positioning toward safe spots that preserve more AoE heal coverage, without interrupting casts or competing with active BossMod mechanic positioning
+- **Keeps party members in healer range** by pre-positioning healers toward safe spots that preserve AoE heal coverage, and by moving DPS into a visible healer's AoE healing range before raidwide or shared raid damage. Tanks keep their tanking position.
 - **Avoids awkward boss-center positions** and small enemy hitboxes when choosing movement goals
-- **Prefers helpful defensive ground effects** such as Asylum, Sacred Soil, Earthly Star, and Collective Unconscious
+- **Prefers helpful defensive ground effects for non-tanks** such as Asylum, Sacred Soil, Earthly Star, and Collective Unconscious, while tanks keep their tanking position instead of moving for healing zones
 - **Prefers Paladin Passage of Arms protection** by letting BossMod prefer the protected cone behind a party Paladin while the buff is active
 - **Avoids hugging the arena edge** as a weak preference when stronger movement goals do not matter
 - **Avoids pixel-perfect player stacks** by preferring a tiny safe offset from visible player party members, including during mechanics after BossMod reports the current position safe
-- **Shows a decision overlay** with projected in-world markers for current movement decisions, candidates, and debug context, plus an optional movable debug HUD (off by default)
+- **Shows a decision overlay** with projected in-world markers for current movement decisions and candidates, plus an optional compact status HUD for what is happening now and what is likely next (off by default)
 - **Can write opt-in run-review logs** for offline analysis with BossMod Reborn replay files (off by default)
 - **Pauses automated movement** briefly when you move manually, including remapped movement or gamepad input reported by BossMod, and briefly lowers the same advisory movement preference if your input looks like a correction
 - **Manages True North** usage and disables RSR's Auto True North to prevent conflicts (optional, requires RSR)
@@ -109,7 +109,7 @@ When the Gap closers option is enabled, safe-position escape dashes follow Movem
 
 ### Troubleshooting tab
 
-**Troubleshooting** — Show the movement overlay, toggle the movable debug HUD, copy a debug snapshot, or enable run-review logging.
+**Troubleshooting** — Show the movement overlay, toggle the compact status HUD, copy a debug snapshot, or enable run-review logging.
 
 Run-review logging is off by default. When enabled, the plugin writes one detailed JSONL file for the current duty, matching BossMod Reborn's whole-replay style so dungeon pulls can be compared in one analyzer run. If no duty is active, it falls back to a single combat log. Files are written to the plugin config directory under `XelsCombatAI/combat-logs`. Combat is sampled at the normal review cadence and downtime is sampled slower to keep resource cost bounded. Movement review data includes BossMod movement, goal-zone, and safety-raster diagnostics; it no longer emits the removed movement-intent planner candidate model.
 

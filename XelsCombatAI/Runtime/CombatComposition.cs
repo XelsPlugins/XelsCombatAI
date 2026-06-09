@@ -58,15 +58,16 @@ internal sealed class CombatComposition : IDisposable
         targetUptimePlanner.TargetUptimeRangeOverride = () =>
             redMageMeleeComboController.GetTargetUptimeRangeOverride() ??
             aoePackPositioningController.GetTargetUptimeRangeOverride();
-        var positionalsController = new PositionalsController(config, services, rotationSolver, rotationSolverActions, bossModSafety, positional => presetController!.SetPositional(positional), updateDtr, () => aoePackPositioningController.Status);
+        var positionalsController = new PositionalsController(config, services, rotationSolver, rotationSolverActions, bossModSafety, positional => presetController!.SetPositional(positional), updateDtr, () => aoePackPositioningController.Status, () => runtime?.AutomatedMovementSuppressed == true);
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
         var healerAoePositioningController = new HealerAoePositioningController(config, services, bossMod, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), mobilityDecisionEvaluator, facingController, () => mechanicPressure.Current);
+        var partyHealerRangePositioningController = new PartyHealerRangePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
         var pictomancerStarryMusePositioningController = new PictomancerStarryMusePositioningController(config, services, rotationSolverActions, mobilityDecisionEvaluator, facingController, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
         var bossCenterAvoidanceController = new BossCenterAvoidanceController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
         var socialSpacingPositioningController = new SocialSpacingPositioningController(config, services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true);
         var tankBehaviorController = new TankBehaviorController(config, services, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
-        IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, survivabilityZonePositioningController, pictomancerStarryMusePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController, tankBehaviorController];
+        IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, partyHealerRangePositioningController, survivabilityZonePositioningController, tankBehaviorController, positionalsController, pictomancerStarryMusePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController];
         var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, legacyMovementContributors, manualCorrectionFeedback);
         var gapCloserController = new GapCloserController(
             config,
@@ -123,6 +124,7 @@ internal sealed class CombatComposition : IDisposable
             aoePackPositioningController,
             passageOfArmsPositioningController,
             healerAoePositioningController,
+            partyHealerRangePositioningController,
             survivabilityZonePositioningController,
             pictomancerStarryMusePositioningController,
             arenaEdgePositioningController,
@@ -145,16 +147,25 @@ internal sealed class CombatComposition : IDisposable
             config,
             services,
             aoePackPositioningController,
-            () => targetUptimePlanner.CurrentTargetHasBossModule(),
             passageOfArmsPositioningController,
             healerAoePositioningController,
+            partyHealerRangePositioningController,
             survivabilityZonePositioningController,
             pictomancerStarryMusePositioningController,
+            bossCenterAvoidanceController,
             bossModSafety,
             mobilityDecisionEvaluator,
             gapCloserController,
             escapeGapCloserController,
             redMageMeleeComboController,
+            () => presetController?.LastPositional ?? Positional.Any,
+            () => positionalsController.HasActiveTrueNorth(),
+            () => presetController?.LastTargetUptimeRange ?? -1f,
+            () => presetController?.LastTargetUptimeRangeSource ?? "none",
+            () => presetController?.LastTargetUptimeRangeReason ?? "not checked",
+            () => presetController?.LastLeylinesBetweenTheLines,
+            () => presetController?.LastLeylinesRetrace,
+            () => presetController?.LastLeylinesGoal,
             rotationSolverActions);
 
         return new CombatComposition(runtime, decisionOverlay, jobRangeProvider, rotationSolverActions, pictomancerStarryMusePositioningController);

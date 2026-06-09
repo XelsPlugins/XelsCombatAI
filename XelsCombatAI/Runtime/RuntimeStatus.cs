@@ -72,6 +72,7 @@ internal sealed record RuntimeStatus(
     AoePackPositioningStatus AoePackPositioning,
     PassageOfArmsPositioningStatus PassageOfArmsPositioning,
     HealerAoePositioningStatus HealerCoveragePositioning,
+    PartyHealerRangePositioningStatus PartyHealerRangePositioning,
     SurvivabilityZonePositioningStatus SurvivabilityZonePositioning,
     RedMageMeleeComboStatus RedMageMeleeCombo,
     string ManualMovementInput,

@@ -166,6 +166,12 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
             return;
         }
 
+        if (ShouldSkipDefensiveZoneMovementForRole(player.ClassJob.RowId))
+        {
+            this.SetInactive("tank role skips defensive zone movement");
+            return;
+        }
+
         if (!this.EnsureResolved(hints.GetType()))
         {
             return;
@@ -224,6 +230,13 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
 
         var player = services.ObjectTable.LocalPlayer;
         if (player == null || services.Condition[ConditionFlag.Unconscious])
+        {
+            this.lastOverlay = null;
+            this.nextOverlayRefresh = DateTime.MinValue;
+            return;
+        }
+
+        if (ShouldSkipDefensiveZoneMovementForRole(player.ClassJob.RowId))
         {
             this.lastOverlay = null;
             this.nextOverlayRefresh = DateTime.MinValue;
@@ -556,6 +569,11 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
     private static SurvivabilityZoneGoalPlan SelectBest(SurvivabilityZoneGoalPlan? current, SurvivabilityZoneGoalPlan candidate)
     {
         return current == null || candidate.DistanceToCenter < current.DistanceToCenter ? candidate : current;
+    }
+
+    internal static bool ShouldSkipDefensiveZoneMovementForRole(uint classJobId)
+    {
+        return JobRoles.IsTankJob(classJobId);
     }
 
     private static bool IsPlacedZoneSource(IGameObject obj)

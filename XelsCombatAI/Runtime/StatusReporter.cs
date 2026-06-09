@@ -10,7 +10,7 @@ internal static class StatusReporter
 {
     public static string Build(RuntimeStatus status)
     {
-        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, MechanicPressure={status.MechanicPressure.PrimaryPressure}, LastPositional={status.LastPositional}, PositionalIntent={status.PositionalIntentSource}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, BmrRange={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, Facing={FormatFacingSummary(status.Facing)}, Mobility={status.MobilityDecision.State}/{status.MobilityDecision.IntentLabel}/{status.MobilityDecision.SafetySource}, TrashPull={status.AoePackPositioning.TrashPull.Phase}/{status.AoePackPositioning.TrashPull.Reason}, AoEPack={status.AoePackPositioning.LastReason}, HealerCoverage={status.HealerCoveragePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, RedMageMelee={status.RedMageMeleeCombo.Mode}/{status.RedMageMeleeCombo.LastReason}, Initialized={status.InitializedPreset}";
+        return $"Enabled={status.Enabled}, InCombat={status.InCombat}, Dead={status.IsDead}, Dependencies={(status.DependencyWarning ?? "OK")}, TrueNorthManagement={(status.TrueNorthWarning ?? status.RsrTrueNorthDisabled?.ToString() ?? "NotManaged")}, Preset={BossModIpc.DefaultPresetName}, MechanicPressure={status.MechanicPressure.PrimaryPressure}, LastPositional={status.LastPositional}, PositionalIntent={status.PositionalIntentSource}, TrueNorthCharges={status.TrueNorthCharges}, TrueNorthActive={status.TrueNorthActive}, BmrRange={status.LastTargetUptimeRange:0.0}, Movement={status.LastMovement}, MovementRange={status.LastMovementRangeStrategy}, SafetyBuffer={status.LastForbiddenZoneCushion}, MovementSuppressed={status.AutomatedMovementSuppressed}, Facing={FormatFacingSummary(status.Facing)}, Mobility={status.MobilityDecision.State}/{status.MobilityDecision.IntentLabel}/{status.MobilityDecision.SafetySource}, TrashPull={status.AoePackPositioning.TrashPull.Phase}/{status.AoePackPositioning.TrashPull.Reason}, AoEPack={status.AoePackPositioning.LastReason}, HealerCoverage={status.HealerCoveragePositioning.LastReason}, PartyHealerRange={status.PartyHealerRangePositioning.LastReason}, Passage={status.PassageOfArmsPositioning.LastReason}, SurvZone={status.SurvivabilityZonePositioning.LastReason}, RedMageMelee={status.RedMageMeleeCombo.Mode}/{status.RedMageMeleeCombo.LastReason}, Initialized={status.InitializedPreset}";
     }
 
     public static string BuildDebug(Configuration config, RuntimeStatus status)
@@ -182,6 +182,7 @@ internal static class StatusReporter
         Append(builder, "AoePackGoalMembers", status.AoePackPositioning.LastReason);
         Append(builder, "PassageGoalMembers", status.PassageOfArmsPositioning.LastReason);
         Append(builder, "HealerCoverageGoalMembers", status.HealerCoveragePositioning.LastReason);
+        Append(builder, "PartyHealerRangeGoalMembers", status.PartyHealerRangePositioning.LastReason);
         Append(builder, "SurvivabilityZoneGoalMembers", status.SurvivabilityZonePositioning.LastReason);
         Append(builder, "ArenaEdge", status.ArenaEdgeReason);
         builder.AppendLine();
@@ -236,6 +237,15 @@ internal static class StatusReporter
         Append(builder, "PartyMembers", status.HealerCoveragePositioning.PartyMembers);
         Append(builder, "CoveredMembers", status.HealerCoveragePositioning.CoveredMembers);
         Append(builder, "DistanceToCoveragePosition", status.HealerCoveragePositioning.DistanceToCenter);
+        builder.AppendLine();
+
+        AppendSection(builder, "Party Healer Range");
+        Append(builder, "HookState", status.PartyHealerRangePositioning.HookState);
+        Append(builder, "LastReason", status.PartyHealerRangePositioning.LastReason);
+        Append(builder, "Injected", status.PartyHealerRangePositioning.Injected);
+        Append(builder, "HealerName", status.PartyHealerRangePositioning.HealerName);
+        Append(builder, "DistanceToHealer", status.PartyHealerRangePositioning.DistanceToHealer);
+        Append(builder, "DistanceToEntry", status.PartyHealerRangePositioning.DistanceToEntry);
         builder.AppendLine();
 
         AppendSection(builder, "Survivability Zone Positioning");

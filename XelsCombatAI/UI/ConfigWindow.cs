@@ -258,18 +258,18 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
 
         changed |= this.Checkbox(
-            "Stay in healer range (healers only)",
+            "Stay in healer range",
             this.config.ManageHealerCoverageZone,
             this.defaultConfig.ManageHealerCoverageZone,
             v => this.config.ManageHealerCoverageZone = v,
-            "Healers only: prefers safe spots where more party members are comfortably in AoE healing range.\nHolds during casts and active BossMod mechanic positioning.",
+            "Healers prefer safe spots where more party members are comfortably in AoE healing range.\nDPS move into a visible healer's AoE healing range before raidwide or shared raid damage.\nTanks keep their tanking position.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Stand in defensive ground effects",
             this.config.ManageDefensiveGroundZonePositioning,
             this.defaultConfig.ManageDefensiveGroundZonePositioning,
             v => this.config.ManageDefensiveGroundZonePositioning = v,
-            "Stands in friendly ground effects when safe, such as Asylum or Sacred Soil.",
+            "Non-tanks only: stands in friendly ground effects when safe, such as Asylum or Sacred Soil.\nTanks keep their tanking position instead of moving for healing zones.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Stand behind Passage of Arms",
@@ -542,7 +542,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         if (!this.config.ShowDecisionOverlay)
             ImGui.BeginDisabled();
         changed |= this.Checkbox(
-            "Show overlay debug HUD",
+            "Show overlay status HUD",
             this.config.ShowDecisionOverlayHud,
             this.defaultConfig.ShowDecisionOverlayHud,
             v => this.config.ShowDecisionOverlayHud = v,
