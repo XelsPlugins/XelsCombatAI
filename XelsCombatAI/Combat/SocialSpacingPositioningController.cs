@@ -26,6 +26,8 @@ internal sealed class SocialSpacingPositioningController(
     private const float NearbyPlayerConsiderationDistance = 3f;
     private const float LocalFalloffStartDistance = 1.25f;
     private const float MaxComfortMoveDistance = 2.25f;
+    private const float MechanicStackClumpRadius = 1.75f;
+    private const int MechanicStackClumpMinimumAllies = 2;
     private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
     private FieldInfo? goalZonesField;
@@ -90,7 +92,7 @@ internal sealed class SocialSpacingPositioningController(
             return;
         }
 
-        if (this.ShouldSuppressForMechanicSafety(hints, player, out var mechanicReason))
+        if (this.ShouldSuppressForMechanicSafety(hints, player, out var mechanicHintsActive, out var mechanicReason))
         {
             this.lastReason = mechanicReason;
             return;
@@ -111,6 +113,12 @@ internal sealed class SocialSpacingPositioningController(
         if (!visiblePlayers.Any(position => Vector2.Distance(position, player2) <= ActivationDistance))
         {
             this.lastReason = "not exactly stacked";
+            return;
+        }
+
+        if (mechanicHintsActive && IsMechanicStackClump(player2, visiblePlayers))
+        {
+            this.lastReason = "party mechanic stack clump";
             return;
         }
 
@@ -178,8 +186,10 @@ internal sealed class SocialSpacingPositioningController(
         return true;
     }
 
-    private bool ShouldSuppressForMechanicSafety(object hints, IBattleChara player, out string reason)
+    private bool ShouldSuppressForMechanicSafety(object hints, IBattleChara player, out bool mechanicHintsActive, out string reason)
     {
+        mechanicHintsActive = false;
+
         if (this.bmrMoveRequested || this.bmrMoveImminent)
         {
             reason = "BossMod safety movement active";
@@ -192,7 +202,7 @@ internal sealed class SocialSpacingPositioningController(
             return true;
         }
 
-        var mechanicHintsActive =
+        mechanicHintsActive =
             this.goalZonesField?.GetValue(hints) is ICollection { Count: > 0 } ||
             this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 };
         if (!mechanicHintsActive)
@@ -215,6 +225,20 @@ internal sealed class SocialSpacingPositioningController(
 
         reason = string.Empty;
         return false;
+    }
+
+    private static bool IsMechanicStackClump(Vector2 playerPosition, IReadOnlyCollection<Vector2> visiblePlayers)
+    {
+        var clumpedAllies = 0;
+        foreach (var position in visiblePlayers)
+        {
+            if (Vector2.Distance(position, playerPosition) <= MechanicStackClumpRadius)
+            {
+                clumpedAllies++;
+            }
+        }
+
+        return clumpedAllies >= MechanicStackClumpMinimumAllies;
     }
 
     private Delegate CreateGoalDelegate()

@@ -10,6 +10,7 @@ using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.ClientState.Statuses;
+using ECommons.GameFunctions;
 using ECommons.Hooks;
 using ECommons.Hooks.ActionEffectTypes;
 using XelsCombatAI.Game;
@@ -43,6 +44,7 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
     private const float ZoneEntryMargin = 1.5f;
     private const float PreferredEntryScore = GoalZoneScorePolicy.StrongPreference;
     private const float InsideScore = GoalZoneScorePolicy.NormalPreference;
+    private const float LowHealthThreshold = 0.60f;
     private static readonly TimeSpan CachedZoneGrace = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan OverlayRefreshInterval = TimeSpan.FromMilliseconds(250);
     private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -58,6 +60,7 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
     private readonly Configuration config;
     private readonly DalamudServices services;
     private readonly Func<bool> automatedMovementSuppressed;
+    private readonly Func<BossModMechanicPressure> mechanicPressure;
     private FieldInfo? goalZonesField;
     private FieldInfo? wposXField;
     private FieldInfo? wposZField;
@@ -79,11 +82,13 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
     public SurvivabilityZonePositioningController(
         Configuration config,
         DalamudServices services,
-        Func<bool> automatedMovementSuppressed)
+        Func<bool> automatedMovementSuppressed,
+        Func<BossModMechanicPressure> mechanicPressure)
     {
         this.config = config;
         this.services = services;
         this.automatedMovementSuppressed = automatedMovementSuppressed;
+        this.mechanicPressure = mechanicPressure;
         ActionEffect.ActionEffectEvent += this.OnActionEffect;
     }
 
@@ -172,6 +177,13 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
             return;
         }
 
+        var pressure = this.mechanicPressure();
+        if (!this.ShouldMoveForDefensiveGroundZone(player, pressure))
+        {
+            this.SetInactive("no defensive damage pressure");
+            return;
+        }
+
         if (!this.EnsureResolved(hints.GetType()))
         {
             return;
@@ -237,6 +249,13 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
         }
 
         if (ShouldSkipDefensiveZoneMovementForRole(player.ClassJob.RowId))
+        {
+            this.lastOverlay = null;
+            this.nextOverlayRefresh = DateTime.MinValue;
+            return;
+        }
+
+        if (!this.ShouldMoveForDefensiveGroundZone(player, this.mechanicPressure()))
         {
             this.lastOverlay = null;
             this.nextOverlayRefresh = DateTime.MinValue;
@@ -574,6 +593,47 @@ internal sealed class SurvivabilityZonePositioningController : IBossModGoalZoneC
     internal static bool ShouldSkipDefensiveZoneMovementForRole(uint classJobId)
     {
         return JobRoles.IsTankJob(classJobId);
+    }
+
+    private bool ShouldMoveForDefensiveGroundZone(IBattleChara player, BossModMechanicPressure pressure)
+    {
+        return ShouldMoveForDefensiveGroundZone(player, pressure, this.IsPlayerTargetedByHostile(player));
+    }
+
+    internal static bool ShouldMoveForDefensiveGroundZone(IBattleChara player, BossModMechanicPressure pressure, bool playerHasPersonalThreat)
+    {
+        var personalHeavyDamageSoon = pressure.TankbusterSoon ||
+                                      (pressure.NextDamageType == BossModPredictedDamageType.Tankbuster && pressure.DamageSoon);
+        return pressure.RaidwideSoon ||
+               pressure.SharedDamageSoon ||
+               (personalHeavyDamageSoon && playerHasPersonalThreat) ||
+               IsLowHealth(player);
+    }
+
+    private bool IsPlayerTargetedByHostile(IBattleChara player)
+    {
+        foreach (var actor in this.services.ObjectTable.OfType<IBattleChara>())
+        {
+            if (actor.TargetObjectId == player.GameObjectId &&
+                actor.CurrentHp > 0 &&
+                !actor.IsDead &&
+                actor.IsHostile())
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsLowHealth(IBattleChara player)
+    {
+        if (player.MaxHp == 0)
+        {
+            return false;
+        }
+
+        return (float)player.CurrentHp / player.MaxHp <= LowHealthThreshold;
     }
 
     private static bool IsPlacedZoneSource(IGameObject obj)

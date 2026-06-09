@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Numerics;
+using Dalamud.Game.ClientState.Objects.Types;
 
 namespace XelsCombatAI.Runtime;
 
@@ -13,8 +16,14 @@ internal sealed class BossModPresetController(
     EscapeGapCloserController escapeGapCloserController,
     RedMageMeleeComboController redMageMeleeComboController,
     PictomancerStarryMusePositioningController pictomancerStarryMusePositioningController,
-    Func<BossModMechanicPressure> mechanicPressure)
+    Func<BossModMechanicPressure> mechanicPressure,
+    Func<BossModMovementDiagnostics> bossModMovementDiagnostics)
 {
+    private static readonly TimeSpan UptimeWalkSuppressionLinger = TimeSpan.FromMilliseconds(750);
+    private const float MaximumSuppressedUptimeRange = 8f;
+    private const float UptimeRangeSlack = 0.5f;
+    private const int BossRingSampleCount = 24;
+
     public Positional LastPositional { get; private set; } = Positional.Any;
     public float LastTargetUptimeRange { get; private set; } = -1f;
     public string LastTargetUptimeRangeSource { get; private set; } = "none";
@@ -27,6 +36,9 @@ internal sealed class BossModPresetController(
     public bool? LastLeylinesGoal { get; private set; }
     public bool InitializedPreset { get; private set; }
     private bool bossModPositionalNeutral;
+    private DateTime suppressUptimeWalkUntil = DateTime.MinValue;
+    private ulong suppressedUptimeTargetId;
+    private string lastUptimeWalkSuppressionReason = "not suppressed";
 
     public bool Initialize()
     {
@@ -105,13 +117,21 @@ internal sealed class BossModPresetController(
             var targetUptimeRange = targetUptimePlanner.CalculateTargetUptimeRange();
             this.LastTargetUptimeRangeSource = targetUptimePlanner.LastTargetUptimeRangeSource;
             this.LastTargetUptimeRangeReason = targetUptimePlanner.LastTargetUptimeRangeReason;
+            var suppressUptimeWalk = this.ShouldSuppressUptimeWalk(targetUptimeRange, bossModMovementDiagnostics(), out var uptimeSuppressionReason);
+            if (suppressUptimeWalk)
+            {
+                targetUptimeRange = Configuration.InternalDisabledUptimeRange;
+                this.LastTargetUptimeRangeSource = "local";
+                this.LastTargetUptimeRangeReason = $"{this.LastTargetUptimeRangeReason}; {uptimeSuppressionReason}";
+            }
+
             this.SetTargetUptimeRange(targetUptimeRange);
 
             this.SetForbiddenZoneCushion(config.ManageForbiddenZoneDistance
                 ? MapForbiddenZoneCushion(config.PreferredForbiddenZoneDistance)
                 : "None");
 
-            this.SetMovementRangeStrategy(config.ManageMovement
+            this.SetMovementRangeStrategy(config.ManageMovement && !suppressUptimeWalk
                 ? MapCombatStyle(config.CombatStyle)
                 : "Any");
 
@@ -155,6 +175,9 @@ internal sealed class BossModPresetController(
         this.LastLeylinesRetrace = null;
         this.LastLeylinesGoal = null;
         this.bossModPositionalNeutral = false;
+        this.suppressUptimeWalkUntil = DateTime.MinValue;
+        this.suppressedUptimeTargetId = 0;
+        this.lastUptimeWalkSuppressionReason = "reset";
         positionalsController.Reset();
         gapCloserController.Reset();
         escapeGapCloserController.Reset();
@@ -237,6 +260,151 @@ internal sealed class BossModPresetController(
         {
             this.LastMovementRangeStrategy = strategy;
         }
+    }
+
+    private bool ShouldSuppressUptimeWalk(float targetUptimeRange, BossModMovementDiagnostics movement, out string reason)
+    {
+        reason = string.Empty;
+        var now = DateTime.UtcNow;
+        var player = services.ObjectTable.LocalPlayer;
+        if (!config.ManageMovement ||
+            targetUptimeRange <= 0f ||
+            targetUptimeRange > MaximumSuppressedUptimeRange ||
+            player == null ||
+            player.IsDead ||
+            player.CurrentHp == 0 ||
+            services.TargetManager.Target is not IBattleChara target ||
+            target.IsDead ||
+            target.CurrentHp == 0 ||
+            !targetUptimePlanner.CurrentTargetHasBossModule())
+        {
+            this.ClearUptimeWalkSuppression();
+            return false;
+        }
+
+        var distanceToHitbox = Geometry.DistanceToHitbox(player.Position, player.HitboxRadius, target.Position, target.HitboxRadius);
+        if (distanceToHitbox <= targetUptimeRange + UptimeRangeSlack)
+        {
+            this.ClearUptimeWalkSuppression();
+            return false;
+        }
+
+        if (!HasMechanicReengageBlocker(movement.HintDetails))
+        {
+            this.ClearUptimeWalkSuppression();
+            return false;
+        }
+
+        if (this.suppressedUptimeTargetId == target.GameObjectId &&
+            now < this.suppressUptimeWalkUntil)
+        {
+            reason = this.lastUptimeWalkSuppressionReason;
+            return true;
+        }
+
+        if (HasClearImmediateWaypoint(player.Position, movement))
+        {
+            this.ClearUptimeWalkSuppression();
+            return false;
+        }
+
+        if (!this.TryFindSafeBossRingPoint(player, target, targetUptimeRange, out var candidate, out var candidateReason))
+        {
+            this.ClearUptimeWalkSuppression();
+            reason = candidateReason;
+            return false;
+        }
+
+        if (!bossModSafety.TryCheckNavigationLine(player.Position, candidate, out var lineCheck) ||
+            lineCheck.Clear)
+        {
+            this.ClearUptimeWalkSuppression();
+            return false;
+        }
+
+        reason = $"uptime walk held: {lineCheck.Reason} blocks boss re-engage; safe dash may still be used if available";
+        this.suppressedUptimeTargetId = target.GameObjectId;
+        this.suppressUptimeWalkUntil = now.Add(UptimeWalkSuppressionLinger);
+        this.lastUptimeWalkSuppressionReason = reason;
+        return true;
+    }
+
+    internal static bool HasMechanicReengageBlocker(BossModHintDiagnostics hints)
+    {
+        return hints.ForbiddenZones.GetValueOrDefault() > 0 ||
+               hints.TemporaryObstacles.GetValueOrDefault() > 0 ||
+               hints.ForbiddenDirections.GetValueOrDefault() > 0 ||
+               (hints.ForcedMovement is { } forcedMovement && XzLengthSquared(forcedMovement) > 0.01f) ||
+               HasActiveSpecialMode(hints.ImminentSpecialMode);
+    }
+
+    private static bool HasActiveSpecialMode(string? mode)
+    {
+        return !string.IsNullOrWhiteSpace(mode) &&
+               !string.Equals(mode, "<none>", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(mode, "none", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool HasClearImmediateWaypoint(Vector3 playerPosition, BossModMovementDiagnostics movement)
+    {
+        if (!movement.NavigationNextWaypointPosition.HasValue)
+        {
+            return false;
+        }
+
+        var waypoint = ToPlayerPlane(playerPosition, movement.NavigationNextWaypointPosition.Value);
+        return bossModSafety.TryCheckNavigationLine(playerPosition, waypoint, out var waypointLine) &&
+               waypointLine.Clear;
+    }
+
+    private bool TryFindSafeBossRingPoint(IBattleChara player, IBattleChara target, float targetUptimeRange, out Vector3 point, out string reason)
+    {
+        var ringRadius = target.HitboxRadius + player.HitboxRadius + MathF.Max(CombatConstants.MeleeActionRange, targetUptimeRange);
+        foreach (var candidate in EnumerateBossRingCandidates(player.Position, target.Position, ringRadius))
+        {
+            if (bossModSafety.TryIsPositionSafe(candidate, out var safe, out reason) && safe)
+            {
+                point = candidate;
+                return true;
+            }
+        }
+
+        point = default;
+        reason = "no safe boss re-engage point found";
+        return false;
+    }
+
+    private static IEnumerable<Vector3> EnumerateBossRingCandidates(Vector3 playerPosition, Vector3 targetPosition, float ringRadius)
+    {
+        var toPlayer = playerPosition - targetPosition;
+        toPlayer.Y = 0f;
+        if (toPlayer.LengthSquared() > 0.0001f)
+        {
+            var direction = Vector3.Normalize(toPlayer);
+            yield return new Vector3(targetPosition.X + direction.X * ringRadius, playerPosition.Y, targetPosition.Z + direction.Z * ringRadius);
+        }
+
+        for (var i = 0; i < BossRingSampleCount; i++)
+        {
+            var angle = i * (MathF.Tau / BossRingSampleCount);
+            yield return new Vector3(
+                targetPosition.X + MathF.Cos(angle) * ringRadius,
+                playerPosition.Y,
+                targetPosition.Z + MathF.Sin(angle) * ringRadius);
+        }
+    }
+
+    private static Vector3 ToPlayerPlane(Vector3 playerPosition, Vector2 position)
+        => new(position.X, playerPosition.Y, position.Y);
+
+    private static float XzLengthSquared(Vector3 vector)
+        => (vector.X * vector.X) + (vector.Z * vector.Z);
+
+    private void ClearUptimeWalkSuppression()
+    {
+        this.suppressUptimeWalkUntil = DateTime.MinValue;
+        this.suppressedUptimeTargetId = 0;
+        this.lastUptimeWalkSuppressionReason = "not suppressed";
     }
 
     private static string MapCombatStyle(CombatStyle style)

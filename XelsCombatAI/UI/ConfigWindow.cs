@@ -230,7 +230,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.ManageSocialSpacing,
             this.defaultConfig.ManageSocialSpacing,
             v => this.config.ManageSocialSpacing = v,
-            "When nearly overlapping a visible player party member, prefers a nearby safe offset.\nDuring mechanics, waits until BossMod says your current position is safe.",
+            "When nearly overlapping a visible player party member, prefers a nearby safe offset.\nDuring mechanics, waits until BossMod says your current position is safe and stays out of intentional party clumps.",
             movementDisabledTooltip);
         changed |= this.Checkbox("Pause when I move", this.config.RespectManualMovement, this.defaultConfig.RespectManualMovement, v => this.config.RespectManualMovement = v, disabledTooltip: movementDisabledTooltip);
         changed |= this.Checkbox(
@@ -269,7 +269,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.config.ManageDefensiveGroundZonePositioning,
             this.defaultConfig.ManageDefensiveGroundZonePositioning,
             v => this.config.ManageDefensiveGroundZonePositioning = v,
-            "Non-tanks only: stands in friendly ground effects when safe, such as Asylum or Sacred Soil.\nTanks keep their tanking position instead of moving for healing zones.",
+            "Non-tanks only: stands in friendly ground effects when safe, such as Asylum or Sacred Soil.\nOnly moves for incoming raid damage, shared damage, heavy personal damage, or low health.\nTanks keep their tanking position instead of moving for healing zones.",
             movementDisabledTooltip);
         changed |= this.Checkbox(
             "Stand behind Passage of Arms",

@@ -22,10 +22,10 @@ While you are in combat, the plugin automatically:
 - **Can adjust tank behavior for persistent front cleaves** by ignoring BossMod cone movement and preferring tank spots that keep the cleave away from the visible party
 - **Keeps party members in healer range** by pre-positioning healers toward safe spots that preserve AoE heal coverage, and by moving DPS into a visible healer's AoE healing range before raidwide or shared raid damage. Tanks keep their tanking position.
 - **Avoids awkward boss-center positions** and small enemy hitboxes when choosing movement goals
-- **Prefers helpful defensive ground effects for non-tanks** such as Asylum, Sacred Soil, Earthly Star, and Collective Unconscious, while tanks keep their tanking position instead of moving for healing zones
+- **Prefers helpful defensive ground effects for non-tanks** such as Asylum, Sacred Soil, Earthly Star, and Collective Unconscious when raid damage, shared damage, heavy personal damage, or low health makes them useful. Tanks keep their tanking position instead of moving for healing zones
 - **Prefers Paladin Passage of Arms protection** by letting BossMod prefer the protected cone behind a party Paladin while the buff is active
 - **Avoids hugging the arena edge** as a weak preference when stronger movement goals do not matter
-- **Avoids pixel-perfect player stacks** by preferring a tiny safe offset from visible player party members, including during mechanics after BossMod reports the current position safe
+- **Avoids pixel-perfect player stacks** by preferring a tiny safe offset from visible player party members, while staying out of intentional party clumps during mechanics
 - **Shows a decision overlay** with projected in-world markers for current movement decisions and candidates, plus an optional compact status HUD for what is happening now and what is likely next (off by default)
 - **Can write opt-in run-review logs** for offline analysis with BossMod Reborn replay files (off by default)
 - **Pauses automated movement** briefly when you move manually, including remapped movement or gamepad input reported by BossMod, and briefly lowers the same advisory movement preference if your input looks like a correction
@@ -73,7 +73,7 @@ While you are casting, advisory movement goals are suppressed so comfort, uptime
 
 **Follow party facing during downtime** turns roughly toward nearby party members when the target is gone or BossMod reports downtime, without changing facing during manual input, casting, animation lock, or BossMod movement pressure.
 
-**Avoid exact player stacks** lightly prefers a nearby safe offset when you are almost exactly overlapping a visible player party member. During mechanics, it waits until BossMod reports your current position safe and still yields to active BossMod movement.
+**Avoid exact player stacks** lightly prefers a nearby safe offset when you are almost exactly overlapping a visible player party member. During mechanics, it waits until BossMod reports your current position safe, yields to active BossMod movement, and avoids breaking up intentional party clumps.
 
 ### AoE & Trash tab
 

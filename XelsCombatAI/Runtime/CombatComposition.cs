@@ -62,7 +62,7 @@ internal sealed class CombatComposition : IDisposable
         var passageOfArmsPositioningController = new PassageOfArmsPositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
         var healerAoePositioningController = new HealerAoePositioningController(config, services, bossMod, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), mobilityDecisionEvaluator, facingController, () => mechanicPressure.Current);
         var partyHealerRangePositioningController = new PartyHealerRangePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
-        var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true);
+        var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
         var pictomancerStarryMusePositioningController = new PictomancerStarryMusePositioningController(config, services, rotationSolverActions, mobilityDecisionEvaluator, facingController, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
         var bossCenterAvoidanceController = new BossCenterAvoidanceController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
         var socialSpacingPositioningController = new SocialSpacingPositioningController(config, services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true);
@@ -106,7 +106,8 @@ internal sealed class CombatComposition : IDisposable
             escapeGapCloserController,
             redMageMeleeComboController,
             pictomancerStarryMusePositioningController,
-            () => mechanicPressure.Current);
+            () => mechanicPressure.Current,
+            () => aoeGoalHook.MovementDiagnostics);
 
         runtime = new CombatRuntime(
             config,
