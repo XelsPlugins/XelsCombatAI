@@ -134,7 +134,7 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
-        if (safeMovementDistance < config.MinimumGapCloserDistance)
+        if (currentSafe && safeMovementDistance < config.MinimumGapCloserDistance)
         {
             this.lastEscapeGapCloserSafety = $"safe movement under {config.MinimumGapCloserDistance:0}y";
             return false;
@@ -192,7 +192,8 @@ internal sealed class EscapeGapCloserController(
     internal static bool ShouldSuppressLateEscapeGapCloser(bool currentSafe, float safeMovementDistance, float minimumGapCloserDistance, bool canAssistSafeMovement, double dangerElapsedMilliseconds)
     {
         return dangerElapsedMilliseconds > CombatConstants.EscapeGapCloserDangerWindowMilliseconds &&
-               ((currentSafe && !canAssistSafeMovement) || safeMovementDistance < minimumGapCloserDistance);
+               currentSafe &&
+               (!canAssistSafeMovement || safeMovementDistance < minimumGapCloserDistance);
     }
 
     private unsafe bool TryUseFriendlyEscapeGapCloser(uint actionId, string actionName, float maxRange, Vector3 safeMovementDestination)
@@ -731,7 +732,10 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
-        facingController.RequestFacing(FacingController.CreateDirectionalDashRequest(desiredRotation, destination, $"turn for {actionName}", FacingBossModPolicy.AssistBmrMovementDash, safeMovementDestination));
+        Vector3? assistDestination = bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out _) && !currentSafe
+            ? null
+            : safeMovementDestination;
+        facingController.RequestFacing(FacingController.CreateDirectionalDashRequest(desiredRotation, destination, $"turn for {actionName}", FacingBossModPolicy.AssistBmrMovementDash, assistDestination));
         this.lastSafeEscapeDestination = destination;
         this.lastEscapeGapCloserSafety = $"turning for {actionName} ({decision.IntentLabel}, directional dash)";
         return true;

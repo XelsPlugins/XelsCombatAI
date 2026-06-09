@@ -10,6 +10,12 @@ using XelsCombatAI.Integrations;
 
 namespace XelsCombatAI.Combat;
 
+internal sealed record BossCenterAvoidanceOverlaySnapshot(
+    Vector3 TargetPosition,
+    float Radius,
+    bool Injected,
+    string Reason);
+
 internal sealed class BossCenterAvoidanceController(
     Configuration config,
     DalamudServices services,
@@ -28,6 +34,7 @@ internal sealed class BossCenterAvoidanceController(
     private FieldInfo? goalZonesField;
     private FieldInfo? forcedMovementField;
     private FieldInfo? forbiddenZonesField;
+    private FieldInfo? recommendedPositionalField;
     private FieldInfo? wposXField;
     private FieldInfo? wposZField;
     private Type? resolvedHintsType;
@@ -35,6 +42,7 @@ internal sealed class BossCenterAvoidanceController(
     private Delegate? lastGoalDelegate;
     private Vector2 lastTargetPosition;
     private float lastAvoidanceRadius;
+    private BossCenterAvoidanceOverlaySnapshot? lastOverlay;
     private string hookState = "unresolved";
     private string lastReason = "not evaluated";
     private DateTime suppressComfortUntil = DateTime.MinValue;
@@ -43,6 +51,8 @@ internal sealed class BossCenterAvoidanceController(
     private bool bmrMoveImminent;
 
     public string LastReason => this.lastReason;
+
+    public BossCenterAvoidanceOverlaySnapshot? Overlay => this.lastOverlay;
 
     internal static float AvoidanceRadius(float hitboxRadius)
     {
@@ -71,6 +81,7 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.lastReason = "disabled";
             this.insideCenterSince = DateTime.MinValue;
+            this.lastOverlay = null;
             return;
         }
 
@@ -78,12 +89,14 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.lastReason = "not active in combat";
             this.insideCenterSince = DateTime.MinValue;
+            this.lastOverlay = null;
             return;
         }
 
         if (automatedMovementSuppressed())
         {
             this.lastReason = "manual movement suppression active";
+            this.lastOverlay = null;
             return;
         }
 
@@ -92,6 +105,7 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.lastReason = "player unavailable";
             this.insideCenterSince = DateTime.MinValue;
+            this.lastOverlay = null;
             return;
         }
 
@@ -99,19 +113,30 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.lastReason = "no boss module target";
             this.insideCenterSince = DateTime.MinValue;
+            this.lastOverlay = null;
             return;
         }
 
         if (!this.EnsureResolved(hints.GetType()))
         {
+            this.lastOverlay = null;
             return;
         }
 
-        if (this.BossModGoalZoneActive(hints))
+        if (HasHigherPriorityUtilityGoal(contributions))
+        {
+            this.insideCenterSince = DateTime.MinValue;
+            this.lastReason = "defensive or utility positioning active";
+            this.lastOverlay = null;
+            return;
+        }
+
+        if (this.ShouldSuppressForBossModGoalZone(hints))
         {
             this.suppressComfortUntil = now.Add(PostMechanicCenterCooldown);
             this.insideCenterSince = DateTime.MinValue;
             this.lastReason = "BossMod goal zone active";
+            this.lastOverlay = null;
             return;
         }
 
@@ -120,6 +145,7 @@ internal sealed class BossCenterAvoidanceController(
             this.suppressComfortUntil = now.Add(PostMechanicCenterCooldown);
             this.insideCenterSince = DateTime.MinValue;
             this.lastReason = "mechanic safety active";
+            this.lastOverlay = null;
             return;
         }
 
@@ -127,12 +153,14 @@ internal sealed class BossCenterAvoidanceController(
         if (pressure.DowntimeSoon || pressure.RaidwideOrDamageSoon || pressure.KnockbackSoon)
         {
             this.lastReason = pressure.FormatOptionalMovementHoldReason();
+            this.lastOverlay = null;
             return;
         }
 
         if (now < this.suppressComfortUntil)
         {
             this.lastReason = "post-mechanic center cooldown";
+            this.lastOverlay = null;
             return;
         }
 
@@ -142,6 +170,7 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.lastReason = "boss target unavailable";
             this.insideCenterSince = DateTime.MinValue;
+            this.lastOverlay = null;
             return;
         }
 
@@ -149,6 +178,7 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.lastReason = "target hitbox not boss-like";
             this.insideCenterSince = DateTime.MinValue;
+            this.lastOverlay = null;
             return;
         }
 
@@ -159,6 +189,7 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.lastReason = "outside boss center";
             this.insideCenterSince = DateTime.MinValue;
+            this.lastOverlay = null;
             return;
         }
 
@@ -166,12 +197,14 @@ internal sealed class BossCenterAvoidanceController(
         {
             this.insideCenterSince = now;
             this.lastReason = "boss center dwell";
+            this.lastOverlay = new(target.Position, avoidanceRadius, false, this.lastReason);
             return;
         }
 
         if (now - this.insideCenterSince < InsideCenterDwell)
         {
             this.lastReason = "boss center dwell";
+            this.lastOverlay = new(target.Position, avoidanceRadius, false, this.lastReason);
             return;
         }
 
@@ -186,6 +219,7 @@ internal sealed class BossCenterAvoidanceController(
 
         contributions.Add(new(this.lastGoalDelegate!, BossModGoalPriority.Convenience, "Boss center avoidance"));
         this.lastReason = "avoiding boss center";
+        this.lastOverlay = new(target.Position, avoidanceRadius, true, this.lastReason);
     }
 
     public void Reset()
@@ -195,6 +229,7 @@ internal sealed class BossCenterAvoidanceController(
         this.goalZonesField = null;
         this.forcedMovementField = null;
         this.forbiddenZonesField = null;
+        this.recommendedPositionalField = null;
         this.wposXField = null;
         this.wposZField = null;
         this.resolvedHintsType = null;
@@ -202,6 +237,7 @@ internal sealed class BossCenterAvoidanceController(
         this.lastGoalDelegate = null;
         this.lastTargetPosition = default;
         this.lastAvoidanceRadius = 0f;
+        this.lastOverlay = null;
         this.suppressComfortUntil = DateTime.MinValue;
         this.insideCenterSince = DateTime.MinValue;
         this.bmrMoveRequested = false;
@@ -215,6 +251,7 @@ internal sealed class BossCenterAvoidanceController(
             this.goalZonesField != null &&
             this.forcedMovementField != null &&
             this.forbiddenZonesField != null &&
+            this.recommendedPositionalField != null &&
             this.wposXField != null &&
             this.wposZField != null)
         {
@@ -224,10 +261,11 @@ internal sealed class BossCenterAvoidanceController(
         var goalZones = hintsType.GetField("GoalZones", InstanceFlags);
         var forcedMovement = hintsType.GetField("ForcedMovement", InstanceFlags);
         var forbiddenZones = hintsType.GetField("ForbiddenZones", InstanceFlags);
+        var recommendedPositional = hintsType.GetField("RecommendedPositional", InstanceFlags);
         var wposType = hintsType.Assembly.GetType("BossMod.WPos");
         var xField = wposType?.GetField("X", InstanceFlags);
         var zField = wposType?.GetField("Z", InstanceFlags);
-        if (goalZones == null || forcedMovement == null || forbiddenZones == null || wposType == null || xField == null || zField == null)
+        if (goalZones == null || forcedMovement == null || forbiddenZones == null || recommendedPositional == null || wposType == null || xField == null || zField == null)
         {
             this.lastReason = "BMR boss center goal reflection members unavailable";
             return false;
@@ -238,14 +276,33 @@ internal sealed class BossCenterAvoidanceController(
         this.goalZonesField = goalZones;
         this.forcedMovementField = forcedMovement;
         this.forbiddenZonesField = forbiddenZones;
+        this.recommendedPositionalField = recommendedPositional;
         this.wposXField = xField;
         this.wposZField = zField;
         return true;
     }
 
-    private bool BossModGoalZoneActive(object hints)
+    private bool ShouldSuppressForBossModGoalZone(object hints)
     {
-        return this.goalZonesField?.GetValue(hints) is ICollection { Count: > 0 };
+        var goalZoneActive = this.goalZonesField?.GetValue(hints) is ICollection { Count: > 0 };
+        return ShouldSuppressForBossModGoalZone(goalZoneActive, this.HasActiveRecommendedPositional(hints));
+    }
+
+    internal static bool ShouldSuppressForBossModGoalZone(bool goalZoneActive, bool recommendedPositionalActive)
+    {
+        return goalZoneActive && !recommendedPositionalActive;
+    }
+
+    private bool HasActiveRecommendedPositional(object hints)
+    {
+        var positional = this.recommendedPositionalField?.GetValue(hints);
+        if (positional == null)
+        {
+            return false;
+        }
+
+        return ReadBool(ReadTupleField(positional, "Imminent", "Item3")) &&
+               !IsAnyPositional(ReadTupleField(positional, "Pos", "Item2"));
     }
 
     private bool BossModMechanicSafetyActive(object hints)
@@ -318,5 +375,42 @@ internal sealed class BossCenterAvoidanceController(
             double d => (float)d,
             _ => 0f
         };
+    }
+
+    private static bool ReadBool(object? value)
+    {
+        return value is bool b && b;
+    }
+
+    private static object? ReadTupleField(object? value, string namedField, string itemField)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+
+        var type = value.GetType();
+        return type.GetField(namedField, InstanceFlags)?.GetValue(value) ??
+               type.GetField(itemField, InstanceFlags)?.GetValue(value);
+    }
+
+    private static bool IsAnyPositional(object? value)
+    {
+        return value == null ||
+               value.ToString()?.Equals(Positional.Any.ToString(), StringComparison.Ordinal) == true;
+    }
+
+    private static bool HasHigherPriorityUtilityGoal(IEnumerable<BossModGoalContribution> contributions)
+    {
+        foreach (var contribution in contributions)
+        {
+            if (contribution.ScoreMode == BossModGoalScoreMode.Advisory &&
+                contribution.Priority >= BossModGoalPriority.PartyUtility)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

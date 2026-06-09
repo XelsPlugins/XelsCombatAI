@@ -26,6 +26,7 @@ internal sealed class BossModPresetController(
     public bool? LastLeylinesRetrace { get; private set; }
     public bool? LastLeylinesGoal { get; private set; }
     public bool InitializedPreset { get; private set; }
+    private bool bossModPositionalNeutral;
 
     public bool Initialize()
     {
@@ -39,6 +40,12 @@ internal sealed class BossModPresetController(
             if (!bossMod.SetActive(BossModIpc.DefaultPresetName))
             {
                 return false;
+            }
+
+            if (bossMod.SetPositional(BossModIpc.DefaultPresetName, Positional.Any))
+            {
+                this.LastPositional = Positional.Any;
+                this.bossModPositionalNeutral = true;
             }
 
             this.InitializedPreset = true;
@@ -147,6 +154,7 @@ internal sealed class BossModPresetController(
         this.LastLeylinesBetweenTheLines = null;
         this.LastLeylinesRetrace = null;
         this.LastLeylinesGoal = null;
+        this.bossModPositionalNeutral = false;
         positionalsController.Reset();
         gapCloserController.Reset();
         escapeGapCloserController.Reset();
@@ -161,14 +169,21 @@ internal sealed class BossModPresetController(
 
     public void SetPositional(Positional positional)
     {
-        if (positional == this.LastPositional)
+        if (positional != Positional.Any)
+        {
+            this.LastPositional = positional;
+            return;
+        }
+
+        if (positional == this.LastPositional && this.bossModPositionalNeutral)
         {
             return;
         }
 
-        if (bossMod.SetPositional(BossModIpc.DefaultPresetName, positional))
+        if (bossMod.SetPositional(BossModIpc.DefaultPresetName, Positional.Any))
         {
-            this.LastPositional = positional;
+            this.LastPositional = Positional.Any;
+            this.bossModPositionalNeutral = true;
         }
     }
 

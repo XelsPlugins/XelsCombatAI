@@ -258,6 +258,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         var path = EvaluatePathGain(player.Position, destination, safeMovementDestination);
         if (requireSafetyProgress &&
             safeMovementDestination.HasValue &&
+            !safety.CurrentPositionDangerous &&
             !HasMeaningfulBmrSafetyDestinationProgress(player.Position, destination, safeMovementDestination.Value, out var destinationReason))
         {
             return this.Reject(requestedIntent, actionName, actionId, destination, moveDistance, destinationReason, safety, uptime, path, out decision);
@@ -514,12 +515,12 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         var currentSafeKnown = bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out var currentReason);
         if (!bossModSafety.TryIsPositionSafe(destination, out var destinationSafe, out var destinationReason))
         {
-            return new(false, 0f, ResolveSafetySource(destinationReason), destinationReason, destinationReason);
+            return new(false, 0f, false, ResolveSafetySource(destinationReason), destinationReason, destinationReason);
         }
 
         if (!destinationSafe)
         {
-            return new(false, 0f, ResolveSafetySource(destinationReason), "landing is unsafe", "landing is unsafe");
+            return new(false, 0f, false, ResolveSafetySource(destinationReason), "landing is unsafe", "landing is unsafe");
         }
 
         bool dashSafe;
@@ -538,11 +539,12 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         }
         if (!dashSafe)
         {
-            return new(false, 0f, ResolveSafetySource(dashReason), dashReason, dashReason);
+            return new(false, 0f, false, ResolveSafetySource(dashReason), dashReason, dashReason);
         }
 
         var gain = 0f;
         var reason = "safe landing";
+        var currentPositionDangerous = currentSafeKnown && !currentSafe;
         if (safeMovementDestination.HasValue)
         {
             var currentDistance = Geometry.Distance2D(player.Position, safeMovementDestination.Value);
@@ -553,7 +555,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
                 : "safe landing but not closer to BMR safe movement";
         }
 
-        if (currentSafeKnown && !currentSafe)
+        if (currentPositionDangerous)
         {
             gain = MathF.Max(gain, MathF.Max(MinimumMeaningfulGain * 2f, Geometry.Distance2D(player.Position, destination)));
             reason = $"{reason}; current position dangerous";
@@ -563,34 +565,34 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
             reason = $"{reason}; current safety unknown: {currentReason}";
         }
 
-        return new(true, gain, ResolveSafetySource(currentReason, destinationReason, dashReason), reason, "landing accepted");
+        return new(true, gain, currentPositionDangerous, ResolveSafetySource(currentReason, destinationReason, dashReason), reason, "landing accepted");
     }
 
     private SafetyEvaluation EvaluateGreedyUnsafeEscapeSafety(IBattleChara player, Vector3 destination, Vector3 safeMovementDestination)
     {
         if (!bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out var currentReason))
         {
-            return new(false, 0f, ResolveSafetySource(currentReason), currentReason, currentReason);
+            return new(false, 0f, false, ResolveSafetySource(currentReason), currentReason, currentReason);
         }
 
         if (currentSafe)
         {
-            return new(false, 0f, ResolveSafetySource(currentReason), "current position safe", "current position safe");
+            return new(false, 0f, false, ResolveSafetySource(currentReason), "current position safe", "current position safe");
         }
 
         if (!bossModSafety.TryIsPositionSafe(destination, out var destinationSafe, out var destinationReason))
         {
-            return new(false, 0f, ResolveSafetySource(currentReason, destinationReason), destinationReason, destinationReason);
+            return new(false, 0f, true, ResolveSafetySource(currentReason, destinationReason), destinationReason, destinationReason);
         }
 
         if (destinationSafe)
         {
-            return new(false, 0f, ResolveSafetySource(currentReason, destinationReason), "landing is safe; normal escape validation required", "landing is safe; normal escape validation required");
+            return new(false, 0f, true, ResolveSafetySource(currentReason, destinationReason), "landing is safe; normal escape validation required", "landing is safe; normal escape validation required");
         }
 
         if (!bossModSafety.TryCanAttemptDashNow(out var dashReason))
         {
-            return new(false, 0f, ResolveSafetySource(currentReason, destinationReason, dashReason), dashReason, dashReason);
+            return new(false, 0f, true, ResolveSafetySource(currentReason, destinationReason, dashReason), dashReason, dashReason);
         }
 
         var source = ResolveSafetySource(currentReason, destinationReason, dashReason);
@@ -599,28 +601,29 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         var gain = currentDistance - landingDistance;
         if (gain < GreedyUnsafeEscapeMinimumGain)
         {
-            return new(false, MathF.Max(0f, gain), source, $"escape gain {gain:0.0}y", "not enough escape gain");
+            return new(false, MathF.Max(0f, gain), true, source, $"escape gain {gain:0.0}y", "not enough escape gain");
         }
 
         if (!TryDirectionDot(player.Position, destination, safeMovementDestination, out var dot))
         {
-            return new(false, gain, source, "could not compare escape direction", "landing direction not aligned");
+            return new(false, gain, true, source, "could not compare escape direction", "landing direction not aligned");
         }
 
         if (dot < GreedyUnsafeEscapeMinimumDirectionDot)
         {
-            return new(false, gain, source, $"escape direction dot {dot:0.00}", "landing direction not aligned");
+            return new(false, gain, true, source, $"escape direction dot {dot:0.00}", "landing direction not aligned");
         }
 
         var landing = this.EvaluateStrictLandingSupport(player.Position, destination);
         if (!landing.CanLand)
         {
-            return new(false, gain, CombineSafetySources(source, "local"), landing.Reason, landing.Reason);
+            return new(false, gain, true, CombineSafetySources(source, "local"), landing.Reason, landing.Reason);
         }
 
         return new(
             true,
             gain,
+            true,
             CombineSafetySources(source, "local"),
             $"unsafe emergency landing; closer to BMR safe movement by {gain:0.0}y; {landing.Reason}",
             "unsafe emergency landing accepted");
@@ -784,7 +787,7 @@ internal sealed class MobilityDecisionEvaluator(BossModReflectionSafety bossModS
         return $"{left} + {right}";
     }
 
-    private sealed record SafetyEvaluation(bool CanLand, float Gain, string Source, string Reason, string RiskReason);
+    private sealed record SafetyEvaluation(bool CanLand, float Gain, bool CurrentPositionDangerous, string Source, string Reason, string RiskReason);
     private sealed record UptimeEvaluation(float Gain, string Reason);
     private sealed record PathEvaluation(float Gain, string Reason);
     private sealed record LandingSupportEvaluation(bool CanLand, string Reason);
