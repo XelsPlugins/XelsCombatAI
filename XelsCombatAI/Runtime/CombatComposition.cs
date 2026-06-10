@@ -68,7 +68,7 @@ internal sealed class CombatComposition : IDisposable
         var socialSpacingPositioningController = new SocialSpacingPositioningController(config, services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true);
         var tankBehaviorController = new TankBehaviorController(config, services, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
         IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, partyHealerRangePositioningController, survivabilityZonePositioningController, tankBehaviorController, positionalsController, pictomancerStarryMusePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController];
-        var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, legacyMovementContributors, manualCorrectionFeedback);
+        var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, bossModSafety, legacyMovementContributors, manualCorrectionFeedback);
         var gapCloserController = new GapCloserController(
             config,
             services,
@@ -93,6 +93,7 @@ internal sealed class CombatComposition : IDisposable
             facingController,
             () => presetController?.LastPositional ?? Positional.Any,
             () => aoeGoalHook.MovementDiagnostics,
+            () => aoePackPositioningController.Status.TrashPull,
             () => mechanicPressure.Current);
         var combatLogWriter = new CombatLogWriter(Path.Combine(configDirectory, "combat-logs"), log);
         presetController = new BossModPresetController(
@@ -154,6 +155,7 @@ internal sealed class CombatComposition : IDisposable
             survivabilityZonePositioningController,
             pictomancerStarryMusePositioningController,
             bossCenterAvoidanceController,
+            tankBehaviorController,
             bossModSafety,
             mobilityDecisionEvaluator,
             gapCloserController,

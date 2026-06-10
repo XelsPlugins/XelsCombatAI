@@ -261,7 +261,7 @@ internal sealed class PictomancerStarryMusePositioningController : IBossModGoalZ
             MobilityIntent.PathRecovery,
             "Smudge",
             ActionUse.PictomancerSmudgeActionId,
-            MathF.Max(config.MinimumGapCloserDistance, MinimumStarryMuseSmudgeDistance),
+            MinimumStarryMuseSmudgeDistance,
             requireSafetyProgress: false,
             requireUptimeProgress: false,
             requireVnavReachable: true,

@@ -147,7 +147,7 @@ internal sealed class DashStyleController(Configuration config, JobRangeProvider
         IGameObject target,
         float distanceToHitbox,
         uint? actionId,
-        float normalMinimumDistance)
+        bool walkWouldMissGcd)
     {
         this.ObserveReengageState(player.Position, target.GameObjectId, distanceToHitbox);
         if (!this.ReengageStyleActive)
@@ -158,7 +158,7 @@ internal sealed class DashStyleController(Configuration config, JobRangeProvider
         var now = DateTime.UtcNow;
         var recoveryActive = now <= this.knockbackRecoveryUntil;
         var cappedCharge = actionId.HasValue && ActionUse.GetCurrentCharges(actionId.Value) >= 2;
-        var shortDistance = distanceToHitbox >= ShortReengageMinimumDistance && distanceToHitbox < normalMinimumDistance;
+        var shortDistance = walkWouldMissGcd && distanceToHitbox >= ShortReengageMinimumDistance;
         if (shortDistance && recoveryActive)
         {
             return new(true, "knockback recovery", true, false);
@@ -167,6 +167,11 @@ internal sealed class DashStyleController(Configuration config, JobRangeProvider
         if (shortDistance && cappedCharge)
         {
             return new(true, "capped charge", true, true);
+        }
+
+        if (!walkWouldMissGcd)
+        {
+            return DashStyleReengageOpportunity.None;
         }
 
         return new(true, "safe-side reengage", false, false);

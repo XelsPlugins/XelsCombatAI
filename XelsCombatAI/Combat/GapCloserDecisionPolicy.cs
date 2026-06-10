@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Numerics;
 using Dalamud.Game.ClientState.Objects.Types;
 using XelsCombatAI.Game;
@@ -13,8 +14,82 @@ internal static class GapCloserDecisionPolicy
     private const float TrashGapCloserAwayFromAnchorTolerance = 2f;
     private const float FriendlyAnchorMinimumMoveDistance = 6f;
     private const float FriendlyAnchorMinimumUptimeGain = 4f;
+    private const float FriendlyAnchorMinimumTargetGain = 3f;
+    private const float FriendlyAnchorMinimumTargetDirectionDot = 0.55f;
     private const float HostileRelayMinimumTargetGain = 4f;
     private const float HostileRelayMinimumDirectionDot = 0.45f;
+
+    public static float EstimateWalkSeconds(float moveDistance)
+        => PositionalTrueNorthPolicy.EstimateMovementSeconds(MathF.Max(0f, moveDistance));
+
+    public static bool CanWalkToRangeBeforeGcd(float distanceToHitbox, float engagementRange, RsrGcdActionTimingSnapshot action, out string reason)
+    {
+        reason = string.Empty;
+        if (distanceToHitbox <= engagementRange)
+        {
+            reason = $"already within {engagementRange:0.0}y engagement range";
+            return true;
+        }
+
+        if (!AoeRepositionPolicy.HasReliableGcdTiming(action.GcdRemaining, action.GcdElapsed, action.GcdTotal))
+        {
+            reason = "RSR GCD timing unavailable";
+            return false;
+        }
+
+        var moveDistance = MathF.Max(0f, distanceToHitbox - engagementRange);
+        var requiredSeconds = EstimateWalkSeconds(moveDistance);
+        var budgetSeconds = PositionalTrueNorthPolicy.CalculateMovementBudgetSeconds(action.GcdRemaining, action.GcdActionAhead);
+        if (requiredSeconds <= budgetSeconds)
+        {
+            reason = string.Create(
+                CultureInfo.InvariantCulture,
+                $"walking can reach melee for {action.ActionName} ({moveDistance:0.0}y needs {requiredSeconds:0.0}s, {budgetSeconds:0.0}s before RSR action window)");
+            return true;
+        }
+
+        reason = string.Create(
+            CultureInfo.InvariantCulture,
+            $"walking misses melee for {action.ActionName} ({moveDistance:0.0}y needs {requiredSeconds:0.0}s, {budgetSeconds:0.0}s before RSR action window)");
+        return false;
+    }
+
+    public static bool CanWalkToPositionalBeforeGcd(Positional requiredPositional, RsrGcdActionTimingSnapshot action, float moveDistance, out string reason)
+    {
+        return PositionalTrueNorthPolicy.ShouldWalkInsteadOfTrueNorth(requiredPositional, action, moveDistance, out reason);
+    }
+
+    public static bool CanWalkToBossModSafetyBeforeUrgency(float safeMovementDistance, BossModMovementDiagnostics movement, out string reason)
+    {
+        if (!TryGetBossModMovementUrgency(movement, out var urgencySeconds))
+        {
+            reason = "BMR movement timing unavailable";
+            return false;
+        }
+
+        var requiredSeconds = EstimateWalkSeconds(safeMovementDistance);
+        if (requiredSeconds <= urgencySeconds)
+        {
+            reason = string.Create(
+                CultureInfo.InvariantCulture,
+                $"walking can reach BMR safety ({safeMovementDistance:0.0}y needs {requiredSeconds:0.0}s, {urgencySeconds:0.0}s available)");
+            return true;
+        }
+
+        reason = string.Create(
+            CultureInfo.InvariantCulture,
+            $"walking misses BMR safety timing ({safeMovementDistance:0.0}y needs {requiredSeconds:0.0}s, {urgencySeconds:0.0}s available)");
+        return false;
+    }
+
+    public static bool TryGetBossModMovementUrgency(BossModMovementDiagnostics movement, out float urgencySeconds)
+    {
+        urgencySeconds = float.MaxValue;
+        var found = false;
+        AddUrgency(movement.NavigationDetails.ForceMovementIn, ref urgencySeconds, ref found);
+        AddUrgency(movement.NavigationDetails.LeewaySeconds, ref urgencySeconds, ref found);
+        return found;
+    }
 
     public static bool ShouldUseFriendlyAnchorDash(
         float moveDistance,
@@ -42,6 +117,52 @@ internal static class GapCloserDecisionPolicy
             return false;
         }
 
+        return true;
+    }
+
+    public static bool ShouldUseFriendlyAnchorDash(
+        Vector3 playerPosition,
+        float playerRadius,
+        Vector3 anchorPosition,
+        Vector3 targetPosition,
+        float targetRadius,
+        float moveDistance,
+        float safetyGain,
+        float uptimeGain,
+        float pathGain,
+        out string reason)
+    {
+        if (!ShouldUseFriendlyAnchorDash(moveDistance, safetyGain, uptimeGain, pathGain, out reason))
+        {
+            return false;
+        }
+
+        if (!TryEvaluateFriendlyAnchorTargetProgress(
+                playerPosition,
+                playerRadius,
+                anchorPosition,
+                targetPosition,
+                targetRadius,
+                out var targetGain,
+                out var directionDot,
+                out reason))
+        {
+            return false;
+        }
+
+        if (targetGain < FriendlyAnchorMinimumTargetGain)
+        {
+            reason = $"ally anchor low target progress: {targetGain:0.0}y";
+            return false;
+        }
+
+        if (directionDot < FriendlyAnchorMinimumTargetDirectionDot)
+        {
+            reason = $"ally anchor sideways to target: {directionDot:0.00}";
+            return false;
+        }
+
+        reason = $"ally anchor gains {targetGain:0.0}y toward target; direction {directionDot:0.00}";
         return true;
     }
 
@@ -114,6 +235,29 @@ internal static class GapCloserDecisionPolicy
         return true;
     }
 
+    private static bool TryEvaluateFriendlyAnchorTargetProgress(
+        Vector3 playerPosition,
+        float playerRadius,
+        Vector3 anchorPosition,
+        Vector3 targetPosition,
+        float targetRadius,
+        out float gain,
+        out float directionDot,
+        out string reason)
+    {
+        var currentDistance = Geometry.DistanceToHitbox(playerPosition, playerRadius, targetPosition, targetRadius);
+        var anchorDistance = Geometry.DistanceToHitbox(anchorPosition, playerRadius, targetPosition, targetRadius);
+        gain = currentDistance - anchorDistance;
+        if (!TryDirectionDot(playerPosition, anchorPosition, targetPosition, out directionDot))
+        {
+            reason = "ally anchor target direction unknown";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
     public static bool CanUseHostileRelayGapCloser(uint classJobId)
     {
         return classJobId is
@@ -182,5 +326,18 @@ internal static class GapCloserDecisionPolicy
 
         dot = Vector3.Dot(Vector3.Normalize(movement), Vector3.Normalize(target));
         return true;
+    }
+
+    private static void AddUrgency(float? value, ref float urgencySeconds, ref bool found)
+    {
+        if (!value.HasValue ||
+            !float.IsFinite(value.Value) ||
+            value.Value < 0f)
+        {
+            return;
+        }
+
+        urgencySeconds = MathF.Min(urgencySeconds, value.Value);
+        found = true;
     }
 }

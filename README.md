@@ -109,7 +109,9 @@ When the Gap closers option is enabled, safe-position escape dashes follow Movem
 
 ### Troubleshooting tab
 
-**Troubleshooting** — Show the decision overlay, copy a debug snapshot, or enable run-review logging.
+**Troubleshooting** — Show the decision overlay, choose its density, copy a debug snapshot, or enable run-review logging.
+
+The decision overlay is off by default. Minimal density shows the main destination and path for the current movement decision. Normal density adds the next preview and compact nearby badges so it can stay on during combat with less clutter. Detailed density keeps richer rings, footprints, markers, and callouts for troubleshooting movement, next action areas, target/range choices, dashes, positionals, tank cleaves, trash aggro recovery, and party utility zones.
 
 Run-review logging is off by default. When enabled, the plugin writes one detailed JSONL file for the current duty, matching BossMod Reborn's whole-replay style so dungeon pulls can be compared in one analyzer run. If no duty is active, it falls back to a single combat log. Files are written to the plugin config directory under `XelsCombatAI/combat-logs`. Combat is sampled at the normal review cadence and downtime is sampled slower to keep resource cost bounded. Movement review data includes BossMod movement, goal-zone, and safety-raster diagnostics; it no longer emits the removed movement-intent planner candidate model.
 

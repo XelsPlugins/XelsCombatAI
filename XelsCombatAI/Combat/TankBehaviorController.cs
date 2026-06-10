@@ -14,6 +14,23 @@ using XelsCombatAI.Game;
 
 namespace XelsCombatAI.Combat;
 
+internal sealed record TankBehaviorOverlaySnapshot(
+    bool IgnoredFrontCone,
+    bool ConeAwayFromParty,
+    Vector3? TargetPosition,
+    float TargetRadius,
+    Vector3? PreferredTankPosition,
+    Vector3? PartyCentroid,
+    IReadOnlyList<Vector3> PartyPositions,
+    float ConeHalfAngleRadians,
+    string Reason,
+    IReadOnlyList<TankLostAggroOverlayTarget> LostAggroTargets);
+
+internal sealed record TankLostAggroOverlayTarget(
+    Vector3 Position,
+    float Radius,
+    string Label);
+
 internal sealed class TankBehaviorController(
     Configuration config,
     DalamudServices services,
@@ -57,13 +74,16 @@ internal sealed class TankBehaviorController(
     private DateTime lastTargetSwitchAt = DateTime.MinValue;
     private DateTime lastActionAt = DateTime.MinValue;
     private string hookState = "unresolved";
+    private TankBehaviorOverlaySnapshot? lastOverlay;
 
     public string LastReason { get; private set; } = "not evaluated";
+    public TankBehaviorOverlaySnapshot? Overlay => this.lastOverlay;
 
     public void Tick()
     {
         if (!this.CanRun(out var player))
         {
+            this.lastOverlay = null;
             return;
         }
 
@@ -84,12 +104,14 @@ internal sealed class TankBehaviorController(
 
         if (!config.TankTargetLostTrashAggro && !config.TankUseRangedAggroRecovery)
         {
+            this.ClearLostAggroOverlay();
             return;
         }
 
         if (currentTargetHasBossModule())
         {
             this.LastReason = "boss module active";
+            this.ClearLostAggroOverlay();
             return;
         }
 
@@ -97,8 +119,11 @@ internal sealed class TankBehaviorController(
         if (lostAggroTargets.Count == 0)
         {
             this.LastReason = "no lost trash aggro";
+            this.ClearLostAggroOverlay();
             return;
         }
+
+        this.UpdateLostAggroOverlay(lostAggroTargets);
 
         if (config.TankUseRangedAggroRecovery && this.TryUseRangedAggroRecovery(player, lostAggroTargets))
         {
@@ -165,6 +190,7 @@ internal sealed class TankBehaviorController(
         this.coneAwayFromPartyHalfAngleCos = default;
         this.lastTargetSwitchAt = DateTime.MinValue;
         this.lastActionAt = DateTime.MinValue;
+        this.lastOverlay = null;
         this.LastReason = "reset";
     }
 
@@ -392,9 +418,10 @@ internal sealed class TankBehaviorController(
             }
         }
 
-        if (removed > 0)
+        if (removed > 0 && firstHint is { } ignoredHint)
         {
             this.LastReason = $"ignored tank front cone zones: {removed}";
+            this.UpdateFrontConeOverlay(target, player, ignoredHint, ignored: true);
             return firstHint;
         }
 
@@ -594,6 +621,84 @@ internal sealed class TankBehaviorController(
         this.LastReason = pressure.TankbusterSoon
             ? "tankbuster soon: cone away from party"
             : "cone away from party";
+        this.UpdateConeAwayOverlay(target, player, partyPosition, partyPositions, hint);
+    }
+
+    private void UpdateFrontConeOverlay(IBattleChara target, IBattleChara player, TankConeHint hint, bool ignored)
+    {
+        var halfAngle = MathF.Acos(Math.Clamp(hint.HalfAngleCos, -1f, 1f));
+        this.lastOverlay = new TankBehaviorOverlaySnapshot(
+            ignored,
+            false,
+            target.Position,
+            target.HitboxRadius,
+            null,
+            null,
+            [],
+            halfAngle,
+            ignored ? "ignoring persistent front cleave" : "front cleave",
+            this.lastOverlay?.LostAggroTargets ?? []);
+    }
+
+    private void UpdateConeAwayOverlay(
+        IBattleChara target,
+        IBattleChara player,
+        Vector2 partyCentroid,
+        IReadOnlyList<Vector2> partyPositions,
+        TankConeHint hint)
+    {
+        var target2 = new Vector2(target.Position.X, target.Position.Z);
+        var away = target2 - partyCentroid;
+        if (away.LengthSquared() <= 0.01f)
+        {
+            return;
+        }
+
+        away = Vector2.Normalize(away);
+        var preferred = target2 + away * MathF.Max(target.HitboxRadius + CombatConstants.MeleeActionRange, target.HitboxRadius + 2.5f);
+        var y = target.Position.Y;
+        var halfAngle = MathF.Acos(Math.Clamp(hint.HalfAngleCos, -1f, 1f));
+        this.lastOverlay = new TankBehaviorOverlaySnapshot(
+            this.lastOverlay?.IgnoredFrontCone == true,
+            true,
+            target.Position,
+            target.HitboxRadius,
+            new Vector3(preferred.X, player.Position.Y, preferred.Y),
+            new Vector3(partyCentroid.X, y, partyCentroid.Y),
+            partyPositions.Select(position => new Vector3(position.X, y, position.Y)).ToArray(),
+            halfAngle,
+            this.LastReason,
+            this.lastOverlay?.LostAggroTargets ?? []);
+    }
+
+    private void UpdateLostAggroOverlay(IReadOnlyList<IBattleNpc> lostAggroTargets)
+    {
+        var targets = lostAggroTargets
+            .Take(4)
+            .Select((target, index) => new TankLostAggroOverlayTarget(target.Position, target.HitboxRadius, index == 0 ? "AGGRO" : string.Empty))
+            .ToArray();
+        var current = this.lastOverlay;
+        this.lastOverlay = new TankBehaviorOverlaySnapshot(
+            current?.IgnoredFrontCone == true,
+            current?.ConeAwayFromParty == true,
+            current?.TargetPosition,
+            current?.TargetRadius ?? 0f,
+            current?.PreferredTankPosition,
+            current?.PartyCentroid,
+            current?.PartyPositions ?? [],
+            current?.ConeHalfAngleRadians ?? 0f,
+            this.LastReason,
+            targets);
+    }
+
+    private void ClearLostAggroOverlay()
+    {
+        if (this.lastOverlay == null || this.lastOverlay.LostAggroTargets.Count == 0)
+        {
+            return;
+        }
+
+        this.lastOverlay = this.lastOverlay with { LostAggroTargets = [] };
     }
 
     private Delegate CreateConeAwayFromPartyGoal(Vector2 targetPosition, Vector2 partyPosition, Vector2[] partyPositions, float halfAngleCos)

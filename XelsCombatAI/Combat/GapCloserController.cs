@@ -138,10 +138,36 @@ internal sealed class GapCloserController(
                 CombatConstants.MeleeActionRange,
                 AoePackPositioningController.ResolveEffectivePackAoeRange(classJobId, jobRangeProvider.PackAoeRange, inAoeSituation: true))
             : reengageRange;
+        var targetHasBossModule = target is IBattleNpc moduleTarget && bossMod.HasModuleByDataId(moduleTarget.BaseId);
+        var knockbackRecoveryDashAllowed = ShouldAllowKnockbackRecoveryReengage(
+            dashStyleController.KnockbackRecoveryActive || pressure.KnockbackRecoveryActive,
+            JobRoles.GetRangeRole(player) == RangeRole.Melee,
+            targetHasBossModule,
+            HasAntiKnockbackStatus(player),
+            distanceToHitbox,
+            reengageRange);
+        var hasReengageTiming = this.TryGetOffensiveGcdTiming(intendedTarget, out var reengageTiming, out var timingReason);
+        var walkReason = hasReengageTiming ? string.Empty : timingReason;
+        var directWalkCanMakeGcd = hasReengageTiming &&
+                                   GapCloserDecisionPolicy.CanWalkToRangeBeforeGcd(distanceToHitbox, reengageRange, reengageTiming, out walkReason);
+        var missingTimingMeleeRecovery = ShouldTreatMissingRsrTimingAsMissedMelee(
+            JobRoles.GetRangeRole(player) == RangeRole.Melee,
+            hasReengageTiming,
+            distanceToHitbox,
+            reengageRange);
+        if (missingTimingMeleeRecovery)
+        {
+            walkReason = "RSR has no usable melee GCD while outside melee range";
+        }
+
+        var reengageDashNeeded = (hasReengageTiming && !directWalkCanMakeGcd) || missingTimingMeleeRecovery;
+        var desiredPositional = this.ResolveDesiredDashPositional(player, intendedTarget, reengageTiming, out var positionalDashReason);
+        var positionalDashNeeded = PositionalDashPolicy.IsActive(desiredPositional);
         var originalTargetObjectId = target.GameObjectId;
         IBattleNpc? relayReturnTarget = null;
-        if (ShouldTryHostileRelay(classJobId, distanceToHitbox, reengageRange) &&
-            this.TryFindHostileRelayGapCloserTarget(player, intendedTarget, distanceToHitbox, classJobId, out var relayTarget))
+        if (reengageDashNeeded &&
+            ShouldTryHostileRelay(classJobId, distanceToHitbox, reengageRange) &&
+            this.TryFindHostileRelayGapCloserTarget(player, intendedTarget, distanceToHitbox, classJobId, reengageRange, reengageTiming, out var relayTarget))
         {
             relayReturnTarget = intendedTarget;
             target = relayTarget;
@@ -149,7 +175,7 @@ internal sealed class GapCloserController(
         }
 
         var primaryActionId = this.GetPrimaryReengageActionId(classJobId);
-        var styleOpportunity = dashStyleController.EvaluateReengageOpportunity(player, target, distanceToHitbox, primaryActionId, config.MinimumGapCloserDistance);
+        var styleOpportunity = dashStyleController.EvaluateReengageOpportunity(player, target, distanceToHitbox, primaryActionId, reengageDashNeeded || knockbackRecoveryDashAllowed || positionalDashNeeded);
         if (styleOpportunity.Active &&
             originalTargetObjectId != target.GameObjectId &&
             target is IBattleNpc surfTarget &&
@@ -172,23 +198,20 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        var targetHasBossModule = target is IBattleNpc moduleTarget && bossMod.HasModuleByDataId(moduleTarget.BaseId);
-        var bypassMinimumDistanceForKnockback = ShouldBypassMinimumGapCloserDistanceForKnockback(
-            dashStyleController.KnockbackRecoveryActive || pressure.KnockbackRecoveryActive,
-            JobRoles.GetRangeRole(player) == RangeRole.Melee,
-            targetHasBossModule,
-            HasAntiKnockbackStatus(player),
-            distanceToHitbox,
-            reengageRange);
-        var gcdReengageUrgent = this.IsGcdReengageUrgent(distanceToHitbox, reengageRange);
-        var minimumDashDistance = bypassMinimumDistanceForKnockback
-            ? 0f
-            : gcdReengageUrgent
-            ? 0f
-            : styleOpportunity.AllowsShortDash ? 4f : config.MinimumGapCloserDistance;
-        if (distanceToHitbox < minimumDashDistance)
+        if (relayReturnTarget == null &&
+            !reengageDashNeeded &&
+            !knockbackRecoveryDashAllowed &&
+            !positionalDashNeeded &&
+            !allowStyleReengageInsideEngagementRange)
         {
-            this.lastGapCloserSafety = $"target under {minimumDashDistance:0}y";
+            this.lastGapCloserSafety = hasReengageTiming ? walkReason : timingReason;
+            if (positionalDashReason.Length > 0 && !hasReengageTiming)
+            {
+                this.lastGapCloserSafety = positionalDashReason;
+            }
+
+            this.lastSafeLandingPosition = null;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, "Gap closer", this.lastGapCloserSafety);
             return false;
         }
 
@@ -220,13 +243,13 @@ internal sealed class GapCloserController(
             32 when config.GapCloserDRK => this.TryUseTargetGapCloser(ActionUse.DarkKnightShadowstrideActionId, "Shadowstride", distanceToHitbox, target, safeMovementDestination, styleOpportunity, relayReturnTarget),
             37 when config.GapCloserGNB => this.TryUseTargetGapCloser(ActionUse.GunbreakerTrajectoryActionId, "Trajectory", distanceToHitbox, target, safeMovementDestination, styleOpportunity, relayReturnTarget),
             2 or 20 when config.GapCloserMNK => (distanceToHitbox <= CombatConstants.GapCloserMaxRange && this.TryUseTargetGapCloser(ActionUse.MonkThunderclapActionId, "Thunderclap", distanceToHitbox, target, safeMovementDestination, styleOpportunity, relayReturnTarget)) ||
-                                               this.TryUseFriendlyReengageGapCloser(ActionUse.MonkThunderclapActionId, "Thunderclap", CombatConstants.GapCloserMaxRange, friendlyReengageTarget, safeMovementDestination, styleOpportunity),
+                                               this.TryUseFriendlyReengageGapCloser(ActionUse.MonkThunderclapActionId, "Thunderclap", CombatConstants.GapCloserMaxRange, friendlyReengageTarget, safeMovementDestination, styleOpportunity, reengageTiming, reengageRange, missingTimingMeleeRecovery),
             4 or 22 when config.GapCloserDRG => this.TryUseTargetGapCloser(ActionUse.DragoonWingedGlideActionId, "Winged Glide", distanceToHitbox, target, safeMovementDestination, styleOpportunity, relayReturnTarget),
             29 or 30 when config.GapCloserNIN => this.TryUseNinjaShukuchi(target, safeMovementDestination, styleOpportunity),
             34 when config.GapCloserSAM => this.TryUseTargetGapCloser(ActionUse.SamuraiGyotenActionId, "Gyoten", distanceToHitbox, target, safeMovementDestination, styleOpportunity, relayReturnTarget),
             39 when config.GapCloserRPR => this.TryUseReaperRegress(ref this.lastGapCloserSafety, distanceToHitbox, safeMovementDestination, styleOpportunity, target as IBattleChara) || this.TryUseForwardGapCloser(ActionUse.ReaperHellsIngressActionId, "Hell's Ingress", distanceToHitbox, MathF.Max(reengageRange, CombatConstants.MeleeActionRange + 1f), target, safeMovementDestination, styleOpportunity),
             41 when config.GapCloserVPR => (distanceToHitbox <= CombatConstants.GapCloserMaxRange && this.TryUseTargetGapCloser(ActionUse.ViperSlitherActionId, "Slither", distanceToHitbox, target, safeMovementDestination, styleOpportunity, relayReturnTarget)) ||
-                                          this.TryUseFriendlyReengageGapCloser(ActionUse.ViperSlitherActionId, "Slither", CombatConstants.GapCloserMaxRange, friendlyReengageTarget, safeMovementDestination, styleOpportunity),
+                                          this.TryUseFriendlyReengageGapCloser(ActionUse.ViperSlitherActionId, "Slither", CombatConstants.GapCloserMaxRange, friendlyReengageTarget, safeMovementDestination, styleOpportunity, reengageTiming, reengageRange, missingTimingMeleeRecovery),
             _ => false
         };
     }
@@ -444,6 +467,39 @@ internal sealed class GapCloserController(
         return best;
     }
 
+    private bool TryGetOffensiveGcdTiming(IBattleChara? expectedTarget, out RsrGcdActionTimingSnapshot action, out string reason)
+    {
+        action = null!;
+        if (!rotationSolverActions.TryGetUpcomingGcdTiming(out var timing, out reason))
+        {
+            return false;
+        }
+
+        if (!rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var preview, out var previewReason))
+        {
+            reason = previewReason;
+            return false;
+        }
+
+        if (preview.IsFriendly)
+        {
+            reason = "RSR next GCD is friendly";
+            return false;
+        }
+
+        if (expectedTarget != null &&
+            timing.PrimaryTargetId != 0 &&
+            !CurrentTargetMatchesRsrTarget(expectedTarget, timing.PrimaryTargetId))
+        {
+            reason = "RSR next GCD targets another enemy";
+            return false;
+        }
+
+        action = timing;
+        reason = "RSR next offensive GCD timing available";
+        return true;
+    }
+
     private static bool IsUsableGapCloserTarget(IBattleNpc? target)
     {
         return target != null &&
@@ -644,7 +700,7 @@ internal sealed class GapCloserController(
                 distanceToHitboxRequired > 0f ? MobilityIntent.Uptime : MobilityIntent.Safety,
                 "Regress",
                 ActionUse.ReaperRegressActionId,
-                distanceToHitboxRequired > 0f ? 0f : config.MinimumGapCloserDistance,
+                0f,
                 requireSafetyProgress: distanceToHitboxRequired <= 0f,
                 requireUptimeProgress: distanceToHitboxRequired > 0f,
                 requireVnavReachable: true,
@@ -693,7 +749,16 @@ internal sealed class GapCloserController(
         return used;
     }
 
-    private unsafe bool TryUseFriendlyReengageGapCloser(uint actionId, string actionName, float maxRange, IBattleChara? currentTarget, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity)
+    private unsafe bool TryUseFriendlyReengageGapCloser(
+        uint actionId,
+        string actionName,
+        float maxRange,
+        IBattleChara? currentTarget,
+        Vector3? safeMovementDestination,
+        DashStyleReengageOpportunity styleOpportunity,
+        RsrGcdActionTimingSnapshot? reengageTiming,
+        float engagementRange,
+        bool allowMissingTimingMeleeRecovery)
     {
         var player = services.ObjectTable.LocalPlayer;
         if (player == null)
@@ -736,7 +801,31 @@ internal sealed class GapCloserController(
                     continue;
                 }
 
-                if (!ShouldUseFriendlyAnchorDash(decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
+                var relayTimingReason = reengageTiming == null ? "RSR GCD timing unavailable for ally relay" : string.Empty;
+                if ((!allowMissingTimingMeleeRecovery && reengageTiming == null) ||
+                    (reengageTiming != null &&
+                    !GapCloserDecisionPolicy.CanWalkToRangeBeforeGcd(
+                        Geometry.DistanceToHitbox(ally.Position, player.HitboxRadius, currentTarget.Position, currentTarget.HitboxRadius),
+                        engagementRange,
+                        reengageTiming,
+                        out relayTimingReason)))
+                {
+                    this.lastGapCloserSafety = reengageTiming == null ? "RSR GCD timing unavailable for ally relay" : relayTimingReason;
+                    mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, this.lastGapCloserSafety);
+                    continue;
+                }
+
+                if (!ShouldUseFriendlyAnchorDash(
+                        player.Position,
+                        player.HitboxRadius,
+                        ally.Position,
+                        currentTarget.Position,
+                        currentTarget.HitboxRadius,
+                        decision.MoveDistance,
+                        decision.SafetyGain,
+                        decision.UptimeGain,
+                        decision.PathGain,
+                        out var anchorReason))
                 {
                     this.lastGapCloserSafety = anchorReason;
                     mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, anchorReason);
@@ -814,7 +903,31 @@ internal sealed class GapCloserController(
                 continue;
             }
 
-            if (!ShouldUseFriendlyAnchorDash(decision.MoveDistance, decision.SafetyGain, decision.UptimeGain, decision.PathGain, out var anchorReason))
+            var relayTimingReason = reengageTiming == null ? "RSR GCD timing unavailable for ally relay" : string.Empty;
+            if ((!allowMissingTimingMeleeRecovery && reengageTiming == null) ||
+                (reengageTiming != null &&
+                !GapCloserDecisionPolicy.CanWalkToRangeBeforeGcd(
+                    Geometry.DistanceToHitbox(ally.Position, player.HitboxRadius, currentTarget.Position, currentTarget.HitboxRadius),
+                    engagementRange,
+                    reengageTiming,
+                    out relayTimingReason)))
+            {
+                this.lastGapCloserSafety = reengageTiming == null ? "RSR GCD timing unavailable for ally relay" : relayTimingReason;
+                mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, this.lastGapCloserSafety);
+                continue;
+            }
+
+            if (!ShouldUseFriendlyAnchorDash(
+                    player.Position,
+                    player.HitboxRadius,
+                    ally.Position,
+                    currentTarget.Position,
+                    currentTarget.HitboxRadius,
+                    decision.MoveDistance,
+                    decision.SafetyGain,
+                    decision.UptimeGain,
+                    decision.PathGain,
+                    out var anchorReason))
             {
                 this.lastGapCloserSafety = anchorReason;
                 mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, anchorReason);
@@ -851,6 +964,29 @@ internal sealed class GapCloserController(
         float pathGain,
         out string reason)
         => GapCloserDecisionPolicy.ShouldUseFriendlyAnchorDash(moveDistance, safetyGain, uptimeGain, pathGain, out reason);
+
+    internal static bool ShouldUseFriendlyAnchorDash(
+        Vector3 playerPosition,
+        float playerRadius,
+        Vector3 anchorPosition,
+        Vector3 targetPosition,
+        float targetRadius,
+        float moveDistance,
+        float safetyGain,
+        float uptimeGain,
+        float pathGain,
+        out string reason)
+        => GapCloserDecisionPolicy.ShouldUseFriendlyAnchorDash(
+            playerPosition,
+            playerRadius,
+            anchorPosition,
+            targetPosition,
+            targetRadius,
+            moveDistance,
+            safetyGain,
+            uptimeGain,
+            pathGain,
+            out reason);
 
     private unsafe bool TryUseTargetGapCloser(uint actionId, string actionName, float distanceToHitbox, IGameObject target, Vector3? safeMovementDestination, DashStyleReengageOpportunity styleOpportunity, IBattleNpc? restoreTargetAfterUse = null)
     {
@@ -965,7 +1101,7 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (!mobilityEvaluator.TryValidateDashDestination(
+        if (!mobilityEvaluator.TryValidateFixedDashDestination(
             player,
             destination,
             target as IBattleChara,
@@ -977,6 +1113,8 @@ internal sealed class GapCloserController(
             requireSafetyProgress: false,
             requireUptimeProgress: true,
             requireVnavReachable: false,
+            fixedDashRange: CombatConstants.FixedForwardGapCloserRange,
+            fixedDashBackwards: false,
             out var decision))
         {
             if (this.TryRequestForwardDashFacing(player, target as IBattleChara, actionId, actionName, CombatConstants.FixedForwardGapCloserRange, requiredLandingRange, distanceToHitbox, safeMovementDestination, null, null))
@@ -1059,7 +1197,7 @@ internal sealed class GapCloserController(
         return used;
     }
 
-    private bool TryRequestForwardDashFacing(
+    private unsafe bool TryRequestForwardDashFacing(
         IBattleChara player,
         IBattleChara? target,
         uint actionId,
@@ -1495,29 +1633,38 @@ internal sealed class GapCloserController(
 
     private bool IsGcdReengageUrgent(float distanceToHitbox, float engagementRange)
     {
-        if (!rotationSolverActions.TryGetUpcomingGcd(requirePreview: false, out var action, out _) ||
-            action.IsFriendly)
+        if (!this.TryGetOffensiveGcdTiming(services.TargetManager.Target as IBattleChara, out var action, out _))
         {
             return false;
         }
 
-        return ShouldTreatGcdReengageAsUrgent(distanceToHitbox, engagementRange, action.GcdRemaining);
+        return ShouldTreatGcdReengageAsUrgent(distanceToHitbox, engagementRange, action);
     }
 
     internal static bool ShouldTreatGcdReengageAsUrgent(float distanceToHitbox, float engagementRange, float gcdRemaining)
     {
-        if (gcdRemaining < 0f || distanceToHitbox <= engagementRange)
-        {
-            return false;
-        }
-
-        const float walkSpeedYalmsPerSecond = 6f;
-        const float gcdBufferSeconds = 0.35f;
-        var requiredWalkTime = (distanceToHitbox - engagementRange) / walkSpeedYalmsPerSecond;
-        return gcdRemaining <= requiredWalkTime + gcdBufferSeconds;
+        var action = new RsrGcdActionTimingSnapshot(0, 0, "next GCD", "test", 0, gcdRemaining, 0f, 2.5f, 0.35f);
+        return ShouldTreatGcdReengageAsUrgent(distanceToHitbox, engagementRange, action);
     }
 
-    internal static bool ShouldBypassMinimumGapCloserDistanceForKnockback(
+    internal static bool ShouldTreatGcdReengageAsUrgent(float distanceToHitbox, float engagementRange, RsrGcdActionTimingSnapshot action)
+    {
+        return distanceToHitbox > engagementRange &&
+               !GapCloserDecisionPolicy.CanWalkToRangeBeforeGcd(distanceToHitbox, engagementRange, action, out _);
+    }
+
+    internal static bool ShouldTreatMissingRsrTimingAsMissedMelee(
+        bool playerIsMeleeRangeRole,
+        bool hasReengageTiming,
+        float distanceToHitbox,
+        float engagementRange)
+    {
+        return playerIsMeleeRangeRole &&
+               !hasReengageTiming &&
+               distanceToHitbox > engagementRange;
+    }
+
+    internal static bool ShouldAllowKnockbackRecoveryReengage(
         bool knockbackRecoveryActive,
         bool playerIsMeleeRangeRole,
         bool targetHasBossModule,
@@ -1537,6 +1684,8 @@ internal sealed class GapCloserController(
         IBattleNpc intendedTarget,
         float intendedDistanceToHitbox,
         uint classJobId,
+        float engagementRange,
+        RsrGcdActionTimingSnapshot? reengageTiming,
         out IBattleNpc relayTarget)
     {
         relayTarget = null!;
@@ -1571,6 +1720,13 @@ internal sealed class GapCloserController(
                     out var gain,
                     out var dot,
                     out _))
+            {
+                continue;
+            }
+
+            var relayLandingDistance = Geometry.DistanceToHitbox(landing, player.HitboxRadius, intendedTarget.Position, intendedTarget.HitboxRadius);
+            if (reengageTiming != null &&
+                !GapCloserDecisionPolicy.CanWalkToRangeBeforeGcd(relayLandingDistance, engagementRange, reengageTiming, out _))
             {
                 continue;
             }
@@ -1742,14 +1898,62 @@ internal sealed class GapCloserController(
         }
     }
 
-    private Positional ResolveDesiredDashPositional(IBattleChara player, IBattleChara? target)
+    private unsafe Positional ResolveDesiredDashPositional(IBattleChara player, IBattleChara? target)
+        => this.ResolveDesiredDashPositional(player, target, null, out _);
+
+    private unsafe Positional ResolveDesiredDashPositional(IBattleChara player, IBattleChara? target, RsrGcdActionTimingSnapshot? action, out string reason)
     {
+        reason = string.Empty;
         var positional = positionalIntent();
-        return target != null &&
-               PositionalDashPolicy.IsActive(positional) &&
-               !PositionalDashPolicy.IsSatisfied(positional, player.Position, target.Position, target.Rotation)
-            ? positional
-            : Positional.Any;
+        if (target == null ||
+            !PositionalDashPolicy.IsActive(positional) ||
+            PositionalDashPolicy.IsSatisfied(positional, player.Position, target.Position, target.Rotation))
+        {
+            return Positional.Any;
+        }
+
+        if (config.ManageTrueNorth && HasTrueNorthCoverage(player))
+        {
+            reason = "True North covers positional; dash held";
+            return Positional.Any;
+        }
+
+        action ??= this.TryGetOffensiveGcdTiming(target, out var nextAction, out var timingReason) ? nextAction : null;
+        if (action == null)
+        {
+            reason = "RSR positional GCD timing unavailable";
+            return Positional.Any;
+        }
+
+        if (!PositionalTrueNorthPolicy.TryEstimateWalkDistance(
+                player.Position,
+                player.HitboxRadius,
+                target.Position,
+                target.HitboxRadius,
+                target.Rotation,
+                positional,
+                candidate => bossModSafety.TryIsPositionSafe(candidate, out var safe, out _) && safe,
+                out var moveDistance,
+                out var walkEstimateReason))
+        {
+            reason = walkEstimateReason;
+            return positional;
+        }
+
+        if (GapCloserDecisionPolicy.CanWalkToPositionalBeforeGcd(positional, action, moveDistance, out var walkReason))
+        {
+            reason = walkReason;
+            return Positional.Any;
+        }
+
+        reason = walkReason;
+        return positional;
+    }
+
+    private static unsafe bool HasTrueNorthCoverage(IBattleChara player)
+    {
+        return HasAnyStatus(player, ActionUse.TrueNorthStatusId) ||
+               ActionUse.GetCurrentCharges(ActionUse.TrueNorthActionId) > 0;
     }
 
     private IEnumerable<IBattleChara> EnumerateFriendlyReengageTargets(IBattleChara player, IBattleChara currentTarget, float maxRange)

@@ -21,6 +21,7 @@ internal enum DecisionOverlaySource
     StarryMuse,
     PartyHealerRange,
     BossCenterAvoidance,
+    TankBehavior,
 }
 
 internal enum DecisionOverlayState

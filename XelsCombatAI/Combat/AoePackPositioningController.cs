@@ -91,17 +91,20 @@ internal sealed class AoePackPositioningController(
     private Vector2 lastPackCentroid;
     private Vector2 lastPackDirection;
     private DateTime lastPackCentroidAt = DateTime.MinValue;
+    private DateTime lastPackEngagementGoalUpdatedAt = DateTime.MinValue;
     private DateTime lastTargetSwitchAt = DateTime.MinValue;
     private readonly TrashPullStateTracker trashPullState = new();
     private static readonly TimeSpan CandidateDebounce = TimeSpan.FromMilliseconds(150);
     private static readonly TimeSpan SuggestionHold = TimeSpan.FromMilliseconds(900);
     private static readonly TimeSpan TargetSwitchCooldown = TimeSpan.FromMilliseconds(1500);
     private static readonly TimeSpan FallbackGcdWindow = TimeSpan.FromMilliseconds(2500);
+    private static readonly TimeSpan FluidPackFollowReplanCooldown = TimeSpan.FromMilliseconds(700);
     private const float CandidateMovementThreshold = 2f;
     private const float SuggestionMovementThreshold = 2f;
     private const float GcdElapsedResetTolerance = 0.2f;
-    private const float CentroidMovementThreshold = 3f;
-    private const float FluidPackFollowMovementThreshold = 2f;
+    private const float CentroidMovementThreshold = 4f;
+    private const float FluidPackFollowMovementThreshold = 3.5f;
+    private const float FluidPackFollowRetainMovementThreshold = 7f;
     private const float FluidPackFollowMinimumSpeed = 1.25f;
     private const float FluidPackFollowSlack = 1.5f;
     private const float DominantPackClusterRadius = 10f;
@@ -240,6 +243,7 @@ internal sealed class AoePackPositioningController(
         this.lastPackCentroid = default;
         this.lastPackDirection = default;
         this.lastPackCentroidAt = DateTime.MinValue;
+        this.lastPackEngagementGoalUpdatedAt = DateTime.MinValue;
         this.lastTargetSwitchAt = DateTime.MinValue;
         this.trashPullState.Reset();
         this.RestoreRsrIfNeeded();
@@ -355,6 +359,7 @@ internal sealed class AoePackPositioningController(
         {
             this.RestoreRsrIfNeeded();
             this.ClearAoeCandidateGoal();
+            this.ClearPackEngagementGoal();
             this.lastAction = null;
             this.lastCurrentHits = 0;
             this.lastBestHits = 0;
@@ -1053,14 +1058,14 @@ internal sealed class AoePackPositioningController(
         bool bmrMoveImminent,
         bool bossModuleContext)
     {
-        _ = bmrMoveRequested;
-        _ = bmrMoveImminent;
         _ = bossModuleContext;
-        _ = forbiddenSafetyActive;
-        _ = temporaryObstacleSafetyActive;
-        _ = forbiddenDirectionSafetyActive;
+        var bmrSafetyMovementActive = (bmrMoveRequested || bmrMoveImminent) &&
+                                      (forbiddenSafetyActive ||
+                                       temporaryObstacleSafetyActive ||
+                                       forbiddenDirectionSafetyActive);
         return forcedMovementActive ||
-               specialModeSafetyActive;
+               specialModeSafetyActive ||
+               bmrSafetyMovementActive;
     }
 
     internal static bool ShouldHoldOptionalPackMovement(BossModMechanicPressure pressure)
@@ -1354,6 +1359,13 @@ internal sealed class AoePackPositioningController(
         this.lastSuggestionBestHits = 0;
         this.lastSuggestionCandidate = default;
         this.lastSuggestionHeldUntil = DateTime.MinValue;
+    }
+
+    private void ClearPackEngagementGoal()
+    {
+        this.lastCentroidGoalDelegate = null;
+        this.lastInjectedCentroid = default;
+        this.lastPackEngagementGoalUpdatedAt = DateTime.MinValue;
     }
 
     private void UpdateAoeSuggestion(
@@ -1728,6 +1740,7 @@ internal sealed class AoePackPositioningController(
         if (inRangeCount >= requiredInRangeCount)
         {
             this.ClearAoeCandidateGoal();
+            this.ClearPackEngagementGoal();
             this.lastReason = requiredInRangeCount > 1
                 ? $"already in AoE range of pack: {inRangeCount}/{requiredInRangeCount}"
                 : "already in engagement range of pack";
@@ -1759,8 +1772,7 @@ internal sealed class AoePackPositioningController(
             retainedCandidate);
         if (candidate.Hits <= 0)
         {
-            this.lastCentroidGoalDelegate = null;
-            this.lastInjectedCentroid = default;
+            this.ClearPackEngagementGoal();
             this.lastReason = $"{reason}: no reachable pack engagement position";
             return false;
         }
@@ -1770,9 +1782,11 @@ internal sealed class AoePackPositioningController(
         {
             this.lastCentroidGoalDelegate = plan.CreateGoalDelegate(this.resolvedWPosType!, this.wposXField!, this.wposZField!, 0);
             this.lastInjectedCentroid = candidate.Position;
+            this.lastPackEngagementGoalUpdatedAt = DateTime.UtcNow;
         }
 
-        contributions.Add(new(this.lastCentroidGoalDelegate, BossModGoalPriority.Uptime, "Pack engagement", candidate.Position, MechanicWhisperConfidence.Confident));
+        var contributionCandidate = this.lastInjectedCentroid;
+        contributions.Add(new(this.lastCentroidGoalDelegate, BossModGoalPriority.Uptime, "Pack engagement", contributionCandidate, MechanicWhisperConfidence.Confident));
         this.lastAction = null;
         this.lastCurrentHits = 0;
         this.lastBestHits = candidate.Hits;
@@ -1784,13 +1798,13 @@ internal sealed class AoePackPositioningController(
             0,
             "Pack engagement",
             RsrAoeShape.Circle.ToString(),
-            new Vector3(candidate.Position.X, y, candidate.Position.Y),
+            new Vector3(contributionCandidate.X, y, contributionCandidate.Y),
             new Vector3(centroid.X, y, centroid.Y),
             engagementRange,
             0f,
             0,
             candidate.Hits,
-            this.CreateOverlayTargets(targets, y, candidate.Position, hit: false));
+            this.CreateOverlayTargets(targets, y, contributionCandidate, hit: false));
         return true;
     }
 
@@ -1869,14 +1883,35 @@ internal sealed class AoePackPositioningController(
             return false;
         }
 
+        var now = DateTime.UtcNow;
+        if (this.lastCentroidGoalDelegate != null &&
+            CandidateAllowed(pathfindBounds, dangerZones, this.lastInjectedCentroid))
+        {
+            var retainedHits = CountTargetsInRange(this.lastInjectedCentroid, targets, engagementRange);
+            var retainedDistance = Vector2.Distance(candidate, this.lastInjectedCentroid);
+            var retainedAge = this.lastPackEngagementGoalUpdatedAt == DateTime.MinValue
+                ? FluidPackFollowReplanCooldown
+                : now - this.lastPackEngagementGoalUpdatedAt;
+            if (retainedHits > 0 &&
+                (retainedDistance <= FluidPackFollowMovementThreshold ||
+                 retainedDistance <= FluidPackFollowRetainMovementThreshold && candidateHits <= retainedHits ||
+                 retainedAge < FluidPackFollowReplanCooldown && candidateHits <= retainedHits))
+            {
+                candidate = this.lastInjectedCentroid;
+                candidateHits = retainedHits;
+            }
+        }
+
         if (this.lastCentroidGoalDelegate == null ||
             Vector2.Distance(candidate, this.lastInjectedCentroid) > FluidPackFollowMovementThreshold)
         {
             this.lastCentroidGoalDelegate = this.CreateCentroidGoalDelegate(candidate, acceptRadius: 2.5f);
             this.lastInjectedCentroid = candidate;
+            this.lastPackEngagementGoalUpdatedAt = now;
         }
 
-        contributions.Add(new(this.lastCentroidGoalDelegate, BossModGoalPriority.Uptime, "Pack engagement", candidate, MechanicWhisperConfidence.Confident));
+        var contributionCandidate = this.lastInjectedCentroid;
+        contributions.Add(new(this.lastCentroidGoalDelegate, BossModGoalPriority.Uptime, "Pack engagement", contributionCandidate, MechanicWhisperConfidence.Confident));
         this.lastAction = null;
         this.lastCurrentHits = CountTargetsInRange(playerPos, targets, engagementRange);
         this.lastBestHits = candidateHits;
@@ -1888,13 +1923,13 @@ internal sealed class AoePackPositioningController(
             0,
             "Pack engagement",
             RsrAoeShape.Circle.ToString(),
-            new Vector3(candidate.X, y, candidate.Y),
+            new Vector3(contributionCandidate.X, y, contributionCandidate.Y),
             new Vector3(centroid.X, y, centroid.Y),
             engagementRange,
             0f,
             this.lastCurrentHits,
             this.lastBestHits,
-            this.CreateOverlayTargets(targets, y, candidate, hit: false));
+            this.CreateOverlayTargets(targets, y, contributionCandidate, hit: false));
         return true;
     }
 

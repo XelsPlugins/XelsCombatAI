@@ -135,7 +135,7 @@ internal static class ArtifactWriter
         var sourceSummary = BuildSourceSummary(review.Xcai.Frames);
         sb.AppendLine("# Fight Review");
         sb.AppendLine();
-        sb.AppendLine("Review premise: uptime is the primary positive signal: staying in usable target range gives RSR freedom to act, melee/tank ranged fallback is partial uptime, melee range is better, trash pack positions should hit more targets, and healer uptime is scored together with visible party heal coverage. BMR remains the safety authority. Normal profile BMR pressure is safety context; Greed profiles are expected to preserve uptime until BMR actually requires movement. Fight review still flags danger, downtime, unhuman-like movement, manual corrections, vnavmesh issues, and poor recovery.");
+        sb.AppendLine("Review premise: uptime is the primary positive signal: staying in usable target range gives RSR freedom to act, melee/tank ranged fallback is a missed melee uptime window rather than partial credit, trash pack positions should hit more targets, and healer uptime is scored together with visible party heal coverage. BMR remains the safety authority. Normal profile BMR pressure is safety context; Greed profiles are expected to preserve uptime until BMR actually requires movement. Fight review still flags danger, downtime, unhuman-like movement, manual corrections, vnavmesh issues, and poor recovery.");
         sb.AppendLine();
         sb.AppendLine($"- XCAI log: `{review.Xcai.Path}`");
         sb.AppendLine($"- BMR replay: `{review.Bmr.Path}`");
@@ -321,7 +321,7 @@ internal static class ArtifactWriter
                 Primary = "Maximize BossMod-safe uptime by keeping RSR in useful target range.",
                 Rules = new[]
                 {
-                    "Melee/tank ranged fallback is useful partial uptime; melee range is better.",
+                    "Melee/tank ranged fallback avoids total inactivity but is still missed melee uptime.",
                     "Trash pack movement should improve AoE hit count while preserving ABC.",
                     "Healer uptime includes both target access and visible party heal coverage.",
                     "Normal profile BMR pressure is safety context; Greed profiles should stay useful until BMR requires movement."

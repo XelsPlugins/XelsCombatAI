@@ -11,9 +11,7 @@ public sealed class Configuration : IPluginConfiguration
     public const float InternalRangedUptimeRange = 25f;
     public const float InternalDisabledUptimeRange = 30f;
     public const float DefaultPreferredForbiddenZoneDistance = 1f;
-    public const float DefaultMinimumGapCloserDistance = 8f;
-    public const float MinimumGapCloserDistanceMin = 0f;
-    public const float MinimumGapCloserDistanceMax = 20f;
+    private const float DefaultMinimumGapCloserDistance = 8f;
 
     internal static readonly GapCloserJobToggle[] GapCloserJobToggles =
     [
@@ -36,7 +34,7 @@ public sealed class Configuration : IPluginConfiguration
         new("PCT", config => config.GapCloserPCT, (config, value) => config.GapCloserPCT = value)
     ];
 
-    public int Version { get; set; } = 26;
+    public int Version { get; set; } = 27;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -91,6 +89,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool AvoidStandingInsideEnemies { get; set; } = true;
     public bool AvoidArenaEdge { get; set; } = true;
     public bool ShowDecisionOverlay { get; set; } = false;
+    public OverlayDensity DecisionOverlayDensity { get; set; } = OverlayDensity.Normal;
     public bool FightReviewLoggingEnabled { get; set; } = false;
     private bool? manageSurvivabilityZonePositioningCompatibility;
     private bool? manageMultiTargetTargetingCompatibility;
@@ -111,8 +110,6 @@ public sealed class Configuration : IPluginConfiguration
     private bool? escapeGapCloserRDMCompatibility;
     private bool? escapeGapCloserSGECompatibility;
     private bool? escapeGapCloserPCTCompatibility;
-    private float? minimumReengageGapCloserDistanceCompatibility;
-    private float? minimumEscapeGapCloserDistanceCompatibility;
 
     [JsonProperty("ManageSurvivabilityZonePositioning")]
     private bool ManageSurvivabilityZonePositioningCompatibility
@@ -283,13 +280,13 @@ public sealed class Configuration : IPluginConfiguration
     [JsonProperty("MinimumReengageGapCloserDistance")]
     private float MinimumReengageGapCloserDistanceCompatibility
     {
-        set => this.minimumReengageGapCloserDistanceCompatibility = value;
+        set { }
     }
 
     [JsonProperty("MinimumEscapeGapCloserDistance")]
     private float MinimumEscapeGapCloserDistanceCompatibility
     {
-        set => this.minimumEscapeGapCloserDistanceCompatibility = value;
+        set { }
     }
 
     internal void Migrate()
@@ -305,7 +302,6 @@ public sealed class Configuration : IPluginConfiguration
             this.GapCloserRPR = true;
             this.GapCloserDNC = true;
             this.GapCloserWHM = true;
-            this.MinimumGapCloserDistance = DefaultMinimumGapCloserDistance;
             this.RespectManualMovement = true;
             this.ManageAoePackPositioning = true;
             this.ManageHealerCoverageZone = true;
@@ -392,13 +388,19 @@ public sealed class Configuration : IPluginConfiguration
 
         if (this.Version < 26)
             this.Version = 26;
+
+        if (this.Version < 27)
+        {
+            this.DecisionOverlayDensity = OverlayDensity.Normal;
+            this.Version = 27;
+        }
     }
 
     internal void Clamp()
     {
         this.PreferredForbiddenZoneDistance = Math.Clamp(this.PreferredForbiddenZoneDistance, 0f, 3f);
-        this.MinimumGapCloserDistance = MathF.Round(Math.Clamp(this.MinimumGapCloserDistance, MinimumGapCloserDistanceMin, MinimumGapCloserDistanceMax));
         this.CombatStyle = Enum.IsDefined(this.CombatStyle) ? this.CombatStyle : CombatStyle.Normal;
+        this.DecisionOverlayDensity = Enum.IsDefined(this.DecisionOverlayDensity) ? this.DecisionOverlayDensity : OverlayDensity.Normal;
     }
 
     internal void ResetBehaviorSettings()
@@ -409,7 +411,6 @@ public sealed class Configuration : IPluginConfiguration
         this.DisableAutoFaceTargetDuringManualMovement = false;
         this.ManageForbiddenZoneDistance = true;
         this.PreferredForbiddenZoneDistance = DefaultPreferredForbiddenZoneDistance;
-        this.MinimumGapCloserDistance = DefaultMinimumGapCloserDistance;
         this.UseRedMageMeleeComboMovement = false;
         this.ManagePictomancerStarryMuse = true;
         this.UsePictomancerStarryMuseSmudge = true;
@@ -457,6 +458,7 @@ public sealed class Configuration : IPluginConfiguration
         this.AvoidStandingInsideEnemies = true;
         this.AvoidArenaEdge = true;
         this.ShowDecisionOverlay = false;
+        this.DecisionOverlayDensity = OverlayDensity.Normal;
         this.FightReviewLoggingEnabled = false;
         this.ResetBehaviorSettings();
     }
@@ -571,21 +573,7 @@ public sealed class Configuration : IPluginConfiguration
             this.GapCloserPCT = false;
         }
 
-        this.MigrateUnifiedGapCloserDistance(oldReengageEnabled, oldEscapeEnabled);
         this.UseGapCloser = oldReengageEnabled || oldEscapeEnabled;
-    }
-
-    private void MigrateUnifiedGapCloserDistance(bool oldReengageEnabled, bool oldEscapeEnabled)
-    {
-        var oldReengageDistance = this.minimumReengageGapCloserDistanceCompatibility ?? this.MinimumGapCloserDistance;
-        var oldEscapeDistance = this.minimumEscapeGapCloserDistanceCompatibility ?? this.MinimumGapCloserDistance;
-        this.MinimumGapCloserDistance = (oldReengageEnabled, oldEscapeEnabled) switch
-        {
-            (true, false) => oldReengageDistance,
-            (false, true) => oldEscapeDistance,
-            (true, true) => MathF.Max(oldReengageDistance, oldEscapeDistance),
-            _ => MathF.Max(oldReengageDistance, oldEscapeDistance)
-        };
     }
 
     private void ApplyEscapeGapCloserJobs(bool replace)

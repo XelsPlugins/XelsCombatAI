@@ -18,13 +18,10 @@ internal sealed class EscapeGapCloserController(
     FacingController facingController,
     Func<Positional> positionalIntent,
     Func<BossModMovementDiagnostics> bossModMovementDiagnostics,
+    Func<TrashPullDiagnostics> trashPullDiagnostics,
     Func<BossModMechanicPressure> mechanicPressure)
 {
-    private const float GreedGcdAssistUrgencySeconds = 2.5f;
-    private const float GreedLastMomentAssistUrgencySeconds = 1.0f;
-    private const float FarSafeAssistMinimumDistance = 12f;
-    private const float FarSafeAssistBufferSeconds = 0.75f;
-    private const float WalkSpeedYalmsPerSecond = 6f;
+    private const float SamuraiWalkableSafetyDistance = 6f;
     private DateTime nextEscapeGapCloserAttempt = DateTime.MinValue;
     private DateTime escapeDangerDetectedAt = DateTime.MinValue;
     private string lastEscapeGapCloserSafety = "not checked";
@@ -125,18 +122,10 @@ internal sealed class EscapeGapCloserController(
 
         if (ShouldSuppressLateEscapeGapCloser(
                 currentSafe,
-                safeMovementDistance,
-                config.MinimumGapCloserDistance,
                 canAssistSafeMovement,
                 (now - this.escapeDangerDetectedAt).TotalMilliseconds))
         {
             this.lastEscapeGapCloserSafety = "already walking to safety";
-            return false;
-        }
-
-        if (currentSafe && safeMovementDistance < config.MinimumGapCloserDistance)
-        {
-            this.lastEscapeGapCloserSafety = $"safe movement under {config.MinimumGapCloserDistance:0}y";
             return false;
         }
 
@@ -152,7 +141,7 @@ internal sealed class EscapeGapCloserController(
             5 or 23 when config.GapCloserBRD => this.TryUseTargetBackstepEscapeGapCloser(ActionUse.BardRepellingShotActionId, "Repelling Shot", 15f, 10f, safeMovementDestination),
             25 when config.GapCloserBLM => this.TryUseFriendlyEscapeGapCloser(ActionUse.BlackMageAetherialManipulationActionId, "Aetherial Manipulation", 25f, safeMovementDestination),
             29 or 30 when config.GapCloserNIN => this.TryUseLocationEscapeGapCloser(ActionUse.NinjaShukuchiActionId, CombatConstants.GapCloserMaxRange, "Shukuchi", safeMovementDestination),
-            34 when config.GapCloserSAM => this.TryUseTargetBackstepEscapeGapCloser(ActionUse.SamuraiYatenActionId, "Yaten", 5f, 10f, safeMovementDestination) || this.TryUseGreedyTargetEscapeGapCloser(ActionUse.SamuraiGyotenActionId, "Gyoten", safeMovementDestination),
+            34 when config.GapCloserSAM => this.TryUseSamuraiEscapeGapCloser(currentSafe, safeMovementDestination),
             39 when config.GapCloserRPR => gapCloserController.TryUseReaperRegress(ref this.lastEscapeGapCloserSafety, safeMovementDestination: safeMovementDestination) || this.TryUseBackstepEscapeGapCloser(ActionUse.ReaperHellsEgressActionId, CombatConstants.FixedForwardGapCloserRange, "Hell's Egress", safeMovementDestination) || this.TryUseForwardEscapeGapCloser(ActionUse.ReaperHellsIngressActionId, "Hell's Ingress", safeMovementDestination),
             24 when config.GapCloserWHM => this.TryUseForwardEscapeGapCloser(ActionUse.WhiteMageAetherialShiftActionId, "Aetherial Shift", safeMovementDestination),
             35 when config.GapCloserRDM => this.TryUseTargetBackstepEscapeGapCloser(ActionUse.RedMageDisplacementActionId, "Displacement", 5f, CombatConstants.FixedForwardGapCloserRange, safeMovementDestination),
@@ -162,6 +151,91 @@ internal sealed class EscapeGapCloserController(
             42 when config.GapCloserPCT => this.TryUseForwardEscapeGapCloser(ActionUse.PictomancerSmudgeActionId, "Smudge", safeMovementDestination),
             _ => false
         };
+    }
+
+    private bool TryUseSamuraiEscapeGapCloser(bool currentSafe, Vector3 safeMovementDestination)
+    {
+        if (this.ShouldHoldSamuraiEscapeForWalkableSafety(currentSafe, safeMovementDestination, out var walkReason))
+        {
+            this.lastEscapeGapCloserSafety = walkReason;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Safety, "Yaten", walkReason);
+            return false;
+        }
+
+        if (ShouldHoldSamuraiBackstepEscapeInTrash(currentSafe, trashPullDiagnostics(), out var holdReason))
+        {
+            if (this.TryUseGreedyTargetEscapeGapCloser(ActionUse.SamuraiGyotenActionId, "Gyoten", safeMovementDestination))
+            {
+                return true;
+            }
+
+            this.lastEscapeGapCloserSafety = holdReason;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Safety, "Yaten", holdReason);
+            return false;
+        }
+
+        return this.TryUseTargetBackstepEscapeGapCloser(ActionUse.SamuraiYatenActionId, "Yaten", 5f, 10f, safeMovementDestination) ||
+               this.TryUseGreedyTargetEscapeGapCloser(ActionUse.SamuraiGyotenActionId, "Gyoten", safeMovementDestination);
+    }
+
+    private bool ShouldHoldSamuraiEscapeForWalkableSafety(bool currentSafe, Vector3 safeMovementDestination, out string reason)
+    {
+        reason = string.Empty;
+
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null)
+        {
+            return false;
+        }
+
+        var safeMovementDistance = Geometry.Distance2D(player.Position, safeMovementDestination);
+        var pathKnown = bossModSafety.TryCheckNavigationLine(player.Position, safeMovementDestination, out var pathCheck);
+        return ShouldHoldSamuraiEscapeForWalkableSafety(
+            currentSafe,
+            safeMovementDistance,
+            pathKnown,
+            pathCheck.Clear,
+            out reason);
+    }
+
+    internal static bool ShouldHoldSamuraiEscapeForWalkableSafety(
+        bool currentSafe,
+        float safeMovementDistance,
+        bool pathKnown,
+        bool pathClear,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (safeMovementDistance > SamuraiWalkableSafetyDistance)
+        {
+            return false;
+        }
+
+        if (!currentSafe && (!pathKnown || !pathClear))
+        {
+            return false;
+        }
+
+        reason = $"SAM dash held; BMR safety move is a {safeMovementDistance:0.0}y walk";
+        return true;
+    }
+
+    internal static bool ShouldHoldSamuraiBackstepEscapeInTrash(bool currentSafe, TrashPullDiagnostics trash, out string reason)
+    {
+        if (!currentSafe)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        if (!GapCloserDecisionPolicy.IsConservativeTrashPullContext(trash))
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        reason = "Yaten held in trash pack while already safe";
+        return true;
     }
 
     private bool TryUsePhantomEscapeGapCloser(uint classJobId, Vector3 safeMovementDestination)
@@ -189,11 +263,11 @@ internal sealed class EscapeGapCloserController(
                !JobRoles.IsTankJob(classJobId);
     }
 
-    internal static bool ShouldSuppressLateEscapeGapCloser(bool currentSafe, float safeMovementDistance, float minimumGapCloserDistance, bool canAssistSafeMovement, double dangerElapsedMilliseconds)
+    internal static bool ShouldSuppressLateEscapeGapCloser(bool currentSafe, bool canAssistSafeMovement, double dangerElapsedMilliseconds)
     {
         return dangerElapsedMilliseconds > CombatConstants.EscapeGapCloserDangerWindowMilliseconds &&
                currentSafe &&
-               (!canAssistSafeMovement || safeMovementDistance < minimumGapCloserDistance);
+               !canAssistSafeMovement;
     }
 
     private unsafe bool TryUseFriendlyEscapeGapCloser(uint actionId, string actionName, float maxRange, Vector3 safeMovementDestination)
@@ -223,7 +297,7 @@ internal sealed class EscapeGapCloserController(
                     MobilityIntent.Safety,
                     actionName,
                     actionId,
-                    config.MinimumGapCloserDistance,
+                    0f,
                     requireSafetyProgress: true,
                     requireUptimeProgress: false,
                     requireVnavReachable: true,
@@ -277,7 +351,7 @@ internal sealed class EscapeGapCloserController(
                 MobilityIntent.Safety,
                 actionName,
                 actionId,
-                config.MinimumGapCloserDistance,
+                0f,
                 requireSafetyProgress: true,
                 requireUptimeProgress: false,
                 requireVnavReachable: true,
@@ -336,7 +410,7 @@ internal sealed class EscapeGapCloserController(
                     MobilityIntent.Safety,
                     actionName,
                     actionId,
-                    config.MinimumGapCloserDistance,
+                    0f,
                     requireSafetyProgress: true,
                     requireUptimeProgress: false,
                     requireVnavReachable: true,
@@ -399,7 +473,7 @@ internal sealed class EscapeGapCloserController(
                 MobilityIntent.Safety,
                 actionName,
                 actionId,
-                config.MinimumGapCloserDistance,
+                0f,
                 requireSafetyProgress: true,
                 requireUptimeProgress: false,
                 requireVnavReachable: true,
@@ -490,7 +564,7 @@ internal sealed class EscapeGapCloserController(
             MobilityIntent.Safety,
             actionName,
             actionId,
-            config.MinimumGapCloserDistance,
+            0f,
             requireSafetyProgress: true,
             requireUptimeProgress: false,
             requireVnavReachable: true,
@@ -542,7 +616,7 @@ internal sealed class EscapeGapCloserController(
             MobilityIntent.Safety,
             actionName,
             actionId,
-            config.MinimumGapCloserDistance,
+            0f,
             requireSafetyProgress: true,
             requireUptimeProgress: false,
             requireVnavReachable: true,
@@ -604,7 +678,7 @@ internal sealed class EscapeGapCloserController(
                     MobilityIntent.Safety,
                     actionName,
                     actionId,
-                    config.MinimumGapCloserDistance,
+                    0f,
                     requireSafetyProgress: true,
                     requireUptimeProgress: false,
                     requireVnavReachable: true,
@@ -664,7 +738,7 @@ internal sealed class EscapeGapCloserController(
                 MobilityIntent.Safety,
                 actionName,
                 actionId,
-                config.MinimumGapCloserDistance,
+                0f,
                 requireSafetyProgress: true,
                 requireUptimeProgress: false,
                 requireVnavReachable: true,
@@ -722,7 +796,7 @@ internal sealed class EscapeGapCloserController(
             MobilityIntent.Safety,
             actionName,
             actionId,
-            config.MinimumGapCloserDistance,
+            0f,
             requireSafetyProgress: true,
             requireUptimeProgress: false,
             requireVnavReachable: true,
@@ -795,7 +869,7 @@ internal sealed class EscapeGapCloserController(
             MobilityIntent.Safety,
             actionName,
             actionId,
-            config.MinimumGapCloserDistance,
+            0f,
             requireSafetyProgress: true,
             requireUptimeProgress: false,
             requireVnavReachable: true,
@@ -819,7 +893,7 @@ internal sealed class EscapeGapCloserController(
             safeMovementDestination,
             actionName,
             actionId,
-            config.MinimumGapCloserDistance,
+            0f,
             out var decision))
         {
             this.lastEscapeGapCloserSafety = decision.RiskReason == "landing is safe; normal escape validation required"
@@ -955,24 +1029,21 @@ internal sealed class EscapeGapCloserController(
             config.CombatStyle,
             bossModMovementDiagnostics(),
             safeMovementDistance,
-            config.MinimumGapCloserDistance,
             out reason);
 
     internal static bool ShouldAssistSafeBossModMovement(
         CombatStyle combatStyle,
         BossModMovementDiagnostics movement,
         float safeMovementDistance,
-        float minimumGapCloserDistance,
         out string reason)
     {
-        if (combatStyle == CombatStyle.Greed)
+        if (GapCloserDecisionPolicy.CanWalkToBossModSafetyBeforeUrgency(safeMovementDistance, movement, out var walkReason))
         {
-            reason = "greedy timing allows safe movement dash";
-            return true;
+            reason = walkReason;
+            return false;
         }
 
-        var farSafeZone = safeMovementDistance >= MathF.Max(FarSafeAssistMinimumDistance, minimumGapCloserDistance);
-        if (!TryGetBossModMovementUrgency(movement, out var urgencySeconds))
+        if (!GapCloserDecisionPolicy.TryGetBossModMovementUrgency(movement, out _))
         {
             reason = combatStyle == CombatStyle.Normal
                 ? "current position safe; normal timing walks"
@@ -980,56 +1051,8 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
-        if (farSafeZone)
-        {
-            var walkTime = safeMovementDistance / WalkSpeedYalmsPerSecond;
-            var farThreshold = walkTime + FarSafeAssistBufferSeconds;
-            if (urgencySeconds <= farThreshold)
-            {
-                reason = $"{combatStyle}: far safe zone {safeMovementDistance:0.0}y, BMR movement due in {urgencySeconds:0.0}s";
-                return true;
-            }
-        }
-
-        if (combatStyle == CombatStyle.Normal)
-        {
-            reason = "current position safe; normal timing walks";
-            return false;
-        }
-
-        var threshold = combatStyle == CombatStyle.GreedLastMoment
-            ? GreedLastMomentAssistUrgencySeconds
-            : GreedGcdAssistUrgencySeconds;
-        if (urgencySeconds > threshold)
-        {
-            reason = $"{combatStyle}: BMR movement in {urgencySeconds:0.0}s";
-            return false;
-        }
-
-        reason = $"{combatStyle}: BMR movement due in {urgencySeconds:0.0}s";
+        reason = $"{combatStyle}: {walkReason}";
         return true;
-    }
-
-    private static bool TryGetBossModMovementUrgency(BossModMovementDiagnostics movement, out float urgencySeconds)
-    {
-        urgencySeconds = float.MaxValue;
-        var found = false;
-        AddUrgency(movement.NavigationDetails.ForceMovementIn, ref urgencySeconds, ref found);
-        AddUrgency(movement.NavigationDetails.LeewaySeconds, ref urgencySeconds, ref found);
-        return found;
-    }
-
-    private static void AddUrgency(float? value, ref float urgencySeconds, ref bool found)
-    {
-        if (!value.HasValue ||
-            !float.IsFinite(value.Value) ||
-            value.Value < 0f)
-        {
-            return;
-        }
-
-        urgencySeconds = MathF.Min(urgencySeconds, value.Value);
-        found = true;
     }
 
     private void RecordEscapeActionUsed(uint actionId, string actionName, string? styleReason)

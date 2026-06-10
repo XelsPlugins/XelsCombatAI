@@ -31,6 +31,7 @@ var tests = new (string Name, Action Body)[]
     ("header metadata falls back to frames", HeaderMetadataFallsBackToFrames),
     ("schema v2 rejection", SchemaV2Rejected),
     ("configuration logging defaults/reset", ConfigurationLoggingDefaultsAndReset),
+    ("legacy gap closer distance config loads", LegacyGapCloserDistanceConfigLoads),
     ("target uptime range follows next GCD", TargetUptimeRangeFollowsNextGcd),
     ("positionals suppress on AoE packs", PositionalsSuppressOnAoePacks),
     ("boss center avoidance stays active for positional goals", BossCenterAvoidanceStaysActiveForPositionalGoals),
@@ -44,11 +45,13 @@ var tests = new (string Name, Action Body)[]
     ("gap closer follows RSR auto target", GapCloserFollowsRsrAutoTarget),
     ("ranged gap closers skip boss reengage", RangedGapClosersSkipBossReengage),
     ("phantom gap closers inherit base job reengage rules", PhantomGapClosersInheritBaseJobReengageRules),
-    ("knockback recovery bypasses gap closer minimum distance", KnockbackRecoveryBypassesGapCloserMinimumDistance),
+    ("knockback recovery allows timing bypass", KnockbackRecoveryAllowsTimingBypass),
     ("BMR safety dash requires destination progress", BmrSafetyDashRequiresDestinationProgress),
     ("late safety dash continues while unsafe and far", LateSafetyDashContinuesWhileUnsafeAndFar),
     ("hostile relay dash requires target momentum", HostileRelayDashRequiresTargetMomentum),
     ("trash gap closer rejects stale pack", TrashGapCloserRejectsStalePack),
+    ("samurai escape holds dash for short BMR walk", SamuraiEscapeHoldsDashForShortBmrWalk),
+    ("samurai trash escape holds yaten while safe", SamuraiTrashEscapeHoldsYatenWhileSafe),
     ("BMR advisory scoring combines enabled preferences", BmrAdvisoryScoringCombinesEnabledPreferences),
     ("healer coverage restores single missing member", HealerCoverageRestoresSingleMissingMember),
     ("healer coverage uses stable natural centers", HealerCoverageUsesStableNaturalCenters),
@@ -61,7 +64,7 @@ var tests = new (string Name, Action Body)[]
     ("healer boss coverage prefers ranged comfort", HealerBossCoveragePrefersRangedComfort),
     ("party healer range moves DPS for raid damage", PartyHealerRangeMovesDpsForRaidDamage),
     ("defensive zone movement skips tanks", DefensiveZoneMovementSkipsTanks),
-    ("pack movement combines with BossMod forbidden zones", PackMovementCombinesWithBossModForbiddenZones),
+    ("pack movement combines with idle BossMod forbidden zones", PackMovementCombinesWithIdleBossModForbiddenZones),
     ("mechanic whisper guard keeps aligned, shorter, or confident goals", MechanicWhisperGuardKeepsAlignedShorterOrConfidentGoals),
     ("mechanic safety isolates top goal contributions", MechanicSafetyIsolatesTopGoalContributions),
     ("mechanic escape margin follows BMR movement", MechanicEscapeMarginFollowsBmrMovement),
@@ -262,7 +265,8 @@ static void UptimeScoringWeightsMeleeFallbackBelowMeleeRange()
     AssertEqual("melee-dps", analysis.Job.Role, "melee profile");
     AssertTrue(analysis.Metrics.FallbackUptimeSeconds > 0, "fallback uptime counted");
     AssertTrue(analysis.Metrics.TargetWeightedUptimePercent is > 0 and < 100, "fallback weighted below full uptime");
-    AssertTrue(analysis.NegativeSignals.Any(signal => signal.Category == "melee-comfort-loss"), "melee comfort loss signal");
+    AssertFalse(analysis.PositiveSignals.Any(signal => signal.Category == "melee-ranged-fallback-uptime"), "fallback is not positive melee uptime");
+    AssertTrue(analysis.NegativeSignals.Any(signal => signal.Category == "melee-ranged-fallback-missed-gcd"), "melee fallback missed-GCD signal");
 }
 
 static void UptimeScoringRewardsGreedPressureUptime()
@@ -362,6 +366,23 @@ static void ConfigurationLoggingDefaultsAndReset()
     AssertFalse(oldLoggingConfig.FightReviewLoggingEnabled, "migration disables logging");
     AssertTrue(oldLoggingConfig.ManageSocialTurning, "migration enables social turning");
     AssertTrue(oldLoggingConfig.ManageSocialSpacing, "migration enables social spacing");
+}
+
+static void LegacyGapCloserDistanceConfigLoads()
+{
+    var json = """
+        {
+          "Version": 16,
+          "UseGapCloser": true,
+          "MinimumGapCloserDistance": 19
+        }
+        """;
+    var config = JsonSerializer.Deserialize<Configuration>(json)!;
+    config.Migrate();
+    config.Clamp();
+
+    AssertTrue(config.UseGapCloser, "legacy gap closer enablement still migrates");
+    AssertEqual(27, config.Version, "legacy distance config migrates to current version");
 }
 
 static void TargetUptimeRangeFollowsNextGcd()
@@ -703,6 +724,55 @@ static void FriendlyAnchorDashRequiresMeaningfulGain()
             pathGain: 1f,
             out _),
         "meaningful-distance path recovery anchor is allowed");
+
+    var player = new Vector3(0f, 0f, 0f);
+    var boss = new Vector3(0f, 0f, 40f);
+    var sideAnchor = new Vector3(20f, 0f, 12f);
+    AssertFalse(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            playerPosition: player,
+            playerRadius: 0f,
+            anchorPosition: sideAnchor,
+            targetPosition: boss,
+            targetRadius: 0f,
+            moveDistance: Geometry.Distance2D(player, sideAnchor),
+            safetyGain: 0f,
+            uptimeGain: 6f,
+            pathGain: 0f,
+            out var sideReason),
+        "far-side ally anchor should not win from marginal boss progress");
+    AssertContains("sideways", sideReason, "side ally rejection reason");
+
+    var marginalAnchor = new Vector3(12f, 0f, 4.5f);
+    AssertFalse(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            playerPosition: player,
+            playerRadius: 0f,
+            anchorPosition: marginalAnchor,
+            targetPosition: boss,
+            targetRadius: 0f,
+            moveDistance: Geometry.Distance2D(player, marginalAnchor),
+            safetyGain: 0f,
+            uptimeGain: 5f,
+            pathGain: 0f,
+            out var marginalReason),
+        "ally anchor should need real target progress, not only a range bonus");
+    AssertContains("low target progress", marginalReason, "marginal ally rejection reason");
+
+    var forwardAnchor = new Vector3(8f, 0f, 12f);
+    AssertTrue(
+        GapCloserController.ShouldUseFriendlyAnchorDash(
+            playerPosition: player,
+            playerRadius: 0f,
+            anchorPosition: forwardAnchor,
+            targetPosition: boss,
+            targetRadius: 0f,
+            moveDistance: Geometry.Distance2D(player, forwardAnchor),
+            safetyGain: 0f,
+            uptimeGain: 8f,
+            pathGain: 0f,
+            out _),
+        "forward-diagonal ally anchor remains valid for meaningful boss reengage");
 }
 
 static void GapCloserFollowsRsrAutoTarget()
@@ -821,50 +891,50 @@ static void PhantomGapClosersInheritBaseJobReengageRules()
         "tank archetype does not borrow fixed-forward safety dashes");
 }
 
-static void KnockbackRecoveryBypassesGapCloserMinimumDistance()
+static void KnockbackRecoveryAllowsTimingBypass()
 {
     AssertTrue(
-        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+        GapCloserController.ShouldAllowKnockbackRecoveryReengage(
             knockbackRecoveryActive: true,
             playerIsMeleeRangeRole: true,
             targetHasBossModule: true,
             antiKnockbackActive: false,
             distanceToHitbox: 4.5f,
             engagementRange: Configuration.InternalMeleeUptimeRange),
-        "melee boss knockback recovery without anti-knockback should ignore the configured dash minimum");
+        "melee boss knockback recovery without anti-knockback should ignore the timing policy");
 
     AssertFalse(
-        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+        GapCloserController.ShouldAllowKnockbackRecoveryReengage(
             knockbackRecoveryActive: true,
             playerIsMeleeRangeRole: true,
             targetHasBossModule: true,
             antiKnockbackActive: true,
             distanceToHitbox: 4.5f,
             engagementRange: Configuration.InternalMeleeUptimeRange),
-        "active anti-knockback should keep the normal minimum-distance gate");
+        "active anti-knockback should keep the normal timing gate");
 
     AssertFalse(
-        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+        GapCloserController.ShouldAllowKnockbackRecoveryReengage(
             knockbackRecoveryActive: true,
             playerIsMeleeRangeRole: false,
             targetHasBossModule: true,
             antiKnockbackActive: false,
             distanceToHitbox: 4.5f,
             engagementRange: Configuration.InternalMeleeUptimeRange),
-        "ranged jobs should keep the normal minimum-distance gate");
+        "ranged jobs should keep the normal timing gate");
 
     AssertFalse(
-        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+        GapCloserController.ShouldAllowKnockbackRecoveryReengage(
             knockbackRecoveryActive: true,
             playerIsMeleeRangeRole: true,
             targetHasBossModule: false,
             antiKnockbackActive: false,
             distanceToHitbox: 4.5f,
             engagementRange: Configuration.InternalMeleeUptimeRange),
-        "non-boss targets should keep the normal minimum-distance gate");
+        "non-boss targets should keep the normal timing gate");
 
     AssertFalse(
-        GapCloserController.ShouldBypassMinimumGapCloserDistanceForKnockback(
+        GapCloserController.ShouldAllowKnockbackRecoveryReengage(
             knockbackRecoveryActive: true,
             playerIsMeleeRangeRole: true,
             targetHasBossModule: true,
@@ -907,54 +977,43 @@ static void LateSafetyDashContinuesWhileUnsafeAndFar()
     AssertFalse(
         EscapeGapCloserController.ShouldSuppressLateEscapeGapCloser(
             currentSafe: false,
-            safeMovementDistance: 18f,
-            minimumGapCloserDistance: 8f,
             canAssistSafeMovement: true,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
         "late safety dash should still evaluate while unsafe and far from the BMR safe destination");
     AssertTrue(
         EscapeGapCloserController.ShouldSuppressLateEscapeGapCloser(
             currentSafe: true,
-            safeMovementDistance: 18f,
-            minimumGapCloserDistance: 8f,
             canAssistSafeMovement: false,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
         "late safety dash should suppress when already safe");
     AssertFalse(
         EscapeGapCloserController.ShouldSuppressLateEscapeGapCloser(
             currentSafe: true,
-            safeMovementDistance: 18f,
-            minimumGapCloserDistance: 8f,
             canAssistSafeMovement: true,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
         "late safety dash should keep evaluating while safe when far movement assist is allowed");
     AssertFalse(
         EscapeGapCloserController.ShouldSuppressLateEscapeGapCloser(
             currentSafe: false,
-            safeMovementDistance: 6f,
-            minimumGapCloserDistance: 8f,
             canAssistSafeMovement: true,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds + 1d),
         "late safety dash should still evaluate while unsafe even when the nearest BMR safe destination is below the dash threshold");
     AssertFalse(
         EscapeGapCloserController.ShouldSuppressLateEscapeGapCloser(
             currentSafe: false,
-            safeMovementDistance: 18f,
-            minimumGapCloserDistance: 8f,
             canAssistSafeMovement: false,
             dangerElapsedMilliseconds: CombatConstants.EscapeGapCloserDangerWindowMilliseconds - 1d),
         "early safety dash should still evaluate");
 
     var farMovement = BossModMovementDiagnostics.Empty with
     {
-        NavigationDetails = BossModNavigationDiagnostics.Empty with { ForceMovementIn = 3.5f }
+        NavigationDetails = BossModNavigationDiagnostics.Empty with { ForceMovementIn = 2.5f }
     };
     AssertTrue(
         EscapeGapCloserController.ShouldAssistSafeBossModMovement(
             CombatStyle.Normal,
             farMovement,
             safeMovementDistance: 18f,
-            minimumGapCloserDistance: 8f,
             out _),
         "safe-first timing should assist when a far safe zone is close to walking time");
 
@@ -963,7 +1022,6 @@ static void LateSafetyDashContinuesWhileUnsafeAndFar()
             CombatStyle.Normal,
             farMovement,
             safeMovementDistance: 8f,
-            minimumGapCloserDistance: 8f,
             out _),
         "safe-first timing should still walk for nearby safe movement");
 
@@ -976,7 +1034,6 @@ static void LateSafetyDashContinuesWhileUnsafeAndFar()
             CombatStyle.GreedGCD,
             distantWindow,
             safeMovementDistance: 18f,
-            minimumGapCloserDistance: 8f,
             out _),
         "far safe-zone assist should not dash when walking has comfortable time");
 }
@@ -1009,7 +1066,57 @@ static void HostileRelayDashRequiresTargetMomentum()
             distanceToHitbox: 7f,
             engagementRange: Configuration.InternalMeleeUptimeRange,
             gcdRemaining: 2.5f),
-        "normal configured dash distance should remain in force when there is time to walk");
+        "reengage dash should stay suppressed when there is time to walk");
+
+    var reachableAction = new RsrGcdActionTimingSnapshot(0, 0, "melee GCD", "test", 0, 2.5f, 0f, 2.5f, 0.35f);
+    AssertTrue(
+        GapCloserDecisionPolicy.CanWalkToRangeBeforeGcd(
+            distanceToHitbox: 7f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            reachableAction,
+            out _),
+        "walking that reaches melee before the next GCD should suppress reengage dashes");
+
+    var lateAction = reachableAction with { GcdRemaining = 0.5f };
+    AssertFalse(
+        GapCloserDecisionPolicy.CanWalkToRangeBeforeGcd(
+            distanceToHitbox: 7f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            lateAction,
+            out _),
+        "walking that misses melee before the next GCD should allow safe direct dashes");
+
+    AssertTrue(
+        GapCloserController.ShouldTreatMissingRsrTimingAsMissedMelee(
+            playerIsMeleeRangeRole: true,
+            hasReengageTiming: false,
+            distanceToHitbox: 7f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "melee jobs with no RSR GCD recommendation while outside melee should recover range immediately");
+
+    AssertFalse(
+        GapCloserController.ShouldTreatMissingRsrTimingAsMissedMelee(
+            playerIsMeleeRangeRole: false,
+            hasReengageTiming: false,
+            distanceToHitbox: 7f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "ranged jobs should not use melee recovery policy when RSR timing is unavailable");
+
+    AssertFalse(
+        GapCloserController.ShouldTreatMissingRsrTimingAsMissedMelee(
+            playerIsMeleeRangeRole: true,
+            hasReengageTiming: true,
+            distanceToHitbox: 7f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "reliable RSR timing should use the walk-versus-GCD policy");
+
+    AssertFalse(
+        GapCloserController.ShouldTreatMissingRsrTimingAsMissedMelee(
+            playerIsMeleeRangeRole: true,
+            hasReengageTiming: false,
+            distanceToHitbox: 2f,
+            engagementRange: Configuration.InternalMeleeUptimeRange),
+        "melee jobs already in range should not recover with a dash");
 
     AssertTrue(
         GapCloserController.ShouldUseHostileRelayDash(
@@ -1062,6 +1169,83 @@ static void TrashGapCloserRejectsStalePack()
             anchorPosition: new Vector3(12f, 0f, 0f),
             out _),
         "trash gap closer can move toward tank pack");
+}
+
+static void SamuraiTrashEscapeHoldsYatenWhileSafe()
+{
+    var trash = TrashPullDiagnostics.Empty with
+    {
+        Phase = TrashPullPhase.Burning,
+        Confidence = 0.8f,
+        DominantTargetCount = 3
+    };
+
+    AssertTrue(
+        EscapeGapCloserController.ShouldHoldSamuraiBackstepEscapeInTrash(
+            currentSafe: true,
+            trash,
+            out var safeReason),
+        "SAM should hold Yaten during confident trash when already safe");
+    AssertContains("Yaten held", safeReason, "safe trash Yaten hold reason");
+
+    AssertFalse(
+        EscapeGapCloserController.ShouldHoldSamuraiBackstepEscapeInTrash(
+            currentSafe: false,
+            trash,
+            out _),
+        "SAM should keep Yaten available when BMR says the current position is unsafe");
+
+    AssertFalse(
+        EscapeGapCloserController.ShouldHoldSamuraiBackstepEscapeInTrash(
+            currentSafe: true,
+            TrashPullDiagnostics.Empty with
+            {
+                Phase = TrashPullPhase.Burning,
+                Confidence = 0.8f,
+                DominantTargetCount = 1
+            },
+            out _),
+        "single-target contexts should not use the trash Yaten hold");
+}
+
+static void SamuraiEscapeHoldsDashForShortBmrWalk()
+{
+    AssertTrue(
+        EscapeGapCloserController.ShouldHoldSamuraiEscapeForWalkableSafety(
+            currentSafe: false,
+            safeMovementDistance: 3.5f,
+            pathKnown: true,
+            pathClear: true,
+            out var unsafeShortWalkReason),
+        "SAM should sidestep short BMR safety movement instead of dashing out");
+    AssertContains("3.5y walk", unsafeShortWalkReason, "short walk hold reason");
+
+    AssertTrue(
+        EscapeGapCloserController.ShouldHoldSamuraiEscapeForWalkableSafety(
+            currentSafe: true,
+            safeMovementDistance: 5f,
+            pathKnown: false,
+            pathClear: true,
+            out _),
+        "SAM should not spend a dash for a short optional safety assist while already safe");
+
+    AssertFalse(
+        EscapeGapCloserController.ShouldHoldSamuraiEscapeForWalkableSafety(
+            currentSafe: false,
+            safeMovementDistance: 5f,
+            pathKnown: true,
+            pathClear: false,
+            out _),
+        "SAM may still dash when the short walk path is not clear");
+
+    AssertFalse(
+        EscapeGapCloserController.ShouldHoldSamuraiEscapeForWalkableSafety(
+            currentSafe: false,
+            safeMovementDistance: 9f,
+            pathKnown: true,
+            pathClear: true,
+            out _),
+        "larger BMR safety movement may still use a dash");
 }
 
 static void HealerCoverageRestoresSingleMissingMember()
@@ -1508,7 +1692,7 @@ static void DefensiveZoneMovementSkipsTanks()
         "non-tank DPS jobs may still use defensive ground zones");
 }
 
-static void PackMovementCombinesWithBossModForbiddenZones()
+static void PackMovementCombinesWithIdleBossModForbiddenZones()
 {
     AssertFalse(
         AoePackPositioningController.ShouldYieldPackMovementForSafety(
@@ -1581,6 +1765,30 @@ static void PackMovementCombinesWithBossModForbiddenZones()
             bmrMoveImminent: true,
             bossModuleContext: false),
         "existing BMR movement should not suppress pack scoring");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: true,
+            temporaryObstacleSafetyActive: false,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: false,
+            bmrMoveRequested: true,
+            bmrMoveImminent: false,
+            bossModuleContext: false),
+        "active BMR forbidden-zone movement should suppress trash pack scoring");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldYieldPackMovementForSafety(
+            forcedMovementActive: false,
+            forbiddenSafetyActive: false,
+            temporaryObstacleSafetyActive: true,
+            forbiddenDirectionSafetyActive: false,
+            specialModeSafetyActive: false,
+            bmrMoveRequested: false,
+            bmrMoveImminent: true,
+            bossModuleContext: false),
+        "imminent BMR obstacle movement should suppress trash pack scoring");
 
     AssertTrue(
         AoePackPositioningController.ShouldYieldPackMovementForSafety(

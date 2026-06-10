@@ -158,7 +158,7 @@ internal static class UptimeScoring
         var inAnyRange = inPreferredRange || inFallbackRange;
         var targetUptimeValue = inPreferredRange
             ? 1f
-            : inFallbackRange ? profile.FallbackUptimeValue : 0f;
+            : inFallbackRange && !profile.PrefersMeleeRange ? profile.FallbackUptimeValue : 0f;
         var bmrPressure = HasBmrPressure(frame);
         var forcedMovement = HasForcedBmrMovement(frame);
         var greedStyle = IsGreedStyle(header.CombatStyle);
@@ -197,16 +197,6 @@ internal static class UptimeScoring
                 metrics.AnyTargetUptimeSeconds,
                 $"Target was in usable range for {metrics.AnyTargetUptimeRatio:P0} of observed target time.",
                 "Preserve range-first decisions that keep RSR able to act."));
-        }
-
-        if (profile.PrefersMeleeRange && metrics.FallbackUptimeSeconds > 0)
-        {
-            signals.Add(new UptimeSignal(
-                "melee-ranged-fallback-uptime",
-                metrics.FallbackUptimeSeconds * profile.FallbackUptimeValue,
-                metrics.FallbackUptimeSeconds,
-                $"Melee/tank ranged fallback preserved {metrics.FallbackUptimeSeconds:0.0}s of partial uptime outside melee range.",
-                "Keep fallback range as better than downtime, but prefer returning to melee range when safe."));
         }
 
         if (metrics.PackOpportunitySeconds > 0 && metrics.PackHitEfficiencyPercent >= 85f)
@@ -274,11 +264,11 @@ internal static class UptimeScoring
             if (fallbackRatio >= 0.25f)
             {
                 signals.Add(new UptimeSignal(
-                    "melee-comfort-loss",
+                    "melee-ranged-fallback-missed-gcd",
                     metrics.FallbackUptimeSeconds,
                     metrics.FallbackUptimeSeconds,
-                    $"Melee/tank spent {fallbackRatio:P0} of target time in ranged fallback instead of melee range.",
-                    "Treat ranged fallback as useful partial uptime, but bias safe movement back to melee range."));
+                    $"Melee/tank spent {fallbackRatio:P0} of target time in ranged fallback range instead of melee range.",
+                    "Treat ranged fallback as a missed melee uptime window; it avoids total inactivity but should not count as successful melee uptime."));
             }
         }
 

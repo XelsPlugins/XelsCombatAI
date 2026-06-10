@@ -507,17 +507,6 @@ internal sealed class ConfigWindow : Window, IDisposable
             v => this.config.UsePhantomGapClosers = v,
             "Allows Phantom dash actions using the current job's dash type and archetype rules.\nPhantom Kick follows target-dash safety rules, close-range AoE pack movement, and re-engage limits.\nOccult Featherfoot follows fixed-forward dash rules.\nPhantom actions are preferred over native dashes for the same movement purpose.\nJobs without a native dash use their range archetype.",
             gapCloserDisabledTooltip);
-
-        changed |= this.SliderFloat(
-            "Minimum gap-closer distance",
-            this.config.MinimumGapCloserDistance,
-            this.defaultConfig.MinimumGapCloserDistance,
-            Configuration.MinimumGapCloserDistanceMin,
-            Configuration.MinimumGapCloserDistanceMax,
-            v => this.config.MinimumGapCloserDistance = v,
-            "%.0f",
-            tooltip: "Only dashes when it saves at least this much movement.",
-            disabledTooltip: gapCloserDisabledTooltip);
         if (!this.config.UseGapCloser)
         {
             ImGui.EndDisabled();
@@ -540,6 +529,20 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.defaultConfig.ShowDecisionOverlay,
             v => this.config.ShowDecisionOverlay = v,
             "Shows in-world markers for current movement, next action areas, target range, dashes, positionals, and party utility zones.");
+        changed |= this.Combo(
+            "Overlay density",
+            this.config.DecisionOverlayDensity,
+            this.defaultConfig.DecisionOverlayDensity,
+            v => this.config.DecisionOverlayDensity = v,
+            "Minimal shows only the main destination and path.\nNormal adds the next preview and compact nearby badges.\nDetailed keeps richer troubleshooting context.",
+            v => v switch
+            {
+                OverlayDensity.Minimal => "Minimal",
+                OverlayDensity.Normal => "Normal",
+                OverlayDensity.Detailed => "Detailed",
+                _ => v.ToString()
+            },
+            this.config.ShowDecisionOverlay ? null : "Requires Show decision overlay.");
         ImGui.Unindent(8f);
         ImGui.Spacing();
 

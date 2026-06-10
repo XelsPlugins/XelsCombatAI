@@ -23,7 +23,7 @@ If `--out` is omitted, output is written beside the XCAI log in a folder named `
 
 Outputs include `fight.normalized.jsonl`, `fight.report.md`, `fight.html`, `incidents/*.json`, and `agent.improvement.json`. The agent packet includes run scores for uptime, safety, efficiency, human-likeness, and resource discipline. Higher scores are better; uptime is the primary positive signal.
 
-The uptime score uses logged target range as the RSR proxy: if the player is in useful range, RSR has more legal rotation choices. Melee and tanks get partial credit for ranged fallback uptime, but full credit requires melee range. Trash pulls score pack hit quality so positions that hit more targets are rewarded. Healers score target uptime together with visible party coverage. BMR pressure remains safety context: Normal profile movement away from mechanics is not automatically bad, while Greed profiles are rewarded for staying useful until BMR actually requires movement.
+The uptime score uses logged target range as the RSR proxy: if the player is in useful range, RSR has more legal rotation choices. Melee and tanks treat ranged fallback as a missed melee uptime window: it shows the player avoided total inactivity, but it does not score as successful melee uptime. Trash pulls score pack hit quality so positions that hit more targets are rewarded. Healers score target uptime together with visible party coverage. BMR pressure remains safety context: Normal profile movement away from mechanics is not automatically bad, while Greed profiles are rewarded for staying useful until BMR actually requires movement.
 
 ## Requirements
 

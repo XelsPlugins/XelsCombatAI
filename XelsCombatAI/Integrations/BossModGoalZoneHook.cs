@@ -26,6 +26,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private readonly DalamudServices services;
     private readonly IPluginLog log;
     private readonly BossModRuntimeGate bossModGate;
+    private readonly BossModReflectionSafety bossModSafety;
     private readonly IReadOnlyList<IBossModGoalZoneContributor> contributors;
     private readonly ManualCorrectionFeedback manualCorrectionFeedback;
     private DateTime nextResolveAttempt = DateTime.MinValue;
@@ -35,13 +36,14 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private string status = "unresolved";
     private ReflectedDraw? draw;
 
-    public BossModGoalZoneHook(Configuration config, IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, BossModRuntimeGate bossModGate, IReadOnlyList<IBossModGoalZoneContributor> contributors, ManualCorrectionFeedback manualCorrectionFeedback)
+    public BossModGoalZoneHook(Configuration config, IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, BossModRuntimeGate bossModGate, BossModReflectionSafety bossModSafety, IReadOnlyList<IBossModGoalZoneContributor> contributors, ManualCorrectionFeedback manualCorrectionFeedback)
     {
         this.config = config;
         this.pluginInterface = pluginInterface;
         this.services = services;
         this.log = log;
         this.bossModGate = bossModGate;
+        this.bossModSafety = bossModSafety;
         this.contributors = contributors;
         this.manualCorrectionFeedback = manualCorrectionFeedback;
         this.SetContributorHookState(this.status);
@@ -59,6 +61,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         $"Failures={this.failures}",
         $"DisabledAfterFailure={this.disabledAfterFailure}",
         $"MechanicWhisper={this.draw?.MovementDiagnostics.MechanicWhisper ?? "not logged"}",
+        $"CandidatePathGuard={this.draw?.CandidatePathGuardStatus ?? "not logged"}",
         $"ManualCorrectionFeedback={this.manualCorrectionFeedback.Status}",
         $"ActiveGoalPriority={this.draw?.LastGoalPriority ?? "None"}",
         $"ActiveGoalSources={this.draw?.LastGoalSources ?? "<none>"}",
@@ -146,7 +149,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.manualCorrectionFeedback, this.services, this.log, this.bossModGate, this.HandleFailure, out var reason);
+            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.manualCorrectionFeedback, this.services, this.log, this.bossModGate, this.bossModSafety, this.HandleFailure, out var reason);
             if (reflectedDraw == null)
             {
                 this.SetStatus(reason);
@@ -307,6 +310,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly DalamudServices services;
         private readonly IPluginLog log;
         private readonly BossModRuntimeGate bossModGate;
+        private readonly BossModReflectionSafety bossModSafety;
         private readonly Action<Exception, string, string> failureHandler;
         private readonly MethodInfo executeHintsMethod;
         private readonly FieldInfo previousUpdateTimeField;
@@ -355,6 +359,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private string lastGoalPriority = "None";
         private string lastGoalSources = "<none>";
         private string lastMechanicWhisperStatus = "<none>";
+        private string lastCandidatePathGuardStatus = "<none>";
         private BossModMovementDiagnostics movementDiagnostics = BossModMovementDiagnostics.Empty;
         private DateTime nextMovementDiagnosticsCapture = DateTime.MinValue;
         private DateTime nextDiagnosticsFailureLog = DateTime.MinValue;
@@ -389,6 +394,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             DalamudServices services,
             IPluginLog log,
             BossModRuntimeGate bossModGate,
+            BossModReflectionSafety bossModSafety,
             Action<Exception, string, string> failureHandler,
             ReflectedMembers members)
         {
@@ -402,6 +408,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.services = services;
             this.log = log;
             this.bossModGate = bossModGate;
+            this.bossModSafety = bossModSafety;
             this.failureHandler = failureHandler;
             this.executeHintsMethod = members.ExecuteHintsMethod;
             this.previousUpdateTimeField = members.PreviousUpdateTimeField;
@@ -450,6 +457,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
         public string LastGoalPriority => this.lastGoalPriority;
         public string LastGoalSources => this.lastGoalSources;
+        public string CandidatePathGuardStatus => this.lastCandidatePathGuardStatus;
         public BossModMovementDiagnostics MovementDiagnostics => this.movementDiagnostics;
 
         public static ReflectedDraw? TryCreate(
@@ -460,6 +468,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             DalamudServices services,
             IPluginLog log,
             BossModRuntimeGate bossModGate,
+            BossModReflectionSafety bossModSafety,
             Action<Exception, string, string> failureHandler,
             out string reason)
         {
@@ -545,7 +554,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             try
             {
-                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, manualCorrectionFeedback, services, log, bossModGate, failureHandler, members);
+                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, manualCorrectionFeedback, services, log, bossModGate, bossModSafety, failureHandler, members);
             }
             catch (Exception ex)
             {
@@ -700,6 +709,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 this.lastGoalPriority = "None";
                 this.lastGoalSources = "<none>";
                 this.lastMechanicWhisperStatus = "<none>";
+                this.lastCandidatePathGuardStatus = "<none>";
                 return;
             }
 
@@ -709,6 +719,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 this.lastGoalPriority = $"{FormatGoalPrioritySummary(allContributions)} (casting suppressed)";
                 this.lastGoalSources = "casting; advisory movement suppressed";
                 this.lastMechanicWhisperStatus = "<none>";
+                this.lastCandidatePathGuardStatus = "not checked: casting suppressed";
                 return;
             }
 
@@ -716,6 +727,15 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 activeContributions,
                 this.services.ObjectTable.LocalPlayer?.Position,
                 DateTime.UtcNow);
+            activeContributions = this.FilterUnreachableCandidateGoals(activeContributions);
+            if (activeContributions.Length == 0)
+            {
+                this.mechanicWhisperStates.Clear();
+                this.lastGoalPriority = $"{FormatGoalPrioritySummary(allContributions)} (path guarded)";
+                this.lastGoalSources = "candidate path blocked";
+                this.lastMechanicWhisperStatus = "<none>";
+                return;
+            }
 
             var mechanicWhisperGuardActive = this.ShouldApplyMechanicWhisperGuard();
             if (mechanicWhisperGuardActive)
@@ -919,6 +939,53 @@ internal sealed class BossModGoalZoneHook : IDisposable
             return states.Count == 0 ? string.Empty : $" ({string.Join(", ", states)})";
         }
 
+        private BossModGoalContribution[] FilterUnreachableCandidateGoals(BossModGoalContribution[] contributions)
+        {
+            var player = this.services.ObjectTable.LocalPlayer;
+            if (player == null)
+            {
+                this.lastCandidatePathGuardStatus = "not checked: no player";
+                return contributions;
+            }
+
+            var filtered = new List<BossModGoalContribution>(contributions.Length);
+            var decisions = new List<string>(contributions.Length);
+            foreach (var contribution in contributions)
+            {
+                if (!contribution.Candidate.HasValue)
+                {
+                    decisions.Add($"{contribution.Label}:accepted/no-candidate");
+                    filtered.Add(contribution);
+                    continue;
+                }
+
+                var candidate = new Vector3(contribution.Candidate.Value.X, player.Position.Y, contribution.Candidate.Value.Y);
+                if (!this.bossModSafety.TryCheckNavigationLine(player.Position, candidate, out var check))
+                {
+                    decisions.Add($"{contribution.Label}:accepted/path-unknown/{check.Reason}");
+                    filtered.Add(contribution);
+                    continue;
+                }
+
+                if (check.Clear)
+                {
+                    decisions.Add($"{contribution.Label}:accepted/{check.Reason}");
+                    filtered.Add(contribution);
+                    continue;
+                }
+
+                var blockedAt = check.BlockedDistance.HasValue
+                    ? string.Create(CultureInfo.InvariantCulture, $"@{check.BlockedDistance.Value:0.0}y")
+                    : string.Empty;
+                decisions.Add($"{contribution.Label}:blocked/{check.Reason}{blockedAt}");
+            }
+
+            this.lastCandidatePathGuardStatus = decisions.Count == 0
+                ? "inactive: no contributions"
+                : string.Join(" | ", decisions);
+            return filtered.ToArray();
+        }
+
         private BossModGoalContribution[] FilterMechanicWhispers(BossModGoalContribution[] contributions)
         {
             var now = DateTime.UtcNow;
@@ -1084,6 +1151,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                         $"PlannerSteer={LegacyDirectMovementStatus}",
                         $"IntentDampener={this.lastNavigationMovementIntentStatus}",
                         $"MechanicWhisper={this.lastMechanicWhisperStatus}",
+                        $"CandidatePathGuard={this.lastCandidatePathGuardStatus}",
                         $"ForwardBrake={LegacyForwardBrakeStatus}"),
                     LegacyDirectMovementStatus,
                     this.lastMechanicWhisperStatus,
