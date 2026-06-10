@@ -31,7 +31,6 @@ internal sealed class DecisionOverlayController(
     Func<bool?> leylinesBetweenTheLines,
     Func<bool?> leylinesRetrace,
     Func<bool?> leylinesGoal,
-    PartyIntentClient partyIntentClient,
     RotationSolverActionReflection rotationSolverActions)
 {
 
@@ -117,7 +116,6 @@ internal sealed class DecisionOverlayController(
             this.DrawBadgeGroup(drawList, group.Anchor, group.Badges);
         }
 
-        this.DrawRescueWorldMarker(drawList, partyIntentClient.Status.Rescue);
     }
 
     private IEnumerable<DecisionOverlaySnapshot> BuildSnapshots(IBattleChara player)
@@ -645,30 +643,6 @@ internal sealed class DecisionOverlayController(
         }
 
         return parts.Count == 0 ? "Ley Lines handling enabled" : string.Join(", ", parts);
-    }
-
-    private void DrawRescueWorldMarker(ImDrawListPtr drawList, PartyIntentRescueAdvisory rescue)
-    {
-        if (!rescue.Active || !rescue.TargetPosition.HasValue)
-        {
-            return;
-        }
-
-        var color = rescue.ClaimedByLocal
-            ? ImGui.GetColorU32(new Vector4(0.30f, 0.72f, 1f, 1f))
-            : ImGui.GetColorU32(new Vector4(1f, 0.35f, 0.28f, 1f));
-#if XCAI_NETWORK_TEST_CONTROLS
-        var label = rescue.NetworkTest
-            ? rescue.ClaimedByLocal ? "TEST RESCUE" : "TEST SOS"
-            : rescue.ClaimedByLocal ? "RESCUING SOS" : "SOS";
-#else
-        var label = rescue.ClaimedByLocal ? "RESCUING SOS" : "SOS";
-#endif
-        var targetPosition = rescue.TargetPosition.Value;
-
-        this.DrawCircleFilled(drawList, targetPosition, 0.58f, ImGui.GetColorU32(new Vector4(1f, 0.10f, 0.08f, 0.16f)));
-        this.DrawCircle(drawList, targetPosition, 0.58f, color, 3f);
-        this.DrawLabel(drawList, targetPosition + new Vector3(0f, 2.25f, 0f), label, color);
     }
 
     private string? DisabledReason(params (bool Enabled, string Label)[] gates)

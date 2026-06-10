@@ -23,11 +23,6 @@ internal sealed class ConfigWindow : Window, IDisposable
     private readonly Action resetRuntimeState;
     private readonly Action<bool> setEnabled;
     private readonly Func<string> debugState;
-#if XCAI_NETWORK_TEST_CONTROLS
-    private readonly Func<PartyIntentStatus> partyIntentStatus;
-    private readonly Func<PartyIntentNetworkTestResult> triggerPartyIntentTestSos;
-    private readonly Func<PartyIntentNetworkTestResult> triggerPartyIntentTestDestack;
-#endif
     private readonly Func<string?> dependencyWarning;
     private readonly Func<string?> trueNorthWarning;
     private readonly Action manageTrueNorthEnabled;
@@ -41,11 +36,6 @@ internal sealed class ConfigWindow : Window, IDisposable
     private bool wasBackspaceDown;
 
     public ConfigWindow(Configuration config, Action save, Action resetRuntimeState, Action<bool> setEnabled, Func<string> debugState,
-#if XCAI_NETWORK_TEST_CONTROLS
-        Func<PartyIntentStatus> partyIntentStatus,
-        Func<PartyIntentNetworkTestResult> triggerPartyIntentTestSos,
-        Func<PartyIntentNetworkTestResult> triggerPartyIntentTestDestack,
-#endif
         Func<string?> dependencyWarning, Func<string?> trueNorthWarning, Action manageTrueNorthEnabled, IKeyState keyState, ITextureProvider textureProvider, string iconPath)
         : base("Xel's Combat AI Configuration###XelsCombatAIConfig")
     {
@@ -54,11 +44,6 @@ internal sealed class ConfigWindow : Window, IDisposable
         this.resetRuntimeState = resetRuntimeState;
         this.setEnabled = setEnabled;
         this.debugState = debugState;
-#if XCAI_NETWORK_TEST_CONTROLS
-        this.partyIntentStatus = partyIntentStatus;
-        this.triggerPartyIntentTestSos = triggerPartyIntentTestSos;
-        this.triggerPartyIntentTestDestack = triggerPartyIntentTestDestack;
-#endif
         this.dependencyWarning = dependencyWarning;
         this.trueNorthWarning = trueNorthWarning;
         this.manageTrueNorthEnabled = manageTrueNorthEnabled;
@@ -199,36 +184,6 @@ internal sealed class ConfigWindow : Window, IDisposable
         var changed = false;
 
         this.DrawEnabledCheckbox();
-        ImGui.Spacing();
-
-        this.DrawSectionHeader("Party Intent");
-        changed |= this.Checkbox(
-            "Party intent discovery",
-            this.config.PartyIntentEnabled,
-            this.defaultConfig.PartyIntentEnabled,
-            v => this.config.PartyIntentEnabled = v,
-            "Shares blinded party-context availability and Rescue SOS advisories with the party-intent server.\nServer failures are ignored and do not affect movement.");
-        var partyIntentDisabledTooltip = !this.config.PartyIntentEnabled ? "Requires Party intent discovery." : null;
-        if (!this.config.PartyIntentEnabled)
-        {
-            ImGui.BeginDisabled();
-        }
-
-        changed |= this.Checkbox(
-            "Auto Rescue SOS",
-            this.config.PartyIntentAutoRescueEnabled,
-            this.defaultConfig.PartyIntentAutoRescueEnabled,
-            v => this.config.PartyIntentAutoRescueEnabled = v,
-            "Healers only: automatically uses Rescue after winning a Rescue SOS claim.\nMay interrupt your current cast before using Rescue.\nStill rechecks local safety, target visibility, range, and Rescue availability.",
-            partyIntentDisabledTooltip,
-            icon: FontAwesomeIcon.SkullCrossbones,
-            iconTooltip: "Combat risk. This can move another player automatically.\nUse only if you accept the risk of a bad Rescue.");
-        if (!this.config.PartyIntentEnabled)
-        {
-            ImGui.EndDisabled();
-        }
-
-        ImGui.Unindent(8f);
         ImGui.Spacing();
 
         this.DrawSectionHeader("Chat");
@@ -597,10 +552,6 @@ internal sealed class ConfigWindow : Window, IDisposable
         ImGui.Unindent(8f);
         ImGui.Spacing();
 
-#if XCAI_NETWORK_TEST_CONTROLS
-        this.DrawPartyIntentNetworkTestSection();
-#endif
-
         this.DrawSectionHeader("Copy");
         if (ImGui.Button("Copy debug snapshot"))
         {
@@ -619,89 +570,6 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         return changed;
     }
-
-#if XCAI_NETWORK_TEST_CONTROLS
-    private void DrawPartyIntentNetworkTestSection()
-    {
-        var status = this.partyIntentStatus();
-        this.DrawSectionHeader("Party Intent Tests");
-        ImGui.TextUnformatted($"State: {status.State}");
-        if (!string.Equals(status.LastError, "none", StringComparison.OrdinalIgnoreCase))
-        {
-            ImGui.TextUnformatted($"Error: {status.LastError}");
-        }
-
-        ImGui.TextUnformatted($"Peers: {status.PeerCount}");
-        ImGui.TextUnformatted($"Direct: {status.DirectPeerCount} ({status.DirectPeerStatus})");
-        ImGui.TextUnformatted($"Auto Rescue: {(status.AutoRescueEnabled ? "on" : "off")} ({status.AutoRescueStatus})");
-        ImGui.TextUnformatted($"SOS: {FormatRescueAdvisory(status.Rescue)}");
-        ImGui.TextUnformatted($"Last sent: {FormatNetworkTestResult(status.LastNetworkTestTrigger)}");
-        ImGui.TextUnformatted($"Last received: {FormatNetworkTestResult(status.LastNetworkTestReceived)}");
-
-        var sosDisabled = !status.Enabled
-            ? "Requires Party intent discovery."
-            : status.State != "connected"
-                ? FormatPartyIntentUnavailable(status)
-                : status.PeerCount <= 0
-                    ? "Requires another connected party member."
-                    : null;
-        this.DrawNetworkTestButton("Send test SOS", this.triggerPartyIntentTestSos, sosDisabled);
-        ImGui.SameLine();
-        var destackDisabled = sosDisabled ?? (status.DirectPeerCount <= 0 ? "Requires an open direct peer channel." : null);
-        this.DrawNetworkTestButton("Send test destack", this.triggerPartyIntentTestDestack, destackDisabled);
-        ImGui.Unindent(8f);
-        ImGui.Spacing();
-    }
-
-    private void DrawNetworkTestButton(string label, Func<PartyIntentNetworkTestResult> trigger, string? disabledTooltip)
-    {
-        if (disabledTooltip != null)
-        {
-            ImGui.BeginDisabled();
-        }
-
-        if (ImGui.Button(label))
-        {
-            _ = trigger();
-        }
-
-        if (disabledTooltip != null)
-        {
-            if (this.IsItemHoveredAllowDisabled())
-            {
-                DrawWrappedTooltip(disabledTooltip);
-            }
-
-            ImGui.EndDisabled();
-        }
-    }
-
-    private static string FormatNetworkTestResult(PartyIntentNetworkTestResult result)
-        => result.Active
-            ? $"{result.TimestampUtc:HH:mm:ss} {(result.Success ? "OK" : "Blocked")}: {result.Message}"
-            : result.Message;
-
-    private static string FormatRescueAdvisory(PartyIntentRescueAdvisory rescue)
-    {
-        if (!rescue.Active)
-        {
-            return "none";
-        }
-
-        var remainingSeconds = Math.Max(0d, (rescue.ExpiresUtc - DateTime.UtcNow).TotalSeconds);
-        var prefix = rescue.NetworkTest ? "test " : string.Empty;
-        var claim = rescue.ClaimedByLocal ? "claimed" : "advisory";
-        return $"{prefix}{claim}: {rescue.TargetName} - {rescue.Reason} ({remainingSeconds:0.0}s)";
-    }
-
-    private static string FormatPartyIntentUnavailable(PartyIntentStatus status)
-    {
-        var message = $"Party intent is not connected ({status.State}).";
-        return string.Equals(status.LastError, "none", StringComparison.OrdinalIgnoreCase)
-            ? message
-            : $"{message}\nLast error: {status.LastError}";
-    }
-#endif
 
     // Emits a tinted section title followed by a separator and an indent.
     // Callers must call ImGui.Unindent(8f) after their section contents.

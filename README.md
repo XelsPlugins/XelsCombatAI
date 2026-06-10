@@ -61,13 +61,7 @@ Open the settings window with `/xcai config` or through the Dalamud plugin list.
 
 ### General tab
 
-**General** — Toggle the plugin, party intent discovery, command chat messages, and reset settings.
-
-**Party intent discovery** is on by default and announces blinded party-context availability to the hosted party-intent server. The server endpoint is fixed by the plugin, and missing or unreachable servers are ignored without changing movement behavior.
-
-When another party member is also connected, cooperative social destack uses a direct peer data channel after server rendezvous. It shares only short-lived blinded destack bias, and only as a weak local scoring hint when social spacing is already active.
-
-When party intent is connected, a player who cannot reach BossMod-safe ground in time may send a short Rescue SOS. Healer clients recheck local safety, range, and Rescue availability before showing an advisory in the movement overlay. **Auto Rescue SOS** is off by default; when enabled by a healer, it may automatically interrupt the healer's current cast and use Rescue only after winning the SOS claim and rechecking local safety, visibility, range, animation lock, and Rescue availability.
+**General** — Toggle the plugin, command chat messages, and reset settings.
 
 ### Movement tab
 

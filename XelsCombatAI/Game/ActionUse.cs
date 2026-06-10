@@ -15,7 +15,6 @@ internal static class ActionUse
     public const uint BlackMageLeyLinesObjectDataId = 0x179u;
     public const uint PassageOfArmsActionId = 7385;
     public const uint PassageOfArmsStatusId = 1175;
-    public const uint RescueActionId = 7571;
     public const uint PaladinIronWillStatusId = 79;
     public const uint WarriorDefianceStatusId = 91;
     public const uint DarkKnightGritStatusId = 743;

@@ -88,11 +88,6 @@ public sealed class Plugin : IDalamudPlugin
             this.runtime.ResetRuntimeCache,
             enabled => this.runtime.SetEnabled(enabled),
             () => StatusReporter.BuildDebug(this.config, this.runtime.GetStatus()),
-#if XCAI_NETWORK_TEST_CONTROLS
-            () => this.runtime.GetStatus().PartyIntent,
-            this.runtime.TriggerPartyIntentTestSos,
-            this.runtime.TriggerPartyIntentTestDestack,
-#endif
             this.runtime.GetDependencyWarning,
             this.runtime.GetTrueNorthWarning,
             this.runtime.EnsureRsrTrueNorthDisabled,

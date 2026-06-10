@@ -18,10 +18,6 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
-    <DefineConstants>$(DefineConstants);XCAI_NETWORK_TEST_CONTROLS</DefineConstants>
-  </PropertyGroup>
-
   <PropertyGroup>
     <DalamudLibPath>$(appdata)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -39,7 +35,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="SIPSorcery" Version="10.0.9" />
     <ProjectReference Include="..\third_party\ECommons\ECommons\ECommons.csproj" Condition="Exists('..\third_party\ECommons\ECommons\ECommons.csproj')" />
     <ProjectReference Include="..\external\ECommons\ECommons\ECommons.csproj" Condition="!Exists('..\third_party\ECommons\ECommons\ECommons.csproj') And Exists('..\external\ECommons\ECommons\ECommons.csproj')" />
     <Reference Include="Dalamud.Common">

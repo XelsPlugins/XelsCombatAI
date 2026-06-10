@@ -75,7 +75,6 @@ A change is not aligned if it primarily:
 - `XelsCombatAI/Services/` - injected Dalamud service container/wrappers.
 - `XelsCombatAI/Models/` - small shared enums and simple types.
 - `XelsCombatAI/GlobalUsings.cs` - global imports for internal XCAI namespaces.
-- `XelsCombatAI/Integrations/PartyIntentClient.cs` - best-effort party-intent transport client for blinded availability, WebSocket room messages, and advisory Rescue SOS state. Its server-side protocol and relay live in the separate sibling repository `../XelsCombatAI.PartyIntent`.
 - `scripts/test-and-build.sh` - local validation helper. Its `--package` mode delegates to the reusable package script from `XelsDalamudRepo`.
 - `.github/workflows/validate.yml` - thin wrapper calling reusable validation from `XelsPlugins/XelsDalamudRepo`.
 - `.github/workflows/publish-testing.yml` - thin wrapper calling reusable manual testing publication from `XelsPlugins/XelsDalamudRepo`.
@@ -190,7 +189,7 @@ Follow these Dalamud plugin conventions:
 
 ## Decision Overlay Policy
 
-- When adding or updating a movement, targeting, positioning, party-utility, or rescue-related feature, update `UI/DecisionOverlayController.cs` and any relevant `Combat/*Overlay*` snapshot model so the movement overlay stays accurate for player-visible decisions.
+- When adding or updating a movement, targeting, positioning, or party-utility feature, update `UI/DecisionOverlayController.cs` and any relevant `Combat/*Overlay*` snapshot model so the movement overlay stays accurate for player-visible decisions.
 - If a feature affects combat decisions but should not appear in the overlay, state why in the final response. Valid reasons include no actionable player value, duplicate information already shown by another marker, or no stable in-world position to render.
 - Do not add overlay items just because internal state exists. Overlay entries should help a player understand a current, candidate, rejected, or near-future decision that could affect their movement, target choice, safety, or party utility.
 - Preserve the existing in-world marker, line, shape, badge, color-state, and label style. Style changes or new overlay visual primitives are allowed only after consulting the user.
@@ -206,27 +205,6 @@ Follow these Dalamud plugin conventions:
 - Log recoverable integration failures with `IPluginLog.Verbose` where the plugin should keep running.
 - The plugin should fully hand control back out of combat by disabling movement, resetting range/role/positional strategy state, and clearing the active preset when appropriate.
 - Death/resurrection handling matters because BossMod can clear active presets on death.
-
-## Party Intent Protocol
-
-Party intent is an optional, best-effort coordination transport. The plugin owns local combat interpretation and UI; the sibling server repository `../XelsCombatAI.PartyIntent` owns the protocol schemas, rendezvous matching, WebSocket routing, relay-domain logic, deployment examples, and server compatibility tests.
-
-Current plugin implementation:
-
-- `Configuration.PartyIntentEnabled` and `Configuration.PartyIntentAutoRescueEnabled` belong in the General tab. Keep automatic Rescue disabled by default.
-- `PartyIntentClient` uses the static server URL `https://xcai.xel-serv.com`; do not add server URL, room code, or secret config unless explicitly requested.
-- Server failures, TLS failures, routing failures, and protocol errors must be non-fatal. Treat the server as unavailable and keep combat behavior local.
-- Raw character names, content IDs, actor IDs, world names, party IDs, territory IDs, and instance IDs must not be sent. Use HMAC-derived room, context, roster, party, and actor tokens.
-- Peer data is untrusted. Always revalidate visible local party actors, current BossMod safety, local range, local cooldowns, and local job state before using peer intent.
-
-Current v1 room messages:
-
-- `client.available` announces blinded availability over WebSocket.
-- `rescue.sos` is sent only when the local client believes it cannot reach BossMod-safe ground in time.
-- `rescue.claim` asks the server for a short first-claim-wins lease so multiple healers do not respond at once.
-- `rescue.claimed`, `rescue.release`, and `rescue.resolved` update local advisory state.
-
-Rescue SOS is advisory by default. Automatic Rescue is allowed only behind the healer opt-in `PartyIntentAutoRescueEnabled`, after this client wins the server claim lease and revalidates local BossMod safety, visible target mapping, range, casting state, animation lock, cooldown, and job state. BossMod remains authoritative for safety; the server never decides whether a mechanic is unsafe or whether Rescue should be used.
 
 ## Combat Automation Safety
 

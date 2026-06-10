@@ -43,7 +43,6 @@ internal sealed class CombatComposition : IDisposable
         var manualCorrectionFeedback = new ManualCorrectionFeedback();
         var rotationSolver = new RotationSolverIpc(pluginInterface, log);
         var rotationSolverActions = new RotationSolverActionReflection(pluginInterface, log);
-        var partyIntentClient = new PartyIntentClient(config, services);
         var dependencyChecker = new DependencyChecker(config, services, bossMod, rotationSolver);
         var jobRangeProvider = new JobRangeProvider(services);
         jobRangeProvider.Initialize();
@@ -66,7 +65,7 @@ internal sealed class CombatComposition : IDisposable
         var survivabilityZonePositioningController = new SurvivabilityZonePositioningController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
         var pictomancerStarryMusePositioningController = new PictomancerStarryMusePositioningController(config, services, rotationSolverActions, mobilityDecisionEvaluator, facingController, () => runtime?.AutomatedMovementSuppressed == true, () => mechanicPressure.Current);
         var bossCenterAvoidanceController = new BossCenterAvoidanceController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
-        var socialSpacingPositioningController = new SocialSpacingPositioningController(config, services, bossModSafety, partyIntentClient, () => runtime?.AutomatedMovementSuppressed == true);
+        var socialSpacingPositioningController = new SocialSpacingPositioningController(config, services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true);
         var tankBehaviorController = new TankBehaviorController(config, services, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
         IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, partyHealerRangePositioningController, survivabilityZonePositioningController, tankBehaviorController, positionalsController, pictomancerStarryMusePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController];
         var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, legacyMovementContributors, manualCorrectionFeedback);
@@ -142,7 +141,6 @@ internal sealed class CombatComposition : IDisposable
             dashStyleController,
             facingController,
             jobRangeProvider,
-            partyIntentClient,
             saveConfig,
             updateDtr,
             print);
@@ -169,7 +167,6 @@ internal sealed class CombatComposition : IDisposable
             () => presetController?.LastLeylinesBetweenTheLines,
             () => presetController?.LastLeylinesRetrace,
             () => presetController?.LastLeylinesGoal,
-            partyIntentClient,
             rotationSolverActions);
 
         return new CombatComposition(runtime, decisionOverlay, jobRangeProvider, rotationSolverActions, pictomancerStarryMusePositioningController);

@@ -92,9 +92,6 @@ public sealed class Configuration : IPluginConfiguration
     public bool AvoidArenaEdge { get; set; } = true;
     public bool ShowDecisionOverlay { get; set; } = false;
     public bool FightReviewLoggingEnabled { get; set; } = false;
-    public bool PartyIntentEnabled { get; set; } = true;
-    public bool PartyIntentAutoRescueEnabled { get; set; } = false;
-
     private bool? manageSurvivabilityZonePositioningCompatibility;
     private bool? manageMultiTargetTargetingCompatibility;
     private bool? aoePackPositioningControlRsrTargetCompatibility;
@@ -391,16 +388,10 @@ public sealed class Configuration : IPluginConfiguration
         }
 
         if (this.Version < 25)
-        {
-            this.PartyIntentEnabled = true;
             this.Version = 25;
-        }
 
         if (this.Version < 26)
-        {
-            this.PartyIntentAutoRescueEnabled = false;
             this.Version = 26;
-        }
     }
 
     internal void Clamp()
@@ -467,8 +458,6 @@ public sealed class Configuration : IPluginConfiguration
         this.AvoidArenaEdge = true;
         this.ShowDecisionOverlay = false;
         this.FightReviewLoggingEnabled = false;
-        this.PartyIntentEnabled = true;
-        this.PartyIntentAutoRescueEnabled = false;
         this.ResetBehaviorSettings();
     }
 
