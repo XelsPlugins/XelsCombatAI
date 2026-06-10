@@ -101,6 +101,7 @@ internal sealed class PartyIntentClient : IDisposable
     private readonly ConcurrentQueue<object> outgoingMessages = new();
     private readonly ConcurrentQueue<RescueSosWire> pendingRescueSos = new();
     private readonly PartyIntentDirectPeerTransport directTransport;
+    private readonly object clientAvailableGate = new();
     private readonly object rescueGate = new();
     private DateTime nextAnnounceUtc = DateTime.MinValue;
     private DateTime lastAttemptUtc = DateTime.MinValue;
@@ -111,6 +112,7 @@ internal sealed class PartyIntentClient : IDisposable
     private CancellationTokenSource? webSocketCts;
     private Task? webSocketTask;
     private Task? announceTask;
+    private ClientAvailableWire? pendingClientAvailable;
     private long sequence;
     private int peerCount;
     private string state = "idle";
@@ -161,12 +163,31 @@ internal sealed class PartyIntentClient : IDisposable
             this.peerCount = 0;
             this.nextAnnounceUtc = DateTime.MinValue;
             this.directTransport.UpdatePeers([]);
+            this.ClearPendingClientAvailable();
+            return;
+        }
+
+        if (!this.TickClientAvailable(nowUtc))
+        {
+            this.StopWebSocket();
+            this.peerCount = 0;
+            this.directTransport.UpdatePeers([]);
             return;
         }
 
         this.ObserveWebSocket(nowUtc);
+        if (this.webSocketTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        if (nowUtc < this.nextWebSocketConnectUtc)
+        {
+            this.state = "reconnecting";
+            return;
+        }
+
         this.StartWebSocketIfNeeded(nowUtc);
-        this.TickHttpAvailability(nowUtc);
     }
 
     public void EvaluateRescueAssists(DateTime nowUtc, BossModReflectionSafety bossModSafety)
@@ -454,9 +475,34 @@ internal sealed class PartyIntentClient : IDisposable
             return;
         }
 
-        this.state = this.webSocketTask is { IsCompleted: false } ? "connected" : "announcing";
+        this.state = "announcing";
         this.lastError = "none";
         this.announceTask = this.AnnounceAsync(uri, envelope);
+    }
+
+    private bool TickClientAvailable(DateTime nowUtc)
+    {
+        if (nowUtc < this.nextAnnounceUtc)
+        {
+            return true;
+        }
+
+        this.nextAnnounceUtc = nowUtc.Add(AnnounceInterval);
+        this.lastAttemptUtc = nowUtc;
+        if (!this.TryBuildClientAvailable(nowUtc, out var message, out var reason))
+        {
+            this.state = "not ready";
+            this.lastError = reason;
+            this.ClearPendingClientAvailable();
+            return false;
+        }
+
+        lock (this.clientAvailableGate)
+        {
+            this.pendingClientAvailable = message;
+        }
+
+        return true;
     }
 
     private void ObserveWebSocket(DateTime nowUtc)
@@ -470,6 +516,12 @@ internal sealed class PartyIntentClient : IDisposable
         {
             this.lastError = completed.Exception?.GetBaseException().Message ?? "websocket failed";
             this.state = "unavailable";
+            this.nextWebSocketConnectUtc = nowUtc.Add(WebSocketReconnectDelay);
+        }
+        else
+        {
+            this.state = "unavailable";
+            this.lastError = "websocket closed";
             this.nextWebSocketConnectUtc = nowUtc.Add(WebSocketReconnectDelay);
         }
 
@@ -497,6 +549,7 @@ internal sealed class PartyIntentClient : IDisposable
 
         this.webSocketCts = new CancellationTokenSource();
         var token = this.webSocketCts.Token;
+        this.state = "connecting";
         this.webSocketTask = Task.Run(() => this.RunWebSocketAsync(uri, token), token);
     }
 
@@ -519,13 +572,18 @@ internal sealed class PartyIntentClient : IDisposable
             this.state = "connected";
             this.lastError = "none";
 
-            await this.SendClientAvailableAsync(socket, DateTime.UtcNow, cancellationToken).ConfigureAwait(false);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var sendTask = this.SendLoopAsync(socket, linkedCts.Token);
             var receiveTask = this.ReceiveLoopAsync(socket, linkedCts.Token);
-            await Task.WhenAny(sendTask, receiveTask).ConfigureAwait(false);
+            var completedTask = await Task.WhenAny(sendTask, receiveTask).ConfigureAwait(false);
             linkedCts.Cancel();
-            await Task.WhenAll(SwallowAsync(sendTask), SwallowAsync(receiveTask)).ConfigureAwait(false);
+            var siblingTask = ReferenceEquals(completedTask, sendTask) ? receiveTask : sendTask;
+            await SwallowAsync(siblingTask).ConfigureAwait(false);
+            await completedTask.ConfigureAwait(false);
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException("websocket closed");
+            }
         }
         catch (Exception ex) when (ex is WebSocketException or HttpRequestException or TaskCanceledException or OperationCanceledException or IOException or InvalidOperationException)
         {
@@ -534,28 +592,27 @@ internal sealed class PartyIntentClient : IDisposable
                 this.lastError = ex.Message;
                 this.state = "unavailable";
                 this.nextWebSocketConnectUtc = DateTime.UtcNow.Add(WebSocketReconnectDelay);
+                throw;
             }
         }
     }
 
     private async Task SendLoopAsync(ClientWebSocket socket, CancellationToken cancellationToken)
     {
-        var nextAvailabilityUtc = DateTime.UtcNow.Add(AnnounceInterval);
         var nextPingUtc = DateTime.UtcNow.Add(PingInterval);
 
         while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
         {
             var now = DateTime.UtcNow;
-            if (now >= nextAvailabilityUtc)
-            {
-                await this.SendClientAvailableAsync(socket, now, cancellationToken).ConfigureAwait(false);
-                nextAvailabilityUtc = now.Add(AnnounceInterval);
-            }
-
             if (now >= nextPingUtc)
             {
                 await SendJsonAsync(socket, new PingWire("ping", ProtocolVersion, this.sender, new DateTimeOffset(now).ToUnixTimeMilliseconds()), cancellationToken).ConfigureAwait(false);
                 nextPingUtc = now.Add(PingInterval);
+            }
+
+            if (this.TakePendingClientAvailable() is { } available)
+            {
+                await SendJsonAsync(socket, available, cancellationToken).ConfigureAwait(false);
             }
 
             while (this.outgoingMessages.TryDequeue(out var message))
@@ -579,7 +636,7 @@ internal sealed class PartyIntentClient : IDisposable
                 result = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    return;
+                    throw new InvalidOperationException(FormatWebSocketClose(result));
                 }
 
                 stream.Write(buffer, 0, result.Count);
@@ -600,15 +657,22 @@ internal sealed class PartyIntentClient : IDisposable
         }
     }
 
-    private async Task SendClientAvailableAsync(ClientWebSocket socket, DateTime nowUtc, CancellationToken cancellationToken)
+    private ClientAvailableWire? TakePendingClientAvailable()
     {
-        if (this.TryBuildClientAvailable(nowUtc, out var message, out var reason))
+        lock (this.clientAvailableGate)
         {
-            await SendJsonAsync(socket, message, cancellationToken).ConfigureAwait(false);
-            return;
+            var message = this.pendingClientAvailable;
+            this.pendingClientAvailable = null;
+            return message;
         }
+    }
 
-        this.lastError = reason;
+    private void ClearPendingClientAvailable()
+    {
+        lock (this.clientAvailableGate)
+        {
+            this.pendingClientAvailable = null;
+        }
     }
 
     private static async Task SendJsonAsync(ClientWebSocket socket, object message, CancellationToken cancellationToken)
@@ -627,6 +691,18 @@ internal sealed class PartyIntentClient : IDisposable
         catch
         {
         }
+    }
+
+    private static string FormatWebSocketClose(WebSocketReceiveResult result)
+    {
+        if (result.CloseStatus == null)
+        {
+            return "websocket closed";
+        }
+
+        return string.IsNullOrWhiteSpace(result.CloseStatusDescription)
+            ? $"websocket closed: {result.CloseStatus}"
+            : $"websocket closed: {result.CloseStatus}: {result.CloseStatusDescription}";
     }
 
     private void HandleWebSocketMessage(string json)
@@ -708,7 +784,7 @@ internal sealed class PartyIntentClient : IDisposable
                     this.HandleRescueCleared(root);
                     break;
                 case "server.error":
-                    this.lastError = TryGetString(root, "reason") ?? "server error";
+                    this.lastError = TryGetString(root, "reason") ?? TryGetString(root, "code") ?? "server error";
                     break;
             }
         }

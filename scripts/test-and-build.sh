@@ -123,6 +123,7 @@ fi
 
 if [[ "$RUN_PLUGIN" -eq 1 ]]; then
   run dotnet restore "$PLUGIN_PROJECT" -p:EnableWindowsTargeting=true
+  run dotnet build "$PLUGIN_PROJECT" -c Debug -p:EnableWindowsTargeting=true --no-restore
   run dotnet build "$PLUGIN_PROJECT" -c Release -p:EnableWindowsTargeting=true --no-restore
 fi
 
@@ -155,6 +156,34 @@ if [[ "$RUN_PACKAGE" -eq 1 ]]; then
     --internal-name XelsCombatAI \
     --output-dir "$PACKAGE_OUT" \
     --no-build
+
+  printf '\n+ validate packaged runtime dependencies\n'
+  python - "$PACKAGE_OUT/XelsCombatAI.zip" <<'PY'
+import json
+import sys
+import zipfile
+from pathlib import PurePosixPath
+
+zip_path = sys.argv[1]
+with zipfile.ZipFile(zip_path) as archive:
+    names = set(archive.namelist())
+    deps = json.loads(archive.read("XelsCombatAI.deps.json").decode("utf-8"))
+
+missing = []
+for target in deps.get("targets", {}).values():
+    for library in target.values():
+        for section in ("runtime", "runtimeTargets"):
+            for asset in library.get(section, {}):
+                expected = asset if asset.startswith("runtimes/") else PurePosixPath(asset).name
+                if expected not in names:
+                    missing.append(expected)
+
+if missing:
+    print("Packaged zip is missing runtime dependencies:", file=sys.stderr)
+    for name in sorted(set(missing)):
+        print(f"  {name}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 fi
 
 printf '\nValidation completed.\n'

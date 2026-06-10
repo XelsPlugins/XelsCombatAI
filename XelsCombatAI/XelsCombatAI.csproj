@@ -18,7 +18,7 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(XcaiNetworkTestControls)' == 'true'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
     <DefineConstants>$(DefineConstants);XCAI_NETWORK_TEST_CONTROLS</DefineConstants>
   </PropertyGroup>
 

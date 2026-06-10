@@ -626,6 +626,11 @@ internal sealed class ConfigWindow : Window, IDisposable
         var status = this.partyIntentStatus();
         this.DrawSectionHeader("Party Intent Tests");
         ImGui.TextUnformatted($"State: {status.State}");
+        if (!string.Equals(status.LastError, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            ImGui.TextUnformatted($"Error: {status.LastError}");
+        }
+
         ImGui.TextUnformatted($"Peers: {status.PeerCount}");
         ImGui.TextUnformatted($"Direct: {status.DirectPeerCount} ({status.DirectPeerStatus})");
         ImGui.TextUnformatted($"Last sent: {FormatNetworkTestResult(status.LastNetworkTestTrigger)}");
@@ -634,7 +639,7 @@ internal sealed class ConfigWindow : Window, IDisposable
         var sosDisabled = !status.Enabled
             ? "Requires Party intent discovery."
             : status.State != "connected"
-                ? $"Party intent is not connected ({status.State})."
+                ? FormatPartyIntentUnavailable(status)
                 : status.PeerCount <= 0
                     ? "Requires another connected party member."
                     : null;
@@ -673,6 +678,14 @@ internal sealed class ConfigWindow : Window, IDisposable
         => result.Active
             ? $"{result.TimestampUtc:HH:mm:ss} {(result.Success ? "OK" : "Blocked")}: {result.Message}"
             : result.Message;
+
+    private static string FormatPartyIntentUnavailable(PartyIntentStatus status)
+    {
+        var message = $"Party intent is not connected ({status.State}).";
+        return string.Equals(status.LastError, "none", StringComparison.OrdinalIgnoreCase)
+            ? message
+            : $"{message}\nLast error: {status.LastError}";
+    }
 #endif
 
     // Emits a tinted section title followed by a separator and an indent.
