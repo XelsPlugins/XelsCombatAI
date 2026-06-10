@@ -83,4 +83,5 @@ internal sealed record RuntimeStatus(
     string LastEscapeGapCloserSafety,
     Vector3? LastEscapeLanding,
     bool InitializedPreset,
-    string ArenaEdgeReason);
+    string ArenaEdgeReason,
+    PartyIntentStatus PartyIntent);

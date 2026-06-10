@@ -17,6 +17,7 @@ internal sealed class SocialSpacingPositioningController(
     Configuration config,
     DalamudServices services,
     BossModReflectionSafety bossModSafety,
+    PartyIntentClient partyIntentClient,
     Func<bool> automatedMovementSuppressed)
     : IBossModGoalZoneContributor
 {
@@ -41,6 +42,7 @@ internal sealed class SocialSpacingPositioningController(
     private Vector2 playerPosition;
     private Vector2 personalBiasDirection = Vector2.UnitX;
     private Vector2[] avoidancePoints = [];
+    private PartyIntentSocialDestackIntent[] peerDestackIntents = [];
     private string hookState = "unresolved";
     private string lastReason = "not evaluated";
     private bool bmrMoveRequested;
@@ -125,10 +127,17 @@ internal sealed class SocialSpacingPositioningController(
         this.playerPosition = player2;
         this.personalBiasDirection = ResolvePersonalBiasDirection(player.GameObjectId);
         this.avoidancePoints = visiblePlayers;
+        var nowUtc = DateTime.UtcNow;
+        partyIntentClient.PublishSocialDestackIntent(this.personalBiasDirection, 0.35f, nowUtc);
+        this.peerDestackIntents = partyIntentClient.GetSocialDestackIntents(nowUtc)
+            .Where(intent => Vector2.Distance(intent.ActorPosition, player2) <= NearbyPlayerConsiderationDistance)
+            .ToArray();
         this.goalDelegate ??= this.CreateGoalDelegate();
 
         contributions.Add(new(this.goalDelegate, BossModGoalPriority.Convenience, "Social spacing"));
-        this.lastReason = "avoiding exact player stack";
+        this.lastReason = this.peerDestackIntents.Length > 0
+            ? $"cooperative social destack ({this.peerDestackIntents.Length} peers)"
+            : "avoiding exact player stack";
     }
 
     public void Reset()
@@ -146,6 +155,7 @@ internal sealed class SocialSpacingPositioningController(
         this.playerPosition = default;
         this.personalBiasDirection = Vector2.UnitX;
         this.avoidancePoints = [];
+        this.peerDestackIntents = [];
         this.bmrMoveRequested = false;
         this.bmrMoveImminent = false;
     }
@@ -281,7 +291,8 @@ internal sealed class SocialSpacingPositioningController(
             ? 1f
             : 1f - Math.Clamp((localDistance - LocalFalloffStartDistance) / (MaxComfortMoveDistance - LocalFalloffStartDistance), 0f, 1f);
         var biasScore = this.CalculatePersonalBias(candidate);
-        return GoalZoneScorePolicy.WeakPreference * spacingScore * localScore * biasScore;
+        var peerScore = this.CalculatePeerDestackScore(candidate);
+        return GoalZoneScorePolicy.WeakPreference * spacingScore * localScore * biasScore * peerScore;
     }
 
     private float CalculatePersonalBias(Vector2 candidate)
@@ -294,6 +305,30 @@ internal sealed class SocialSpacingPositioningController(
 
         var dot = Vector2.Dot(Vector2.Normalize(offset), this.personalBiasDirection);
         return 0.85f + (0.15f * Math.Clamp(dot, -1f, 1f));
+    }
+
+    private float CalculatePeerDestackScore(Vector2 candidate)
+    {
+        if (this.peerDestackIntents.Length == 0)
+        {
+            return 1f;
+        }
+
+        var offset = candidate - this.playerPosition;
+        if (offset.LengthSquared() <= 0.0001f)
+        {
+            return 0.8f;
+        }
+
+        var candidateDirection = Vector2.Normalize(offset);
+        var score = 1f;
+        foreach (var intent in this.peerDestackIntents)
+        {
+            var sameSide = Math.Clamp(Vector2.Dot(candidateDirection, intent.Bias), 0f, 1f);
+            score *= 1f - (0.35f * Math.Clamp(intent.Strength, 0f, 1f) * sameSide);
+        }
+
+        return Math.Clamp(score, 0.65f, 1f);
     }
 
     private static Vector2 ResolvePersonalBiasDirection(ulong gameObjectId)

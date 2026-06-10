@@ -36,7 +36,7 @@ public sealed class Configuration : IPluginConfiguration
         new("PCT", config => config.GapCloserPCT, (config, value) => config.GapCloserPCT = value)
     ];
 
-    public int Version { get; set; } = 24;
+    public int Version { get; set; } = 26;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -91,8 +91,9 @@ public sealed class Configuration : IPluginConfiguration
     public bool AvoidStandingInsideEnemies { get; set; } = true;
     public bool AvoidArenaEdge { get; set; } = true;
     public bool ShowDecisionOverlay { get; set; } = false;
-    public bool ShowDecisionOverlayHud { get; set; } = false;
     public bool FightReviewLoggingEnabled { get; set; } = false;
+    public bool PartyIntentEnabled { get; set; } = true;
+    public bool PartyIntentAutoRescueEnabled { get; set; } = false;
 
     private bool? manageSurvivabilityZonePositioningCompatibility;
     private bool? manageMultiTargetTargetingCompatibility;
@@ -318,7 +319,6 @@ public sealed class Configuration : IPluginConfiguration
             this.AvoidStandingInsideEnemies = true;
             this.AvoidArenaEdge = true;
             this.ShowDecisionOverlay = false;
-            this.ShowDecisionOverlayHud = false;
             this.ApplyCompatibilityValues();
             this.Version = 13;
         }
@@ -389,6 +389,18 @@ public sealed class Configuration : IPluginConfiguration
             this.UsePictomancerStarryMuseSmudge = true;
             this.Version = 24;
         }
+
+        if (this.Version < 25)
+        {
+            this.PartyIntentEnabled = true;
+            this.Version = 25;
+        }
+
+        if (this.Version < 26)
+        {
+            this.PartyIntentAutoRescueEnabled = false;
+            this.Version = 26;
+        }
     }
 
     internal void Clamp()
@@ -454,8 +466,9 @@ public sealed class Configuration : IPluginConfiguration
         this.AvoidStandingInsideEnemies = true;
         this.AvoidArenaEdge = true;
         this.ShowDecisionOverlay = false;
-        this.ShowDecisionOverlayHud = false;
         this.FightReviewLoggingEnabled = false;
+        this.PartyIntentEnabled = true;
+        this.PartyIntentAutoRescueEnabled = false;
         this.ResetBehaviorSettings();
     }
 

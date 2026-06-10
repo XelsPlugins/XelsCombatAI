@@ -42,6 +42,7 @@ internal sealed class CombatRuntime(
     DashStyleController dashStyleController,
     FacingController facingController,
     JobRangeProvider jobRangeProvider,
+    PartyIntentClient partyIntentClient,
     Action saveConfig,
     Action updateDtr,
     Action<string> print)
@@ -87,6 +88,11 @@ internal sealed class CombatRuntime(
     {
         _ = framework;
         jobRangeProvider.Tick();
+        var now = DateTime.UtcNow;
+        partyIntentClient.Tick(now);
+#if XCAI_NETWORK_TEST_CONTROLS
+        partyIntentClient.EvaluateNetworkTestRescueAssists(now, bossModSafety);
+#endif
 
         var combatEngagement = CombatEngagementDetector.Detect(services);
         if (!config.Enabled)
@@ -97,13 +103,17 @@ internal sealed class CombatRuntime(
             return;
         }
 
-        var now = DateTime.UtcNow;
         var manualMovementRequested = manualMovement.IsManualMovementRequested();
         autoFaceTargetOptionController.Update(now < this.manualMovementSuppressUntil || manualMovementRequested);
         var dependenciesAvailable = dependencyChecker.DependenciesAvailable(out var missing);
         var bossModAvailable = dependenciesAvailable || dependencyChecker.IsBossModAvailable();
         this.SetBossModGate(bossModAvailable);
         mechanicPressure.Update(bossMod);
+        if (bossModAvailable)
+        {
+            partyIntentClient.EvaluateRescueAssists(now, bossModSafety);
+        }
+
         if (!dependenciesAvailable)
         {
             if (!this.ShouldContinueThroughTransientDependencyLoss(
@@ -185,6 +195,7 @@ internal sealed class CombatRuntime(
 
         var suppressAutomatedMovement = this.ShouldSuppressAutomatedMovement(now, manualMovementRequested);
         presetController.ApplyStrategies(suppressAutomatedMovement);
+        partyIntentClient.EvaluateLocalRescueSos(now, mechanicPressure.Current, bossModSafety, escapeGapCloserController, suppressAutomatedMovement);
         facingController.Update(now, suppressAutomatedMovement, aoeGoalHook.MovementDiagnostics);
         this.UpdateFightReviewLogging(combatEngagement.EffectiveInCombat, "logging disabled");
     }
@@ -256,6 +267,7 @@ internal sealed class CombatRuntime(
         mobilityDecisionEvaluator.Reset();
         dashStyleController.Reset();
         facingController.Reset();
+        partyIntentClient.Reset();
     }
 
     public void EnsureRsrTrueNorthDisabled()
@@ -273,6 +285,14 @@ internal sealed class CombatRuntime(
     {
         return dependencyChecker.GetTrueNorthWarning(positionalsController.RsrTrueNorthDisabled);
     }
+
+#if XCAI_NETWORK_TEST_CONTROLS
+    public PartyIntentNetworkTestResult TriggerPartyIntentTestSos()
+        => partyIntentClient.TriggerNetworkTestSos(DateTime.UtcNow);
+
+    public PartyIntentNetworkTestResult TriggerPartyIntentTestDestack()
+        => partyIntentClient.TriggerNetworkTestDestack(DateTime.UtcNow);
+#endif
 
     public RuntimeStatus GetStatus()
     {
@@ -360,7 +380,8 @@ internal sealed class CombatRuntime(
             escapeGapCloserController.LastEscapeGapCloserSafety,
             escapeGapCloserController.LastSafeEscapeDestination,
             presetController.InitializedPreset,
-            arenaEdgePositioningController.LastReason);
+            arenaEdgePositioningController.LastReason,
+            partyIntentClient.Status);
     }
 
     public void DisposeRuntime()
@@ -376,6 +397,7 @@ internal sealed class CombatRuntime(
         }
 
         aoeGoalHook.Dispose();
+        partyIntentClient.Dispose();
         survivabilityZonePositioningController.Dispose();
         redMageMeleeComboController.Dispose();
         autoFaceTargetOptionController.Restore();

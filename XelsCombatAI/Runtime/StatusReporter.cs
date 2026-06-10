@@ -44,6 +44,29 @@ internal static class StatusReporter
         Append(builder, "DisableAutoFaceTargetDuringManualMovement", config.DisableAutoFaceTargetDuringManualMovement);
         builder.AppendLine();
 
+        AppendSection(builder, "Party Intent");
+        Append(builder, "Enabled", status.PartyIntent.Enabled);
+        Append(builder, "ServerUrl", status.PartyIntent.ServerUrl);
+        Append(builder, "State", status.PartyIntent.State);
+        Append(builder, "PeerCount", status.PartyIntent.PeerCount);
+        Append(builder, "LastError", status.PartyIntent.LastError);
+        Append(builder, "LastAttemptUtc", status.PartyIntent.LastAttemptUtc);
+        Append(builder, "LastSuccessUtc", status.PartyIntent.LastSuccessUtc);
+        Append(builder, "Context", status.PartyIntent.Context);
+        Append(builder, "RoomMode", status.PartyIntent.RoomMode);
+        Append(builder, "AutoRescueEnabled", status.PartyIntent.AutoRescueEnabled);
+        Append(builder, "AutoRescueStatus", status.PartyIntent.AutoRescueStatus);
+        Append(builder, "DirectPeerCount", status.PartyIntent.DirectPeerCount);
+        Append(builder, "DirectPeerStatus", status.PartyIntent.DirectPeerStatus);
+        Append(builder, "LastNetworkTestTrigger", FormatNetworkTestResult(status.PartyIntent.LastNetworkTestTrigger));
+        Append(builder, "LastNetworkTestReceived", FormatNetworkTestResult(status.PartyIntent.LastNetworkTestReceived));
+        Append(builder, "RescueActive", status.PartyIntent.Rescue.Active);
+        Append(builder, "RescueClaimedByLocal", status.PartyIntent.Rescue.ClaimedByLocal);
+        Append(builder, "RescueTarget", status.PartyIntent.Rescue.TargetName);
+        Append(builder, "RescueReason", status.PartyIntent.Rescue.Reason);
+        Append(builder, "RescueExpiresUtc", status.PartyIntent.Rescue.ExpiresUtc);
+        builder.AppendLine();
+
         AppendSection(builder, "BossMod Mechanic Pressure");
         Append(builder, "MechanicPressure", status.MechanicPressure.PrimaryPressure);
         Append(builder, "MechanicPressureSummary", status.MechanicPressure.Summary);
@@ -276,6 +299,11 @@ internal static class StatusReporter
     {
         builder.AppendLine($"[{title}]");
     }
+
+    private static string FormatNetworkTestResult(PartyIntentNetworkTestResult result)
+        => result.Active
+            ? $"{result.TimestampUtc:O}: {(result.Success ? "OK" : "Blocked")}: {result.Message}"
+            : result.Message;
 
     private static void Append(StringBuilder builder, string name, object? value)
     {

@@ -31,6 +31,7 @@ internal sealed class DecisionOverlayController(
     Func<bool?> leylinesBetweenTheLines,
     Func<bool?> leylinesRetrace,
     Func<bool?> leylinesGoal,
+    PartyIntentClient partyIntentClient,
     RotationSolverActionReflection rotationSolverActions)
 {
 
@@ -39,10 +40,8 @@ internal sealed class DecisionOverlayController(
     private DateTime gapCloserPendingStateAt = DateTime.MinValue;
     private DateTime nextDrawErrorLog = DateTime.MinValue;
     private static readonly TimeSpan GapCloserStateDebounce = TimeSpan.FromMilliseconds(400);
-    private const int MaxHudLinesPerSection = 4;
 
     private sealed record OverlayBadge(DecisionOverlayState State, DecisionOverlaySource Source, string Text);
-    private sealed record MovementHudLine(DecisionOverlayState State, DecisionOverlaySource Source, string Text);
 
     public void Draw()
     {
@@ -93,10 +92,6 @@ internal sealed class DecisionOverlayController(
         var snapshots = this.BuildSnapshots(player)
             .OrderBy(snapshot => snapshot.Priority)
             .ToArray();
-        if (config.ShowDecisionOverlayHud)
-        {
-            this.DrawMovementStatusHud(snapshots);
-        }
 
         var badgeGroups = new Dictionary<(int, int), (Vector3 Anchor, List<OverlayBadge> Badges)>();
         foreach (var snapshot in snapshots)
@@ -121,6 +116,8 @@ internal sealed class DecisionOverlayController(
         {
             this.DrawBadgeGroup(drawList, group.Anchor, group.Badges);
         }
+
+        this.DrawRescueWorldMarker(drawList, partyIntentClient.Status.Rescue);
     }
 
     private IEnumerable<DecisionOverlaySnapshot> BuildSnapshots(IBattleChara player)
@@ -650,78 +647,28 @@ internal sealed class DecisionOverlayController(
         return parts.Count == 0 ? "Ley Lines handling enabled" : string.Join(", ", parts);
     }
 
-    private void DrawMovementStatusHud(IReadOnlyList<DecisionOverlaySnapshot> snapshots)
+    private void DrawRescueWorldMarker(ImDrawListPtr drawList, PartyIntentRescueAdvisory rescue)
     {
-        var viewport = ImGui.GetMainViewport();
-        ImGui.SetNextWindowPos(viewport.WorkPos + new Vector2(12f, 12f), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowBgAlpha(0.72f);
-        var flags = ImGuiWindowFlags.NoSavedSettings |
-                    ImGuiWindowFlags.NoFocusOnAppearing |
-                    ImGuiWindowFlags.NoNav |
-                    ImGuiWindowFlags.AlwaysAutoResize |
-                    ImGuiWindowFlags.NoCollapse;
-        if (!ImGui.Begin("Movement Overlay###XCAIMovementStatusOverlay", flags))
+        if (!rescue.Active || !rescue.TargetPosition.HasValue)
         {
-            ImGui.End();
             return;
         }
 
-        ImGui.TextUnformatted("Movement overlay");
-        ImGui.Separator();
+        var color = rescue.ClaimedByLocal
+            ? ImGui.GetColorU32(new Vector4(0.30f, 0.72f, 1f, 1f))
+            : ImGui.GetColorU32(new Vector4(1f, 0.35f, 0.28f, 1f));
+#if XCAI_NETWORK_TEST_CONTROLS
+        var label = rescue.NetworkTest
+            ? rescue.ClaimedByLocal ? "TEST RESCUE" : "TEST SOS"
+            : rescue.ClaimedByLocal ? "RESCUING SOS" : "SOS";
+#else
+        var label = rescue.ClaimedByLocal ? "RESCUING SOS" : "SOS";
+#endif
+        var targetPosition = rescue.TargetPosition.Value;
 
-        if (!config.Enabled || !config.ManageMovement)
-        {
-            this.DrawMovementHudMuted(!config.Enabled ? "Disabled" : "Movement automation off");
-            ImGui.End();
-            return;
-        }
-
-        var now = this.BuildMovementHudLines(snapshots, future: false)
-            .Take(MaxHudLinesPerSection)
-            .ToArray();
-        var next = this.BuildMovementHudLines(snapshots, future: true)
-            .Take(MaxHudLinesPerSection)
-            .ToArray();
-
-        this.DrawMovementHudSection("Now", now, "No movement decision active");
-        ImGui.Spacing();
-        this.DrawMovementHudSection("Next", next, "Waiting for enabled option trigger");
-
-        ImGui.End();
-    }
-
-    private IEnumerable<MovementHudLine> BuildMovementHudLines(IReadOnlyList<DecisionOverlaySnapshot> snapshots, bool future)
-    {
-        foreach (var snapshot in snapshots
-                     .Where(snapshot => IsMovementHudSource(snapshot.Source))
-                     .Where(snapshot => future ? snapshot.State == DecisionOverlayState.Future : snapshot.State is DecisionOverlayState.Active or DecisionOverlayState.Candidate or DecisionOverlayState.Rejected)
-                     .OrderBy(snapshot => MovementHudStatePriority(snapshot.State))
-                     .ThenBy(snapshot => snapshot.Priority))
-        {
-            yield return new(snapshot.State, snapshot.Source, FormatMovementHudText(snapshot));
-        }
-    }
-
-    private void DrawMovementHudSection(string label, IReadOnlyList<MovementHudLine> lines, string emptyText)
-    {
-        ImGui.TextColored(new Vector4(0.75f, 0.75f, 1f, 1f), label);
-        if (lines.Count == 0)
-        {
-            this.DrawMovementHudMuted(emptyText);
-            return;
-        }
-
-        foreach (var line in lines)
-        {
-            ImGui.TextColored(ColorVectorFor(line.State, line.Source), $"{MovementHudStateLabel(line.State),-7}");
-            ImGui.SameLine();
-            ImGui.TextUnformatted(line.Text);
-        }
-    }
-
-    private void DrawMovementHudMuted(string text)
-    {
-        ImGui.TextColored(new Vector4(0.58f, 0.58f, 0.58f, 1f), text);
+        this.DrawCircleFilled(drawList, targetPosition, 0.58f, ImGui.GetColorU32(new Vector4(1f, 0.10f, 0.08f, 0.16f)));
+        this.DrawCircle(drawList, targetPosition, 0.58f, color, 3f);
+        this.DrawLabel(drawList, targetPosition + new Vector3(0f, 2.25f, 0f), label, color);
     }
 
     private string? DisabledReason(params (bool Enabled, string Label)[] gates)
@@ -1522,116 +1469,6 @@ internal sealed class DecisionOverlayController(
         return actionName.Length <= MaxLength
             ? actionName
             : string.Concat(actionName.AsSpan(0, MaxLength - 3), "...");
-    }
-
-    private static string FormatMovementHudText(DecisionOverlaySnapshot snapshot)
-    {
-        var sourceLabel = MovementHudSourceLabel(snapshot.Source);
-        var text = snapshot.Label.StartsWith(sourceLabel, StringComparison.OrdinalIgnoreCase)
-            ? snapshot.Label
-            : $"{sourceLabel}: {snapshot.Label}";
-        var reason = NormalizeMovementHudReason(snapshot.Reason);
-        if (reason != null &&
-            !text.Contains(reason, StringComparison.OrdinalIgnoreCase))
-        {
-            text = $"{text} - {reason}";
-        }
-
-        return TruncateMovementHudText(text);
-    }
-
-    private static string? NormalizeMovementHudReason(string? reason)
-    {
-        if (string.IsNullOrWhiteSpace(reason))
-        {
-            return null;
-        }
-
-        var trimmed = reason.Trim();
-        if (trimmed.Equals("not evaluated", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Equals("reset", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Equals("disabled", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Equals("not active in combat", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Equals("movement management disabled", StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        return trimmed;
-    }
-
-    private static string TruncateMovementHudText(string text)
-    {
-        const int MaxLength = 78;
-        return text.Length <= MaxLength
-            ? text
-            : string.Concat(text.AsSpan(0, MaxLength - 3), "...");
-    }
-
-    private static string MovementHudSourceLabel(DecisionOverlaySource source)
-    {
-        return source switch
-        {
-            DecisionOverlaySource.AoE => "AoE",
-            DecisionOverlaySource.HealerCoverage => "Healer",
-            DecisionOverlaySource.PartyHealerRange => "Healer",
-            DecisionOverlaySource.GapCloser => "Dash",
-            DecisionOverlaySource.EscapeLanding => "Dash",
-            DecisionOverlaySource.FinalMovement => "Safety",
-            DecisionOverlaySource.LeyLines => "Ley Lines",
-            DecisionOverlaySource.TargetUptime => "Range",
-            DecisionOverlaySource.BossCenterAvoidance => "Center",
-            DecisionOverlaySource.NextAction => "Action",
-            DecisionOverlaySource.PassageOfArms => "Passage",
-            DecisionOverlaySource.Positionals => "Positional",
-            DecisionOverlaySource.RedMageMeleeCombo => "RDM",
-            DecisionOverlaySource.StarryMuse => "Starry",
-            DecisionOverlaySource.SurvivabilityZone => "Defensive",
-            _ => source.ToString()
-        };
-    }
-
-    private static string MovementHudStateLabel(DecisionOverlayState state)
-    {
-        return state switch
-        {
-            DecisionOverlayState.Active => "now",
-            DecisionOverlayState.Candidate => "move",
-            DecisionOverlayState.Future => "next",
-            DecisionOverlayState.Rejected => "blocked",
-            _ => "idle"
-        };
-    }
-
-    private static int MovementHudStatePriority(DecisionOverlayState state)
-    {
-        return state switch
-        {
-            DecisionOverlayState.Active => 0,
-            DecisionOverlayState.Candidate => 1,
-            DecisionOverlayState.Future => 2,
-            DecisionOverlayState.Rejected => 3,
-            _ => 4
-        };
-    }
-
-    private static bool IsMovementHudSource(DecisionOverlaySource source)
-    {
-        return source is DecisionOverlaySource.AoE
-            or DecisionOverlaySource.EscapeLanding
-            or DecisionOverlaySource.FinalMovement
-            or DecisionOverlaySource.GapCloser
-            or DecisionOverlaySource.HealerCoverage
-            or DecisionOverlaySource.LeyLines
-            or DecisionOverlaySource.NextAction
-            or DecisionOverlaySource.PassageOfArms
-            or DecisionOverlaySource.PartyHealerRange
-            or DecisionOverlaySource.Positionals
-            or DecisionOverlaySource.RedMageMeleeCombo
-            or DecisionOverlaySource.StarryMuse
-            or DecisionOverlaySource.SurvivabilityZone
-            or DecisionOverlaySource.TargetUptime
-            or DecisionOverlaySource.BossCenterAvoidance;
     }
 
     private static int LabelSortPriority(DecisionOverlayState state)

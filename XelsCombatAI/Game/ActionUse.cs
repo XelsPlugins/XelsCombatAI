@@ -1,4 +1,5 @@
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 
 namespace XelsCombatAI.Game;
 
@@ -14,6 +15,7 @@ internal static class ActionUse
     public const uint BlackMageLeyLinesObjectDataId = 0x179u;
     public const uint PassageOfArmsActionId = 7385;
     public const uint PassageOfArmsStatusId = 1175;
+    public const uint RescueActionId = 7571;
     public const uint PaladinIronWillStatusId = 79;
     public const uint WarriorDefianceStatusId = 91;
     public const uint DarkKnightGritStatusId = 743;
@@ -80,10 +82,10 @@ internal static class ActionUse
     public const uint PhantomKickActionId = 41595;
     public const uint OccultFeatherfootActionId = 41600;
 
-    public static unsafe bool CanUseAction(uint actionId)
+    public static unsafe bool CanUseAction(uint actionId, bool checkCastingActive = true)
     {
         var actionManager = ActionManager.Instance();
-        return actionManager->GetActionStatus(ActionType.Action, actionId) == 0 &&
+        return actionManager->GetActionStatus(ActionType.Action, actionId, checkCastingActive: checkCastingActive) == 0 &&
                actionManager->GetCurrentCharges(actionId) > 0;
     }
 
@@ -95,5 +97,10 @@ internal static class ActionUse
     public static unsafe bool HasAnimationLock()
     {
         return ActionManager.Instance()->AnimationLock > 0f;
+    }
+
+    public static unsafe void CancelCast()
+    {
+        UIState.Instance()->Hotbar.CancelCast();
     }
 }
