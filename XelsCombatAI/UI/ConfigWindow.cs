@@ -535,10 +535,11 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         this.DrawSectionHeader("Overlay");
         changed |= this.Checkbox(
-            "Show movement overlay",
+            "Show decision overlay",
             this.config.ShowDecisionOverlay,
             this.defaultConfig.ShowDecisionOverlay,
-            v => this.config.ShowDecisionOverlay = v);
+            v => this.config.ShowDecisionOverlay = v,
+            "Shows in-world markers for current movement, next action areas, target range, dashes, positionals, and party utility zones.");
         ImGui.Unindent(8f);
         ImGui.Spacing();
 

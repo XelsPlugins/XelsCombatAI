@@ -26,7 +26,7 @@ While you are in combat, the plugin automatically:
 - **Prefers Paladin Passage of Arms protection** by letting BossMod prefer the protected cone behind a party Paladin while the buff is active
 - **Avoids hugging the arena edge** as a weak preference when stronger movement goals do not matter
 - **Avoids pixel-perfect player stacks** by preferring a tiny safe offset from visible player party members, while staying out of intentional party clumps during mechanics
-- **Shows a decision overlay** with projected in-world markers for current movement decisions and candidates (off by default)
+- **Shows a decision overlay** with projected in-world markers and readable callouts for current movement, next action areas, target/range choices, dashes, positionals, and party utility zones (off by default)
 - **Can write opt-in run-review logs** for offline analysis with BossMod Reborn replay files (off by default)
 - **Pauses automated movement** briefly when you move manually, including remapped movement or gamepad input reported by BossMod, and briefly lowers the same advisory movement preference if your input looks like a correction
 - **Manages True North** usage and disables RSR's Auto True North to prevent conflicts (optional, requires RSR)
@@ -109,7 +109,7 @@ When the Gap closers option is enabled, safe-position escape dashes follow Movem
 
 ### Troubleshooting tab
 
-**Troubleshooting** — Show the movement overlay, copy a debug snapshot, or enable run-review logging.
+**Troubleshooting** — Show the decision overlay, copy a debug snapshot, or enable run-review logging.
 
 Run-review logging is off by default. When enabled, the plugin writes one detailed JSONL file for the current duty, matching BossMod Reborn's whole-replay style so dungeon pulls can be compared in one analyzer run. If no duty is active, it falls back to a single combat log. Files are written to the plugin config directory under `XelsCombatAI/combat-logs`. Combat is sampled at the normal review cadence and downtime is sampled slower to keep resource cost bounded. Movement review data includes BossMod movement, goal-zone, and safety-raster diagnostics; it no longer emits the removed movement-intent planner candidate model.
 

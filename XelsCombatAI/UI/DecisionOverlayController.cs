@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Types;
 
 namespace XelsCombatAI.UI;
@@ -42,6 +41,14 @@ internal sealed class DecisionOverlayController(
 
     private sealed record OverlayBadge(DecisionOverlayState State, DecisionOverlaySource Source, string Text);
 
+    private sealed record OverlayCallout(
+        DecisionOverlayState State,
+        DecisionOverlaySource Source,
+        Vector3 Anchor,
+        string Title,
+        string Detail,
+        int Rank);
+
     public void Draw()
     {
         try
@@ -51,7 +58,7 @@ internal sealed class DecisionOverlayController(
                 return;
             }
 
-            if (this.ShouldHideForGameUiState())
+            if (PluginUiVisibility.ShouldHide(services))
             {
                 return;
             }
@@ -68,15 +75,6 @@ internal sealed class DecisionOverlayController(
             services.Log.Verbose(ex, "Decision overlay draw failed.");
             this.nextDrawErrorLog = DateTime.UtcNow.AddSeconds(10);
         }
-    }
-
-    private bool ShouldHideForGameUiState()
-    {
-        return services.GameGui.GameUiHidden ||
-               services.Condition[ConditionFlag.OccupiedInCutSceneEvent] ||
-               services.Condition[ConditionFlag.WatchingCutscene78] ||
-               services.Condition[ConditionFlag.WatchingCutscene] ||
-               services.ClientState.IsGPosing;
     }
 
     private void DrawWorldDebug()
@@ -116,6 +114,11 @@ internal sealed class DecisionOverlayController(
             this.DrawBadgeGroup(drawList, group.Anchor, group.Badges);
         }
 
+        var callouts = BuildCallouts(snapshots).Take(2).ToArray();
+        for (var i = 0; i < callouts.Length; ++i)
+        {
+            this.DrawCallout(drawList, callouts[i], i);
+        }
     }
 
     private IEnumerable<DecisionOverlaySnapshot> BuildSnapshots(IBattleChara player)
@@ -170,7 +173,7 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.NextAction,
                 DecisionOverlayState.Future,
-                $"Next cast: {nextAction.ActionName}",
+                $"Next action area: {nextAction.ActionName}",
                 $"{nextAction.Shape} {nextAction.EffectRange:0.#}y",
                 5,
                 [new(shapeKind, DecisionOverlayState.Future, actionOrigin, nextAction.EffectRange, nextAction.HalfWidth, nextAction.EffectRange, rotation, "next action area")],
@@ -193,8 +196,8 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.HealerCoverage,
                 coverageState,
-                coverageLabel,
-                coverageReason ?? (healerCoverage.Injected ? $"{healerCoverage.DistanceToCenter:0.0}y to better coverage" : "current coverage held"),
+                coverageState == DecisionOverlayState.Active ? coverageLabel : "Healer coverage",
+                coverageReason ?? (healerCoverage.Injected ? $"{healerCoverage.DistanceToCenter:0.0}y to better coverage" : "party covered"),
                 20,
                 [new(DecisionOverlayShapeKind.Circle, coverageState, healerCoverage.Center, healerCoverage.Radius, 0f, 0f, 0f, "coverage zone")],
                 healerCoverage.Injected
@@ -273,9 +276,7 @@ internal sealed class DecisionOverlayController(
                     nameof(RsrAoeShape.StraightLine) => DecisionOverlayShapeKind.Rectangle,
                     _ => DecisionOverlayShapeKind.Circle
                 };
-                var label = aoePackPositioningController.RsrHenchedActive
-                    ? $"Move for AoE hits: {aoe.CurrentHits}->{aoe.BestHits} +RSR"
-                    : $"Move for AoE hits: {aoe.CurrentHits}->{aoe.BestHits}";
+                var label = $"Move for AoE hits: {aoe.CurrentHits}->{aoe.BestHits}";
                 yield return new(
                     DecisionOverlaySource.AoE,
                     DecisionOverlayState.Candidate,
@@ -306,7 +307,7 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.AoE,
                 DecisionOverlayState.Future,
-                $"AoE candidate: {suggestion.CurrentHits}->{suggestion.BestHits}",
+                $"AoE preview: {suggestion.CurrentHits}->{suggestion.BestHits}",
                 suggestion.ActionName,
                 39,
                 [new(shapeKind, DecisionOverlayState.Future, suggestion.Candidate, suggestion.Radius, suggestion.HalfWidth, suggestion.Radius, rotation, "AoE preview")],
@@ -332,7 +333,7 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.PassageOfArms,
                 state,
-                passage.PlayerInCone ? "Stay in Passage of Arms" : "Move behind Passage of Arms",
+                passage.PlayerInCone ? "Stay in Passage wings" : "Move into Passage wings",
                 reason ?? passage.PaladinName,
                 45,
                 [new(DecisionOverlayShapeKind.Cone, state, passage.PaladinPosition, passage.Radius, passage.HalfAngle, passage.Radius, passage.RotationRadians, "protected cone")],
@@ -359,7 +360,7 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.SurvivabilityZone,
                 state,
-                survZone.PlayerInZone ? $"Stay in {label}" : $"Move into {label}",
+                survZone.PlayerInZone ? $"Stay in safe ground: {label}" : $"Move into safe ground: {label}",
                 reason ?? survZone.CasterName,
                 44,
                 [new(DecisionOverlayShapeKind.Circle, state, survZone.ZoneCenter, survZone.Radius, 0f, 0f, 0f, "defensive ground")],
@@ -426,7 +427,7 @@ internal sealed class DecisionOverlayController(
                 yield return new(
                     DecisionOverlaySource.EscapeLanding,
                     DecisionOverlayState.Future,
-                    "Gap closer safety",
+                    "Dash landing",
                     "safe landing preview",
                     55,
                     [],
@@ -440,8 +441,8 @@ internal sealed class DecisionOverlayController(
             yield return new(
                 DecisionOverlaySource.FinalMovement,
                 DecisionOverlayState.Active,
-                "BMR mechanic movement",
-                "encounter safety destination",
+                "Boss mechanic move",
+                "safe spot from encounter mechanics",
                 100,
                 [],
                 [new(DecisionOverlayState.Active, player.Position, destination, "")],
@@ -1229,14 +1230,14 @@ internal sealed class DecisionOverlayController(
     {
         if (this.Project(from, out var fromScreen) && this.Project(to, out var toScreen))
         {
-            drawList.AddLine(fromScreen, toScreen, ShadowColor(), thickness + 2.5f);
-            drawList.AddLine(fromScreen, toScreen, color, thickness);
             if (arrow)
             {
-                var arrowSize = MathF.Max(8f, thickness * 4f);
-                DrawArrowHead(drawList, fromScreen, toScreen, ShadowColor(), arrowSize + 2f);
-                DrawArrowHead(drawList, fromScreen, toScreen, color, arrowSize);
+                DrawArrowLine(drawList, fromScreen, toScreen, color, thickness);
+                return;
             }
+
+            drawList.AddLine(fromScreen, toScreen, ShadowColor(), thickness + 2.5f);
+            drawList.AddLine(fromScreen, toScreen, color, thickness);
         }
     }
 
@@ -1326,6 +1327,297 @@ internal sealed class DecisionOverlayController(
         }
     }
 
+    private static IEnumerable<OverlayCallout> BuildCallouts(IReadOnlyList<DecisionOverlaySnapshot> snapshots)
+    {
+        var current = snapshots
+            .Select(BuildCallout)
+            .Where(callout => callout != null && callout.State != DecisionOverlayState.Future)
+            .Cast<OverlayCallout>()
+            .OrderBy(callout => callout.Rank)
+            .ThenByDescending(callout => callout.State == DecisionOverlayState.Candidate)
+            .ThenBy(callout => callout.Source)
+            .FirstOrDefault();
+        if (current != null)
+        {
+            yield return current;
+        }
+
+        var next = snapshots
+            .Select(BuildCallout)
+            .Where(callout => callout != null && callout.State == DecisionOverlayState.Future)
+            .Cast<OverlayCallout>()
+            .OrderBy(callout => callout.Rank)
+            .ThenBy(callout => callout.Source)
+            .FirstOrDefault();
+        if (next != null)
+        {
+            yield return next;
+        }
+    }
+
+    private static OverlayCallout? BuildCallout(DecisionOverlaySnapshot snapshot)
+    {
+        var anchor = CalloutAnchor(snapshot);
+        if (!ShouldDrawWorldSnapshot(snapshot) || !anchor.HasValue)
+        {
+            return null;
+        }
+
+        var (title, detail) = BuildCalloutText(snapshot);
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return null;
+        }
+
+        return new OverlayCallout(
+            snapshot.State,
+            snapshot.Source,
+            anchor.Value,
+            title,
+            detail,
+            CalloutRank(snapshot));
+    }
+
+    private static Vector3? CalloutAnchor(DecisionOverlaySnapshot snapshot)
+    {
+        return snapshot.Markers.FirstOrDefault(marker => marker.State != DecisionOverlayState.Suppressed)?.Position ??
+               snapshot.Lines.FirstOrDefault(line => line.State != DecisionOverlayState.Suppressed)?.To ??
+               snapshot.Shapes.FirstOrDefault(shape => shape.State != DecisionOverlayState.Suppressed)?.Origin;
+    }
+
+    private static (string Title, string Detail) BuildCalloutText(DecisionOverlaySnapshot snapshot)
+    {
+        return snapshot.Source switch
+        {
+            DecisionOverlaySource.FinalMovement => ("Boss mechanic move", "Move to the safe spot"),
+            DecisionOverlaySource.AoE => BuildAoeCallout(snapshot),
+            DecisionOverlaySource.GapCloser => BuildDashCallout(snapshot),
+            DecisionOverlaySource.EscapeLanding => ("Dash landing", "Safe landing preview"),
+            DecisionOverlaySource.HealerCoverage => snapshot.State == DecisionOverlayState.Active
+                ? ("Healer coverage", ReadableDetail(snapshot.Reason, "Party is covered"))
+                : ("Move for healer coverage", ReadableDetail(snapshot.Reason, "Better party coverage")),
+            DecisionOverlaySource.PartyHealerRange => snapshot.State == DecisionOverlayState.Active
+                ? ("Healer range", ReadableDetail(snapshot.Reason, "Inside healing range"))
+                : snapshot.State == DecisionOverlayState.Rejected
+                    ? ("Healer range blocked", ReadableDetail(snapshot.Reason, "Too far to adjust safely"))
+                    : ("Move to healer range", ReadableDetail(snapshot.Reason, "Get closer to healing range")),
+            DecisionOverlaySource.PassageOfArms => snapshot.State == DecisionOverlayState.Active
+                ? ("Passage wings", "Stay inside protection")
+                : ("Move to Passage wings", ReadableDetail(snapshot.Reason, "Protected cone")),
+            DecisionOverlaySource.SurvivabilityZone => snapshot.State == DecisionOverlayState.Active
+                ? ("Safe ground", ReadableDetail(snapshot.Reason, "Stay in the zone"))
+                : ("Move to safe ground", ReadableDetail(snapshot.Reason, "Defensive ground effect")),
+            DecisionOverlaySource.StarryMuse => snapshot.State == DecisionOverlayState.Active
+                ? ("Starry Muse", "Stay in the circle")
+                : ("Return to Starry Muse", "Pictomancer damage circle"),
+            DecisionOverlaySource.LeyLines => snapshot.State == DecisionOverlayState.Active
+                ? ("Ley Lines", "Stay in the circle")
+                : ("Return to Ley Lines", ReadableDetail(snapshot.Reason, "Use the return path")),
+            DecisionOverlaySource.Positionals => BuildPositionalCallout(snapshot),
+            DecisionOverlaySource.TargetUptime => snapshot.State == DecisionOverlayState.Active
+                ? ("Attack range", ReadableDetail(snapshot.Reason, "Target is in range"))
+                : ("Move to attack range", ReadableDetail(snapshot.Reason, "Target is out of range")),
+            DecisionOverlaySource.NextAction => ("Next action area", BuildNextActionDetail(snapshot)),
+            DecisionOverlaySource.RedMageMeleeCombo => ("Red Mage melee", ReadableDetail(snapshot.Reason, "Move into combo range")),
+            DecisionOverlaySource.BossCenterAvoidance => snapshot.State == DecisionOverlayState.Future
+                ? ("Avoid boss center", ReadableDetail(snapshot.Reason, "Prefer a more natural spot"))
+                : ("Move out of boss center", ReadableDetail(snapshot.Reason, "Avoid standing inside the target")),
+            _ => (snapshot.Label, ReadableDetail(snapshot.Reason, string.Empty))
+        };
+    }
+
+    private static (string Title, string Detail) BuildAoeCallout(DecisionOverlaySnapshot snapshot)
+    {
+        if (snapshot.Label.Contains("attack range", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("Move to attack range", ReadableDetail(snapshot.Reason, "Target is out of range"));
+        }
+
+        var detail = ExtractHitChange(snapshot.Label);
+        return snapshot.State == DecisionOverlayState.Future
+            ? ("AoE position preview", detail)
+            : ("Move for AoE", detail);
+    }
+
+    private static (string Title, string Detail) BuildDashCallout(DecisionOverlaySnapshot snapshot)
+    {
+        if (snapshot.State == DecisionOverlayState.Rejected)
+        {
+            return ("Dash blocked", ReadableDetail(snapshot.Reason, "No safe dash"));
+        }
+
+        if (snapshot.Label.Contains("used", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("Dash used", ReadableDetail(snapshot.Reason, "Moving now"));
+        }
+
+        return ("Dash ready", ReadableDetail(snapshot.Reason, "Safe dash option"));
+    }
+
+    private static (string Title, string Detail) BuildPositionalCallout(DecisionOverlaySnapshot snapshot)
+    {
+        var title = snapshot.Label.StartsWith("Rear", StringComparison.OrdinalIgnoreCase)
+            ? "Rear positional"
+            : snapshot.Label.StartsWith("Flank", StringComparison.OrdinalIgnoreCase)
+                ? "Flank positional"
+                : "Positional";
+        return snapshot.State == DecisionOverlayState.Active
+            ? (title, "Already on the correct side")
+            : (title, ReadableDetail(snapshot.Reason, "Move to the correct side"));
+    }
+
+    private static string BuildNextActionDetail(DecisionOverlaySnapshot snapshot)
+    {
+        const string Prefix = "Next action area: ";
+        var action = snapshot.Label.StartsWith(Prefix, StringComparison.Ordinal)
+            ? snapshot.Label[Prefix.Length..]
+            : snapshot.Label;
+        var shape = ReadableDetail(snapshot.Reason, "Action area");
+        return $"{action} - {shape}";
+    }
+
+    private static string ExtractHitChange(string label)
+    {
+        var colon = label.IndexOf(':', StringComparison.Ordinal);
+        if (colon >= 0 && colon + 1 < label.Length)
+        {
+            var change = label[(colon + 1)..].Replace("+RSR", string.Empty, StringComparison.Ordinal).Trim();
+            if (!string.IsNullOrWhiteSpace(change))
+            {
+                return $"{change} enemies hit";
+            }
+        }
+
+        return "Better enemy coverage";
+    }
+
+    private static string ReadableDetail(string? detail, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return fallback;
+        }
+
+        if (detail.StartsWith("disabled:", StringComparison.OrdinalIgnoreCase))
+        {
+            return detail;
+        }
+
+        return detail;
+    }
+
+    private static int CalloutRank(DecisionOverlaySnapshot snapshot)
+    {
+        if (snapshot.Source == DecisionOverlaySource.FinalMovement)
+        {
+            return 0;
+        }
+
+        if (snapshot.State == DecisionOverlayState.Future)
+        {
+            return snapshot.Source switch
+            {
+                DecisionOverlaySource.NextAction => 40,
+                DecisionOverlaySource.AoE => 41,
+                DecisionOverlaySource.EscapeLanding => 42,
+                DecisionOverlaySource.LeyLines => 43,
+                DecisionOverlaySource.PassageOfArms => 44,
+                DecisionOverlaySource.SurvivabilityZone => 45,
+                DecisionOverlaySource.StarryMuse => 46,
+                DecisionOverlaySource.PartyHealerRange => 47,
+                DecisionOverlaySource.Positionals => 48,
+                DecisionOverlaySource.BossCenterAvoidance => 49,
+                _ => 60
+            };
+        }
+
+        if (snapshot.State == DecisionOverlayState.Active &&
+            snapshot.Source != DecisionOverlaySource.FinalMovement &&
+            snapshot.Source != DecisionOverlaySource.GapCloser)
+        {
+            return 90 + PassiveCalloutRank(snapshot.Source);
+        }
+
+        return snapshot.Source switch
+        {
+            DecisionOverlaySource.AoE => 10,
+            DecisionOverlaySource.PartyHealerRange => 12,
+            DecisionOverlaySource.HealerCoverage => 13,
+            DecisionOverlaySource.PassageOfArms => 14,
+            DecisionOverlaySource.SurvivabilityZone => 15,
+            DecisionOverlaySource.StarryMuse => 16,
+            DecisionOverlaySource.LeyLines => 17,
+            DecisionOverlaySource.BossCenterAvoidance => 18,
+            DecisionOverlaySource.Positionals => 20,
+            DecisionOverlaySource.TargetUptime => 21,
+            DecisionOverlaySource.GapCloser => 30,
+            DecisionOverlaySource.RedMageMeleeCombo => 31,
+            _ => 80
+        };
+    }
+
+    private static int PassiveCalloutRank(DecisionOverlaySource source)
+    {
+        return source switch
+        {
+            DecisionOverlaySource.PartyHealerRange => 0,
+            DecisionOverlaySource.HealerCoverage => 1,
+            DecisionOverlaySource.PassageOfArms => 2,
+            DecisionOverlaySource.SurvivabilityZone => 3,
+            DecisionOverlaySource.StarryMuse => 4,
+            DecisionOverlaySource.LeyLines => 5,
+            DecisionOverlaySource.Positionals => 6,
+            DecisionOverlaySource.TargetUptime => 7,
+            _ => 20
+        };
+    }
+
+    private void DrawCallout(ImDrawListPtr drawList, OverlayCallout callout, int slot)
+    {
+        if (!this.Project(callout.Anchor, out var anchorScreen))
+        {
+            return;
+        }
+
+        var titleSize = ImGui.CalcTextSize(callout.Title);
+        var detailSize = string.IsNullOrWhiteSpace(callout.Detail)
+            ? Vector2.Zero
+            : ImGui.CalcTextSize(callout.Detail);
+        var padding = new Vector2(8f, 5f);
+        var lineGap = string.IsNullOrWhiteSpace(callout.Detail) ? 0f : 2f;
+        var textWidth = MathF.Max(titleSize.X, detailSize.X);
+        var textHeight = titleSize.Y + (string.IsNullOrWhiteSpace(callout.Detail) ? 0f : detailSize.Y + lineGap);
+        var size = new Vector2(textWidth + padding.X * 2f + 5f, textHeight + padding.Y * 2f);
+        var displaySize = ImGui.GetIO().DisplaySize;
+        var pos = anchorScreen + new Vector2(-size.X * 0.5f, -size.Y - 48f - slot * (size.Y + 10f));
+
+        if (pos.Y < 8f)
+        {
+            pos.Y = anchorScreen.Y + 22f + slot * (size.Y + 10f);
+        }
+
+        pos.X = Math.Clamp(pos.X, 8f, MathF.Max(8f, displaySize.X - size.X - 8f));
+        pos.Y = Math.Clamp(pos.Y, 8f, MathF.Max(8f, displaySize.Y - size.Y - 8f));
+
+        var bg = ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.70f));
+        var border = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.25f));
+        var accent = ColorFor(callout.State, callout.Source);
+        drawList.AddLine(anchorScreen, new Vector2(pos.X + size.X * 0.5f, pos.Y + size.Y), border, 1.2f);
+        drawList.AddRectFilled(pos, pos + size, bg, 5f);
+        drawList.AddRectFilled(pos, pos + new Vector2(5f, size.Y), accent, 5f);
+        drawList.AddRect(pos, pos + size, border, 5f);
+
+        var textPos = pos + new Vector2(padding.X + 5f, padding.Y);
+        drawList.AddText(textPos, accent, callout.Title);
+        if (!string.IsNullOrWhiteSpace(callout.Detail))
+        {
+            drawList.AddText(
+                textPos + new Vector2(0f, titleSize.Y + lineGap),
+                ImGui.GetColorU32(new Vector4(0.92f, 0.92f, 0.92f, 1f)),
+                callout.Detail);
+        }
+    }
+
     private bool Project(Vector3 world, out Vector2 screen)
     {
         return services.GameGui.WorldToScreen(world, out screen);
@@ -1352,19 +1644,40 @@ internal sealed class DecisionOverlayController(
         };
     }
 
-    private static void DrawArrowHead(ImDrawListPtr drawList, Vector2 from, Vector2 to, uint color, float size)
+    private static void DrawArrowLine(ImDrawListPtr drawList, Vector2 from, Vector2 to, uint color, float thickness)
     {
         var direction = to - from;
-        if (direction.LengthSquared() <= 0.01f)
+        var length = direction.Length();
+        if (length <= 1f)
         {
             return;
         }
 
-        direction = Vector2.Normalize(direction);
+        direction /= length;
+        var tipInset = Math.Clamp(thickness * 1.2f, 2f, 5f);
+        var tip = to - direction * tipInset;
+        drawList.AddLine(from, tip, ShadowColor(), thickness + 2.5f);
+        drawList.AddLine(from, tip, color, thickness);
+
+        var headLength = Math.Clamp(thickness * 4.8f, 11f, 18f);
+        var headWidth = Math.Clamp(thickness * 2.2f, 5f, 9f);
+        DrawArrowChevron(drawList, tip, direction, headLength, headWidth, ShadowColor(), thickness + 2.5f);
+        DrawArrowChevron(drawList, tip, direction, headLength, headWidth, color, thickness);
+
+        if (length > 110f)
+        {
+            var mid = from + direction * (length * 0.58f);
+            DrawArrowChevron(drawList, mid, direction, headLength * 0.62f, headWidth * 0.62f, ShadowColor(), MathF.Max(1.5f, thickness + 1.6f));
+            DrawArrowChevron(drawList, mid, direction, headLength * 0.62f, headWidth * 0.62f, color, MathF.Max(1.2f, thickness * 0.72f));
+        }
+    }
+
+    private static void DrawArrowChevron(ImDrawListPtr drawList, Vector2 tip, Vector2 direction, float length, float width, uint color, float thickness)
+    {
         var side = new Vector2(-direction.Y, direction.X);
-        var tip = to;
-        var basePoint = to - direction * size;
-        drawList.AddTriangleFilled(tip, basePoint + side * (size * 0.45f), basePoint - side * (size * 0.45f), color);
+        var basePoint = tip - direction * length;
+        drawList.AddLine(basePoint + side * width, tip, color, thickness);
+        drawList.AddLine(basePoint - side * width, tip, color, thickness);
     }
 
     private static Vector3? BadgeAnchor(DecisionOverlaySnapshot snapshot)
@@ -1402,7 +1715,7 @@ internal sealed class DecisionOverlayController(
         }
 
         return snapshot.Source != DecisionOverlaySource.GapCloser ||
-               snapshot.State is DecisionOverlayState.Active or DecisionOverlayState.Candidate;
+               snapshot.State is DecisionOverlayState.Active or DecisionOverlayState.Candidate or DecisionOverlayState.Rejected;
     }
 
     private static string BuildSnapshotBadge(DecisionOverlaySnapshot snapshot)
@@ -1435,7 +1748,7 @@ internal sealed class DecisionOverlayController(
 
     private static string BuildNextActionBadge(string label)
     {
-        const string Prefix = "Next cast: ";
+        const string Prefix = "Next action area: ";
         var actionName = label.StartsWith(Prefix, StringComparison.Ordinal)
             ? label[Prefix.Length..]
             : label;

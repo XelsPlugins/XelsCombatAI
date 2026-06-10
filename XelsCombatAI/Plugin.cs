@@ -104,20 +104,18 @@ public sealed class Plugin : IDalamudPlugin
         {
             HelpMessage = "Toggle Xel's Combat AI. Usage: /xcai [on|off|toggle|config|logs on|logs off|logs status]"
         });
-        Framework.Update += this.runtime.OnFrameworkUpdate;
-        PluginInterface.UiBuilder.Draw += this.decisionOverlay.Draw;
-        PluginInterface.UiBuilder.Draw += this.windowSystem.Draw;
+        Framework.Update += this.OnFrameworkUpdate;
+        PluginInterface.UiBuilder.Draw += this.DrawPluginUi;
         PluginInterface.UiBuilder.OpenConfigUi += this.OpenConfig;
         PluginInterface.UiBuilder.OpenMainUi += this.OpenConfig;
     }
 
     public void Dispose()
     {
-        Framework.Update -= this.runtime.OnFrameworkUpdate;
-        PluginInterface.UiBuilder.Draw -= this.decisionOverlay.Draw;
+        Framework.Update -= this.OnFrameworkUpdate;
         PluginInterface.UiBuilder.OpenMainUi -= this.OpenConfig;
         PluginInterface.UiBuilder.OpenConfigUi -= this.OpenConfig;
-        PluginInterface.UiBuilder.Draw -= this.windowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= this.DrawPluginUi;
         this.runtime.DisposeRuntime();
         this.combat.Dispose();
         CommandManager.RemoveHandler(CommandName);
@@ -197,6 +195,23 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        this.runtime.OnFrameworkUpdate(framework);
+        this.UpdateDtrVisibility();
+    }
+
+    private void DrawPluginUi()
+    {
+        if (PluginUiVisibility.ShouldHide(this.services))
+        {
+            return;
+        }
+
+        this.decisionOverlay.Draw();
+        this.windowSystem.Draw();
+    }
+
     private void OpenConfig()
     {
         this.configWindow.IsOpen = true;
@@ -244,7 +259,7 @@ public sealed class Plugin : IDalamudPlugin
         if (!Framework.IsInFrameworkUpdateThread)
         {
             this.dtrEntry.Tooltip = "Left click: toggle Xel's Combat AI\nRight click: open config";
-            this.dtrEntry.Shown = true;
+            this.UpdateDtrVisibility();
             return;
         }
 
@@ -257,7 +272,17 @@ public sealed class Plugin : IDalamudPlugin
         {
             this.dtrEntry.Tooltip += $"\nWarning: {trueNorthWarning}";
         }
-        this.dtrEntry.Shown = true;
+        this.UpdateDtrVisibility();
+    }
+
+    private void UpdateDtrVisibility()
+    {
+        if (this.dtrEntry == null)
+        {
+            return;
+        }
+
+        this.dtrEntry.Shown = !PluginUiVisibility.ShouldHide(this.services);
     }
 
     private void OnDtrClick(DtrInteractionEvent interactionEvent)
