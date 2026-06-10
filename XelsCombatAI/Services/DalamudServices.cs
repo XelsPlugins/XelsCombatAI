@@ -21,6 +21,7 @@ internal sealed class DalamudServices(
     IObjectTable objectTable,
     ITargetManager targetManager,
     IPartyList partyList,
+    IPlayerState playerState,
     IGameConfig gameConfig,
     IDataManager dataManager)
 {
@@ -38,6 +39,7 @@ internal sealed class DalamudServices(
     public IObjectTable ObjectTable { get; } = objectTable;
     public ITargetManager TargetManager { get; } = targetManager;
     public IPartyList PartyList { get; } = partyList;
+    public IPlayerState PlayerState { get; } = playerState;
     public IGameConfig GameConfig { get; } = gameConfig;
     public IDataManager DataManager { get; } = dataManager;
 }

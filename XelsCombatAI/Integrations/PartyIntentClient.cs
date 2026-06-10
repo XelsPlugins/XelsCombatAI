@@ -962,13 +962,18 @@ internal sealed class PartyIntentClient : IDisposable
         var contextInput = string.Create(
             CultureInfo.InvariantCulture,
             $"context|t={territory}|m={map}|i={instance}|cfc={contentFinder}|ps={partySize}|d={dutyStarted}|b={boundByDuty}");
+        if (!this.TryBuildLocalActorKey(player, out var actorKey))
+        {
+            reason = "local actor key unavailable";
+            return false;
+        }
 
         body = new AvailabilityBody(
             Hmac(RoomSecret, "room|" + contextInput),
             Hmac(RoomSecret, contextInput),
             null,
             rosterHash,
-            BuildActorKey(player.EntityId, territory, contentFinder),
+            actorKey,
             [FeatureSocialDestack, FeatureRescueSos],
             SupportsDirect: true,
             SupportsRelay: true);
@@ -991,6 +996,7 @@ internal sealed class PartyIntentClient : IDisposable
         if (!this.CanOfferRescue(sos.ActorKey, bossModSafety, config.PartyIntentAutoRescueEnabled, networkTest, out var target, out var reason))
         {
             this.lastError = reason;
+            this.autoRescueStatus = $"blocked: {reason}";
             return;
         }
 
@@ -1258,7 +1264,8 @@ internal sealed class PartyIntentClient : IDisposable
         var contentFinder = services.DutyState.ContentFinderCondition.RowId;
         foreach (var candidate in PartyAllyProvider.EnumerateVisiblePartyAllies(services, player))
         {
-            if (string.Equals(BuildActorKey(candidate.EntityId, territory, contentFinder), actorKey, StringComparison.Ordinal))
+            if (this.TryBuildActorKey(candidate, territory, contentFinder, out var candidateActorKey) &&
+                string.Equals(candidateActorKey, actorKey, StringComparison.Ordinal))
             {
                 actor = candidate;
                 return true;
@@ -1270,14 +1277,11 @@ internal sealed class PartyIntentClient : IDisposable
 
     private bool TryBuildLocalActorKey(IBattleChara player, out string actorKey)
     {
-        actorKey = string.Empty;
-        if (player.EntityId == 0)
-        {
-            return false;
-        }
-
-        actorKey = BuildActorKey(player.EntityId, services.ClientState.TerritoryType, services.DutyState.ContentFinderCondition.RowId);
-        return true;
+        return this.TryBuildActorKey(
+            player,
+            services.ClientState.TerritoryType,
+            services.DutyState.ContentFinderCondition.RowId,
+            out actorKey);
     }
 
 #if XCAI_NETWORK_TEST_CONTROLS
@@ -1349,6 +1353,43 @@ internal sealed class PartyIntentClient : IDisposable
         return true;
     }
 
+    private bool TryBuildActorKey(IBattleChara actor, uint territory, uint contentFinder, out string actorKey)
+    {
+        actorKey = string.Empty;
+        if (actor.GameObjectId == services.ObjectTable.LocalPlayer?.GameObjectId &&
+            services.PlayerState.ContentId != 0)
+        {
+            actorKey = BuildContentActorKey(services.PlayerState.ContentId, territory, contentFinder);
+            return true;
+        }
+
+        foreach (var member in services.PartyList)
+        {
+            if (member.ContentId == 0 ||
+                !PartyMemberMatchesActor(member.EntityId, member.GameObject?.GameObjectId ?? 0, actor))
+            {
+                continue;
+            }
+
+            actorKey = BuildContentActorKey(member.ContentId, territory, contentFinder);
+            return true;
+        }
+
+        if (actor.EntityId == 0)
+        {
+            return false;
+        }
+
+        actorKey = BuildEntityActorKey(actor.EntityId, territory, contentFinder);
+        return true;
+    }
+
+    private static bool PartyMemberMatchesActor(uint memberEntityId, ulong memberGameObjectId, IBattleChara actor)
+    {
+        return (memberGameObjectId != 0 && memberGameObjectId == actor.GameObjectId) ||
+               (memberEntityId != 0 && memberEntityId == actor.EntityId);
+    }
+
     private IReadOnlyList<string> BuildRosterTokens(string secret, uint territory, uint contentFinder, uint localEntityId)
     {
         var tokens = new List<string>();
@@ -1415,7 +1456,10 @@ internal sealed class PartyIntentClient : IDisposable
         return uri.Scheme is "ws" or "wss";
     }
 
-    private static string BuildActorKey(uint entityId, uint territory, uint contentFinder)
+    private static string BuildContentActorKey(ulong contentId, uint territory, uint contentFinder)
+        => Hmac(RoomSecret, string.Create(CultureInfo.InvariantCulture, $"actor|content|{contentId}|{territory}|{contentFinder}"));
+
+    private static string BuildEntityActorKey(uint entityId, uint territory, uint contentFinder)
         => Hmac(RoomSecret, string.Create(CultureInfo.InvariantCulture, $"actor|entity|{entityId}|{territory}|{contentFinder}"));
 
     private static string Hmac(string secret, string value)

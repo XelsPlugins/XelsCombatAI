@@ -29,6 +29,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] private static IObjectTable ObjectTable { get; set; } = null!;
     [PluginService] private static ITargetManager TargetManager { get; set; } = null!;
     [PluginService] private static IPartyList PartyList { get; set; } = null!;
+    [PluginService] private static IPlayerState PlayerState { get; set; } = null!;
     [PluginService] private static IGameConfig GameConfig { get; set; } = null!;
     [PluginService] private static IDataManager DataManager { get; set; } = null!;
     [PluginService] private static ITextureProvider TextureProvider { get; set; } = null!;
@@ -61,6 +62,7 @@ public sealed class Plugin : IDalamudPlugin
             ObjectTable,
             TargetManager,
             PartyList,
+            PlayerState,
             GameConfig,
             DataManager);
 
