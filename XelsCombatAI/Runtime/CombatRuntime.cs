@@ -267,7 +267,6 @@ internal sealed class CombatRuntime(
         mobilityDecisionEvaluator.Reset();
         dashStyleController.Reset();
         facingController.Reset();
-        partyIntentClient.Reset();
     }
 
     public void EnsureRsrTrueNorthDisabled()

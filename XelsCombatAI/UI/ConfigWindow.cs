@@ -633,6 +633,8 @@ internal sealed class ConfigWindow : Window, IDisposable
 
         ImGui.TextUnformatted($"Peers: {status.PeerCount}");
         ImGui.TextUnformatted($"Direct: {status.DirectPeerCount} ({status.DirectPeerStatus})");
+        ImGui.TextUnformatted($"Auto Rescue: {(status.AutoRescueEnabled ? "on" : "off")} ({status.AutoRescueStatus})");
+        ImGui.TextUnformatted($"SOS: {FormatRescueAdvisory(status.Rescue)}");
         ImGui.TextUnformatted($"Last sent: {FormatNetworkTestResult(status.LastNetworkTestTrigger)}");
         ImGui.TextUnformatted($"Last received: {FormatNetworkTestResult(status.LastNetworkTestReceived)}");
 
@@ -678,6 +680,19 @@ internal sealed class ConfigWindow : Window, IDisposable
         => result.Active
             ? $"{result.TimestampUtc:HH:mm:ss} {(result.Success ? "OK" : "Blocked")}: {result.Message}"
             : result.Message;
+
+    private static string FormatRescueAdvisory(PartyIntentRescueAdvisory rescue)
+    {
+        if (!rescue.Active)
+        {
+            return "none";
+        }
+
+        var remainingSeconds = Math.Max(0d, (rescue.ExpiresUtc - DateTime.UtcNow).TotalSeconds);
+        var prefix = rescue.NetworkTest ? "test " : string.Empty;
+        var claim = rescue.ClaimedByLocal ? "claimed" : "advisory";
+        return $"{prefix}{claim}: {rescue.TargetName} - {rescue.Reason} ({remainingSeconds:0.0}s)";
+    }
 
     private static string FormatPartyIntentUnavailable(PartyIntentStatus status)
     {
