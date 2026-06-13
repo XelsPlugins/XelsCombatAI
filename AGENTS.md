@@ -28,11 +28,21 @@ Xel's Combat AI is a C# Dalamud plugin for Final Fantasy XIV. It manages a dedic
 
 The primary purpose of Xel's Combat AI is to give BossMod Reborn better choices that make automated combat movement look more human for any job, while preserving BossMod Reborn as the source of encounter safety.
 
+BossMod Reborn owns encounter safety: its job is to get the player to a safe place on time. XCAI owns bounded uptime and comfort preferences inside that safety envelope: keeping jobs in useful attack range, avoiding over-dense trash-pack positions, improving AoE coverage, preserving positionals, using safe mobility, and choosing more player-like locations among BossMod-safe options.
+
+Use job and role context to decide which uptime or comfort problem matters:
+
+- Tanks should bias safe choices toward party safety, such as keeping cleaves away from the group, recovering trash aggro without unnecessary walking, and holding sensible tanking positions. When reliable encounter or telegraph data exists, tank-facing choices may also pre-align large slices or half-room cleaves so the party has an easy safe side, or turn the boss to avoid most visible party members.
+- Melee should reduce wasted ranged GCDs, preserve positional access, recover melee uptime through safe movement or mobility, and avoid trash-pack positions that hurt AoE coverage or create unnatural crowding.
+- Casters and physical ranged should avoid being stranded out of attack range after mechanics when BossMod-safe space exists, even if the usable space is small, while respecting cast locks and manual correction.
+- Healers should balance healing coverage and DPS uptime. Healing needs are often pre-emptive because damage can arrive in surges, so safe positioning for upcoming healing coverage can matter before health is already low.
+
 Agent work should optimize for plausible player-like choices among safe options, not for perfect automation, maximum theoretical uptime, or aggressive control.
 
 Before changing behavior, evaluate whether the change:
 
 - Keeps BossMod Reborn safety and encounter logic authoritative.
+- Improves uptime, range, target coverage, or comfort only within BossMod-safe choices.
 - Makes movement, targeting, or positioning look more like a competent human decision.
 - Is job-aware where job range, AoE shape, cast behavior, party role, or mobility differs.
 - Avoids excessive target switching, oscillation, snap movement, or overly perfect reactions.

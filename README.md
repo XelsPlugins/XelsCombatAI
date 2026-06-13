@@ -2,6 +2,8 @@
 
 A Dalamud plugin that automatically manages your BossMod Reborn movement and positioning settings during combat so you don't have to think about them.
 
+BossMod Reborn remains responsible for encounter safety and timing. Xel's Combat AI adds uptime-focused preferences inside that safety boundary, such as tanking with party safety in mind, reducing wasted melee ranged attacks, finding better trash-pack and AoE positions, keeping casters and physical ranged jobs in attack range after mechanics, and pre-positioning healers for healing coverage without giving up safe DPS uptime.
+
 ## Requirements
 
 - [BossMod Reborn](https://github.com/FFXIV-CombatReborn/BossmodReborn)
