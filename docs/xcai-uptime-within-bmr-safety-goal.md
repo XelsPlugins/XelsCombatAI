@@ -85,16 +85,38 @@ Start by auditing existing behavior before adding new systems:
 
 If a named file has moved, find the current responsibility-equivalent file instead of creating a duplicate system.
 
+## Bounded Cleanup Track
+
+General code cleanup is allowed as part of this goal when it directly reduces risk or makes the selected role scenario easier to reason about.
+
+Good cleanup targets:
+
+- Remove duplicated policy checks in the controller being changed.
+- Move decision rules into small pure helpers when they can be covered by focused tests.
+- Split oversized methods only around stable decision boundaries, such as candidate generation, safety validation, scoring, or final commit.
+- Delete dead code, stale status fields, obsolete comments, or unused helpers discovered while working the selected scenario.
+- Rename local variables or private helpers when the old name hides the actual movement, safety, or uptime meaning.
+- Update debug/status labels so FightReview, overlays, and copied diagnostics explain the new decision clearly.
+
+Cleanup bounds:
+
+- Do not do repository-wide style churn, mechanical reformatting, folder moves, or broad renames.
+- Do not mix unrelated role cleanup into an implementation slice.
+- Do not change config shape, persisted names, IPC payloads, BossMod strategy names, or user-visible behavior just to make cleanup easier.
+- Do not abstract early. Add helpers only when they remove real duplication, isolate a policy, or make validation easier.
+- Preserve behavior unless the goal explicitly calls for a behavior change and the new behavior has tests or clear runtime evidence.
+
 ## Expected Agent Workflow
 
 1. Identify one role scenario to improve first; do not attempt all scenarios in one broad change.
 2. Read the existing controller and overlay paths for that scenario.
 3. Confirm where BossMod-safe candidate positions, movement pressure, target range, action timing, and party positions already enter the decision.
 4. Add the smallest policy change that improves the scenario without changing unrelated role behavior.
-5. Add or update focused tests where pure policy logic exists.
-6. Update the decision overlay if the new decision affects movement, target choice, safety, or party utility in a way the player can act on.
-7. Update README/config text only for user-visible behavior or settings.
-8. Run the most relevant available validation command and report any command that cannot run.
+5. Apply bounded cleanup in the same area only when it clarifies the policy or reduces duplication.
+6. Add or update focused tests where pure policy logic exists.
+7. Update the decision overlay if the new decision affects movement, target choice, safety, or party utility in a way the player can act on.
+8. Update README/config text only for user-visible behavior or settings.
+9. Run the most relevant available validation command and report any command that cannot run.
 
 ## Completion Criteria
 
@@ -106,6 +128,7 @@ A completed implementation slice should demonstrate:
 - The behavior avoids target churn, movement jitter, snap turning, and overly perfect reactions.
 - Manual player input still pauses or weakens advisory movement as before.
 - FightReview logs, debug snapshots, focused tests, or in-game observation can explain why the decision was made.
+- Any cleanup is local to the selected scenario, behavior-preserving unless explicitly justified, and easier to review than the code it replaced.
 
 ## Purpose Fit Template
 
