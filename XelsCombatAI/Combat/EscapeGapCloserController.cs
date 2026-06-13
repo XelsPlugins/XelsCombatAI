@@ -581,6 +581,13 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
+        if (this.ShouldSuppressOptionalFixedDirectionEscape(player, actionName, out var suppressReason))
+        {
+            this.lastEscapeGapCloserSafety = suppressReason;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Safety, actionName, suppressReason);
+            return false;
+        }
+
         this.lastSafeEscapeDestination = destination;
         var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, player.GameObjectId);
         mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
@@ -630,6 +637,13 @@ internal sealed class EscapeGapCloserController(
             }
 
             this.lastEscapeGapCloserSafety = decision.RiskReason;
+            return false;
+        }
+
+        if (this.ShouldSuppressOptionalFixedDirectionEscape(player, actionName, out var suppressReason))
+        {
+            this.lastEscapeGapCloserSafety = suppressReason;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Safety, actionName, suppressReason);
             return false;
         }
 
@@ -687,6 +701,13 @@ internal sealed class EscapeGapCloserController(
                     out var decision))
                 {
                     this.lastEscapeGapCloserSafety = decision.RiskReason;
+                    continue;
+                }
+
+                if (this.ShouldSuppressOptionalFixedDirectionEscape(player, actionName, out var suppressReason))
+                {
+                    this.lastEscapeGapCloserSafety = suppressReason;
+                    mobilityEvaluator.RecordIdle(MobilityIntent.Safety, actionName, suppressReason);
                     continue;
                 }
 
@@ -750,6 +771,13 @@ internal sealed class EscapeGapCloserController(
                 continue;
             }
 
+            if (this.ShouldSuppressOptionalFixedDirectionEscape(player, actionName, out var suppressReason))
+            {
+                this.lastEscapeGapCloserSafety = suppressReason;
+                mobilityEvaluator.RecordIdle(MobilityIntent.Safety, actionName, suppressReason);
+                continue;
+            }
+
             this.lastSafeEscapeDestination = destination;
             var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, enemy.GameObjectId);
             mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
@@ -787,6 +815,13 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
+        if (this.ShouldSuppressOptionalFixedDirectionEscape(player, actionName, out var suppressReason))
+        {
+            this.lastEscapeGapCloserSafety = suppressReason;
+            mobilityEvaluator.RecordIdle(MobilityIntent.Safety, actionName, suppressReason);
+            return false;
+        }
+
         var destination = player.Position + movementDirection * dashDistance;
         if (!mobilityEvaluator.TryValidateDashDestination(
             player,
@@ -812,6 +847,25 @@ internal sealed class EscapeGapCloserController(
         facingController.RequestFacing(FacingController.CreateDirectionalDashRequest(desiredRotation, destination, $"turn for {actionName}", FacingBossModPolicy.AssistBmrMovementDash, assistDestination));
         this.lastSafeEscapeDestination = destination;
         this.lastEscapeGapCloserSafety = $"turning for {actionName} ({decision.IntentLabel}, directional dash)";
+        return true;
+    }
+
+    private bool ShouldSuppressOptionalFixedDirectionEscape(IBattleChara player, string actionName, out string reason)
+    {
+        reason = string.Empty;
+        if (!bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out _) ||
+            !currentSafe)
+        {
+            return false;
+        }
+
+        var pressure = mechanicPressure();
+        if (!GapCloserDecisionPolicy.ShouldBlockAllOptionalDashesForPressure(pressure, out var pressureReason))
+        {
+            return false;
+        }
+
+        reason = $"{actionName} held: {pressureReason}";
         return true;
     }
 

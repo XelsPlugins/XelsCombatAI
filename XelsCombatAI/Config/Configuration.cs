@@ -34,7 +34,7 @@ public sealed class Configuration : IPluginConfiguration
         new("PCT", config => config.GapCloserPCT, (config, value) => config.GapCloserPCT = value)
     ];
 
-    public int Version { get; set; } = 27;
+    public int Version { get; set; } = 28;
 
     public bool Enabled { get; set; } = false;
     public bool ManageMovement { get; set; } = true;
@@ -52,7 +52,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool UseRedMageMeleeComboMovement { get; set; } = false;
     public bool ManagePictomancerStarryMuse { get; set; } = true;
     public bool UsePictomancerStarryMuseSmudge { get; set; } = true;
-    public bool UseGapCloser { get; set; } = false;
+    public bool UseGapCloser { get; set; } = true;
     public bool UsePhantomGapClosers { get; set; } = false;
     public bool GapCloserPLD { get; set; } = true;
     public bool GapCloserWAR { get; set; } = true;
@@ -394,6 +394,12 @@ public sealed class Configuration : IPluginConfiguration
             this.DecisionOverlayDensity = OverlayDensity.Normal;
             this.Version = 27;
         }
+
+        if (this.Version < 28)
+        {
+            this.UseGapCloser = true;
+            this.Version = 28;
+        }
     }
 
     internal void Clamp()
@@ -439,7 +445,7 @@ public sealed class Configuration : IPluginConfiguration
         this.UseRedMageMeleeComboMovement = false;
         this.ManagePictomancerStarryMuse = true;
         this.UsePictomancerStarryMuseSmudge = true;
-        this.UseGapCloser = false;
+        this.UseGapCloser = true;
         this.UsePhantomGapClosers = false;
         this.SetAllGapCloserJobs(true);
         this.EchoStatusToChat = true;

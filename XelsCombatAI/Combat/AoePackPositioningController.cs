@@ -63,6 +63,7 @@ internal sealed class AoePackPositioningController(
     private bool bmrMoveRequested;
     private bool bmrMoveImminent;
     private bool bossLikeCombatActive;
+    private bool trashContextActive;
     private StateCommandType rsrSnapshotMode;
     private int lastPriorityTargetCount;
     private Vector2 lastInjectedCandidate;
@@ -143,6 +144,8 @@ internal sealed class AoePackPositioningController(
                 this.rsrSnapshotMode,
                 this.rsrLastRestoreStatus,
                 this.lastPriorityTargetCount,
+                this.bossLikeCombatActive,
+                this.trashContextActive,
                 activePlan?.Candidate,
                 activePlan?.PrimaryTarget,
                 this.lastInjected,
@@ -216,6 +219,7 @@ internal sealed class AoePackPositioningController(
         this.bmrMoveRequested = false;
         this.bmrMoveImminent = false;
         this.bossLikeCombatActive = false;
+        this.trashContextActive = false;
         this.lastPriorityTargetCount = 0;
         this.lastInjectedCandidate = default;
         this.lastInjectedHits = 0;
@@ -258,6 +262,8 @@ internal sealed class AoePackPositioningController(
         if (!config.Enabled || (!config.ManageAoePackPositioning && !config.KeepTrashTargetSelected))
         {
             this.lastReason = "disabled";
+            this.bossLikeCombatActive = false;
+            this.trashContextActive = false;
             this.trashPullState.Reset("disabled");
             this.RestoreRsrIfNeeded();
             return;
@@ -267,6 +273,7 @@ internal sealed class AoePackPositioningController(
         {
             this.lastReason = "not active in combat";
             this.bossLikeCombatActive = false;
+            this.trashContextActive = false;
             this.trashPullState.Reset("not active in combat");
             this.RestoreRsrIfNeeded();
             return;
@@ -299,7 +306,7 @@ internal sealed class AoePackPositioningController(
         effectivePackTargets = this.ApplyRemotePackCurrentTargetFallback(effectivePackTargets, allPackTargets);
 
         var hitboxBossLikeContext = this.BossLikeTargetActive(priorityTargets) || this.BossLikeTargetActive(potentialTargets);
-        var packLikeTrashContext = IsPackLikeTrashContext(this.bossModEncounterActive, targetHasBossModule, effectivePackTargets.Count);
+        var packLikeTrashContext = IsPackLikeTrashContext(this.bossModEncounterActive, targetHasBossModule, effectivePackTargets.Count, hitboxBossLikeContext);
         this.bossLikeCombatActive = ShouldUseBossModuleContext(
             this.bossModEncounterActive,
             targetHasBossModule,
@@ -312,6 +319,7 @@ internal sealed class AoePackPositioningController(
         var dangerZones = this.CreateDangerZoneSnapshot(hints);
         this.lastPriorityTargetCount = targets.Count;
         var inAoeSituation = targets.Count >= 2 && !bossModuleContext;
+        this.trashContextActive = inAoeSituation;
         var forcedSafetyActive = this.BossModForcedMovementActive(hints);
         var forbiddenSafetyActive = this.BossModForbiddenSafetyActive(hints);
         var temporaryObstacleSafetyActive = this.BossModTemporaryObstacleSafetyActive(hints);
@@ -1016,11 +1024,13 @@ internal sealed class AoePackPositioningController(
     internal static bool IsPackLikeTrashContext(
         bool bossModEncounterActive,
         bool targetHasBossModule,
-        int effectivePackTargetCount)
+        int effectivePackTargetCount,
+        bool hitboxBossLikeContext = false)
     {
+        _ = bossModEncounterActive;
         _ = targetHasBossModule;
-        return !bossModEncounterActive &&
-               effectivePackTargetCount >= 2;
+        return effectivePackTargetCount >= 2 &&
+               !hitboxBossLikeContext;
     }
 
     internal static bool ShouldUseBossModuleContext(
@@ -1030,14 +1040,14 @@ internal sealed class AoePackPositioningController(
         bool hitboxBossLikeContext,
         bool previousBossLikeCombatActive)
     {
-        if (bossModEncounterActive)
-        {
-            return true;
-        }
-
         if (packLikeTrashContext)
         {
             return false;
+        }
+
+        if (bossModEncounterActive)
+        {
+            return true;
         }
 
         if (targetHasBossModule)

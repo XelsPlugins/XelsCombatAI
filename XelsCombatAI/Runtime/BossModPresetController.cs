@@ -16,6 +16,7 @@ internal sealed class BossModPresetController(
     EscapeGapCloserController escapeGapCloserController,
     RedMageMeleeComboController redMageMeleeComboController,
     PictomancerStarryMusePositioningController pictomancerStarryMusePositioningController,
+    FacingController facingController,
     Func<BossModMechanicPressure> mechanicPressure,
     Func<BossModMovementDiagnostics> bossModMovementDiagnostics)
 {
@@ -153,6 +154,7 @@ internal sealed class BossModPresetController(
                 config.ManageLeylines && !suppressAutomatedMovement && config.ReturnToLeylines);
 
             this.SetGapClosers(suppressAutomatedMovement);
+            this.SetMovementForPendingDashTurn(suppressAutomatedMovement);
         }
         catch (Exception ex)
         {
@@ -455,6 +457,13 @@ internal sealed class BossModPresetController(
     {
         if (suppressAutomatedMovement)
         {
+            if (GapCloserDecisionPolicy.ShouldRunSafetyGapCloserDuringManualSuppression(
+                    suppressAutomatedMovement,
+                    config.UseGapCloser))
+            {
+                escapeGapCloserController.TryUseEscapeGapCloser();
+            }
+
             return;
         }
 
@@ -496,11 +505,24 @@ internal sealed class BossModPresetController(
         gapCloserController.TryUseReengageGapCloser();
     }
 
+    private void SetMovementForPendingDashTurn(bool suppressAutomatedMovement)
+    {
+        if (!config.ManageMovement || suppressAutomatedMovement)
+        {
+            return;
+        }
+
+        if (facingController.ShouldPauseBossModMovementForDirectionalDash(DateTime.UtcNow, out _))
+        {
+            this.SetMovement(false);
+        }
+    }
+
     private bool ShouldHoldOptionalDashForMechanicPressure()
     {
         var pressure = mechanicPressure();
-        return pressure.BadForOptionalMovement &&
-               !pressure.KnockbackRecoveryActive;
+        return !pressure.KnockbackRecoveryActive &&
+               GapCloserDecisionPolicy.ShouldBlockAllOptionalDashesForPressure(pressure, out _);
     }
 
     private void WriteNeutralStrategies(string presetName)

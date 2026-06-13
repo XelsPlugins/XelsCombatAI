@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
 using Dalamud.Game.ClientState.Objects.Types;
@@ -16,8 +17,15 @@ internal static class GapCloserDecisionPolicy
     private const float FriendlyAnchorMinimumUptimeGain = 4f;
     private const float FriendlyAnchorMinimumTargetGain = 3f;
     private const float FriendlyAnchorMinimumTargetDirectionDot = 0.55f;
+    private const float FriendlyAnchorMaximumSafeDestinationLoss = 2f;
+    private const float FriendlyAnchorClusterOutlierTolerance = 8f;
+    private const float MeleeStackRecoveryClusterRadius = 2.75f;
+    private const float MeleeStackRecoveryRangeSlack = 0.5f;
+    private const int MeleeStackRecoveryMinimumAllies = 2;
     private const float HostileRelayMinimumTargetGain = 4f;
     private const float HostileRelayMinimumDirectionDot = 0.45f;
+    private const float KnockbackRecoveryMinimumDirectionDot = 0.35f;
+    private const float BossCenterLandingSurfaceDistance = 0.75f;
 
     public static float EstimateWalkSeconds(float moveDistance)
         => PositionalTrueNorthPolicy.EstimateMovementSeconds(MathF.Max(0f, moveDistance));
@@ -166,6 +174,335 @@ internal static class GapCloserDecisionPolicy
         return true;
     }
 
+    public static bool ShouldUseStableFriendlyAnchorDash(
+        Vector3 playerPosition,
+        float playerRadius,
+        Vector3 anchorPosition,
+        Vector3 targetPosition,
+        float targetRadius,
+        Vector3? safeDestination,
+        IReadOnlyList<Vector3> partyPositions,
+        BossModMechanicPressure pressure,
+        bool currentPositionUnsafe,
+        float moveDistance,
+        float safetyGain,
+        float uptimeGain,
+        float pathGain,
+        out string reason)
+    {
+        if (pressure.SharedDamageSoon && !currentPositionUnsafe && safetyGain <= 0.1f)
+        {
+            reason = pressure.FormatOptionalMovementHoldReason();
+            return false;
+        }
+
+        if (!ShouldUseFriendlyAnchorDash(
+                playerPosition,
+                playerRadius,
+                anchorPosition,
+                targetPosition,
+                targetRadius,
+                moveDistance,
+                safetyGain,
+                uptimeGain,
+                pathGain,
+                out reason))
+        {
+            return false;
+        }
+
+        if (safeDestination.HasValue)
+        {
+            var playerSafeDistance = Geometry.Distance2D(playerPosition, safeDestination.Value);
+            var anchorSafeDistance = Geometry.Distance2D(anchorPosition, safeDestination.Value);
+            if (anchorSafeDistance > playerSafeDistance + FriendlyAnchorMaximumSafeDestinationLoss)
+            {
+                reason = $"ally anchor moves away from BMR safety: {anchorSafeDistance:0.0}y vs {playerSafeDistance:0.0}y";
+                return false;
+            }
+        }
+
+        if (TryGetPartyClusterCenter(partyPositions, out var clusterCenter))
+        {
+            var playerClusterDistance = Geometry.Distance2D(playerPosition, clusterCenter);
+            var anchorClusterDistance = Geometry.Distance2D(anchorPosition, clusterCenter);
+            if (anchorClusterDistance > MathF.Max(playerClusterDistance, FriendlyAnchorClusterOutlierTolerance) + 2f)
+            {
+                reason = $"ally anchor is outside party stack: {anchorClusterDistance:0.0}y";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static bool ShouldUseMeleeStackRecoveryAnchorDash(
+        bool playerIsMeleeRangeRole,
+        bool reengageWalkBlocked,
+        Vector3 anchorPosition,
+        Vector3 targetPosition,
+        float playerRadius,
+        float targetRadius,
+        float engagementRange,
+        IReadOnlyList<Vector3> partyPositions,
+        BossModMechanicPressure pressure,
+        float moveDistance,
+        out string reason)
+    {
+        if (!playerIsMeleeRangeRole)
+        {
+            reason = "melee stack recovery requires a melee job";
+            return false;
+        }
+
+        if (!reengageWalkBlocked)
+        {
+            reason = "melee stack recovery held: walking path not blocked";
+            return false;
+        }
+
+        if (pressure.MovementLockSoon || pressure.FreezingSoon || pressure.MisdirectionActive)
+        {
+            reason = pressure.FormatOptionalMovementHoldReason();
+            return false;
+        }
+
+        if (moveDistance < FriendlyAnchorMinimumMoveDistance)
+        {
+            reason = $"melee stack recovery anchor too close: {moveDistance:0.0}y";
+            return false;
+        }
+
+        var anchorTargetDistance = Geometry.DistanceToHitbox(anchorPosition, playerRadius, targetPosition, targetRadius);
+        if (anchorTargetDistance > engagementRange + MeleeStackRecoveryRangeSlack)
+        {
+            reason = $"melee stack recovery anchor outside melee range: {anchorTargetDistance:0.0}y";
+            return false;
+        }
+
+        if (!TryCountPartyStackNearAnchor(partyPositions, anchorPosition, out var stackedAllies) ||
+            stackedAllies < MeleeStackRecoveryMinimumAllies)
+        {
+            reason = $"melee stack recovery needs party stack: {stackedAllies} allies";
+            return false;
+        }
+
+        reason = $"melee stack recovery via {stackedAllies}-ally safe melee pocket";
+        return true;
+    }
+
+    public static bool ShouldHoldReengageForMechanicPressure(
+        BossModMechanicPressure pressure,
+        bool walkingWouldMissUsefulGcd,
+        bool safetyDash,
+        bool strongStyleGainRequired,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (safetyDash || pressure.KnockbackRecoveryActive)
+        {
+            return false;
+        }
+
+        if (pressure.MovementLockSoon || pressure.FreezingSoon || pressure.MisdirectionActive)
+        {
+            reason = pressure.FormatOptionalMovementHoldReason();
+            return true;
+        }
+
+        if (pressure.DowntimeSoon && !IsVulnerabilityStarting(pressure))
+        {
+            reason = pressure.FormatOptionalMovementHoldReason();
+            return true;
+        }
+
+        if ((pressure.KnockbackSoon || pressure.RaidwideOrDamageSoon) &&
+            !walkingWouldMissUsefulGcd &&
+            !strongStyleGainRequired)
+        {
+            reason = pressure.FormatOptionalMovementHoldReason();
+            return true;
+        }
+
+        return false;
+    }
+
+    public static bool ShouldUsePostDowntimeReengage(
+        bool targetAttackable,
+        bool walkingWouldMissUsefulGcd,
+        BossModMechanicPressure pressure,
+        out string reason)
+    {
+        if (!IsDowntimeActiveOrEnding(pressure) && !IsVulnerabilityStarting(pressure))
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (!targetAttackable)
+        {
+            reason = "downtime re-entry held: target not attackable";
+            return false;
+        }
+
+        if (!walkingWouldMissUsefulGcd)
+        {
+            reason = "downtime re-entry held: walking reaches next offensive GCD";
+            return false;
+        }
+
+        reason = "downtime re-entry allowed for missed offensive GCD";
+        return true;
+    }
+
+    public static bool ShouldHoldCasterImmobilityWindow(
+        uint classJobId,
+        bool playerCasting,
+        bool stationaryBuffActive,
+        bool currentPositionUnsafe,
+        out string reason)
+    {
+        if (currentPositionUnsafe)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        if (playerCasting)
+        {
+            reason = "caster dash held while casting";
+            return true;
+        }
+
+        if (!IsCasterLikeJob(classJobId))
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        if (stationaryBuffActive)
+        {
+            reason = "caster dash held for stationary buff window";
+            return true;
+        }
+
+        reason = string.Empty;
+        return false;
+    }
+
+    public static bool ShouldAllowKnockbackRecoveryDashDirection(
+        Vector3 playerPosition,
+        Vector3 destination,
+        Vector3 targetPosition,
+        Vector3? safeDestination,
+        bool onlyValidatedSafetyImprovement,
+        out string reason)
+    {
+        if (TryDirectionDot(playerPosition, destination, targetPosition, out var targetDot) &&
+            targetDot >= KnockbackRecoveryMinimumDirectionDot)
+        {
+            reason = $"knockback recovery returns toward target: {targetDot:0.00}";
+            return true;
+        }
+
+        if (safeDestination.HasValue &&
+            TryDirectionDot(playerPosition, destination, safeDestination.Value, out var safeDot) &&
+            safeDot >= KnockbackRecoveryMinimumDirectionDot)
+        {
+            reason = $"knockback recovery returns toward BMR safety: {safeDot:0.00}";
+            return true;
+        }
+
+        if (onlyValidatedSafetyImprovement)
+        {
+            reason = "knockback recovery allowed as validated safety movement";
+            return true;
+        }
+
+        reason = $"knockback recovery sideways: {(TryDirectionDot(playerPosition, destination, targetPosition, out var dot) ? dot.ToString("0.00", CultureInfo.InvariantCulture) : "unknown")}";
+        return false;
+    }
+
+    public static bool ShouldRejectNonTankFrontOrCenterLanding(
+        bool playerIsTank,
+        Vector3 destination,
+        Vector3 targetPosition,
+        float targetRotation,
+        float playerRadius,
+        float targetRadius,
+        bool alternativeExists,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (playerIsTank || !alternativeExists)
+        {
+            return false;
+        }
+
+        if (Geometry.DistanceToHitbox(destination, playerRadius, targetPosition, targetRadius) <= BossCenterLandingSurfaceDistance)
+        {
+            reason = "landing too close to boss center while alternatives exist";
+            return true;
+        }
+
+        if (PositionalDashPolicy.IsSatisfied(Positional.Front, destination, targetPosition, targetRotation))
+        {
+            reason = "non-tank front landing rejected while side/rear alternative exists";
+            return true;
+        }
+
+        return false;
+    }
+
+    public static bool ShouldUsePairedReturnDash(
+        float distanceToHitbox,
+        float engagementRange,
+        RsrGcdActionTimingSnapshot? nextOffensiveGcd,
+        bool currentPositionUnsafe,
+        out string reason)
+    {
+        if (currentPositionUnsafe)
+        {
+            reason = "paired return allowed for safety recovery";
+            return true;
+        }
+
+        if (distanceToHitbox <= engagementRange)
+        {
+            reason = "paired return held: already in useful range";
+            return false;
+        }
+
+        if (nextOffensiveGcd != null &&
+            CanWalkToRangeBeforeGcd(distanceToHitbox, engagementRange, nextOffensiveGcd, out var walkReason))
+        {
+            reason = $"paired return held: {walkReason}";
+            return false;
+        }
+
+        reason = "paired return restores useful uptime";
+        return true;
+    }
+
+    public static bool ShouldRunSafetyGapCloserDuringManualSuppression(
+        bool suppressAutomatedMovement,
+        bool gapClosersEnabled)
+    {
+        return suppressAutomatedMovement && gapClosersEnabled;
+    }
+
+    public static bool ShouldBlockAllOptionalDashesForPressure(BossModMechanicPressure pressure, out string reason)
+    {
+        if (pressure.MovementLockSoon || pressure.FreezingSoon || pressure.MisdirectionActive)
+        {
+            reason = pressure.FormatOptionalMovementHoldReason();
+            return true;
+        }
+
+        reason = string.Empty;
+        return false;
+    }
+
     public static bool ShouldAllowTrashPullGapCloserTarget(Vector3 playerPosition, Vector3 targetPosition, Vector3 anchorPosition, out string reason)
     {
         var playerAnchorDistance = Geometry.Distance2D(playerPosition, anchorPosition);
@@ -256,6 +593,64 @@ internal static class GapCloserDecisionPolicy
 
         reason = string.Empty;
         return true;
+    }
+
+    private static bool TryGetPartyClusterCenter(IReadOnlyList<Vector3> partyPositions, out Vector3 center)
+    {
+        center = default;
+        if (partyPositions.Count < 2)
+        {
+            return false;
+        }
+
+        foreach (var position in partyPositions)
+        {
+            center += position;
+        }
+
+        center /= partyPositions.Count;
+        return true;
+    }
+
+    private static bool TryCountPartyStackNearAnchor(IReadOnlyList<Vector3> partyPositions, Vector3 anchorPosition, out int stackedAllies)
+    {
+        stackedAllies = 0;
+        if (partyPositions.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var position in partyPositions)
+        {
+            if (Geometry.Distance2D(position, anchorPosition) <= MeleeStackRecoveryClusterRadius)
+            {
+                stackedAllies++;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsDowntimeActiveOrEnding(BossModMechanicPressure pressure)
+    {
+        return IsFiniteTimer(pressure.BMRDowntimeEndIn) &&
+               (!IsFiniteTimer(pressure.BMRDowntimeIn) || pressure.BMRDowntimeEndIn < pressure.BMRDowntimeIn);
+    }
+
+    private static bool IsVulnerabilityStarting(BossModMechanicPressure pressure)
+    {
+        return pressure.VulnerableSoon ||
+               (IsFiniteTimer(pressure.BMRVulnerableIn) && pressure.BMRVulnerableIn <= BossModMechanicPressure.VulnerablePressureSeconds);
+    }
+
+    private static bool IsCasterLikeJob(uint classJobId)
+    {
+        return JobRoles.GetRangeRole(classJobId) is RangeRole.MagicRanged or RangeRole.Healer;
+    }
+
+    private static bool IsFiniteTimer(float value)
+    {
+        return float.IsFinite(value) && value < float.MaxValue / 2f;
     }
 
     public static bool CanUseHostileRelayGapCloser(uint classJobId)

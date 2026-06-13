@@ -476,7 +476,7 @@ internal sealed class ConfigWindow : Window, IDisposable
             this.defaultConfig.UseGapCloser,
             v => this.config.UseGapCloser = v,
             icon: FontAwesomeIcon.SkullCrossbones,
-            iconTooltip: "High risk. Dashes can land in cleaves, snapshots, knockbacks, or arena hazards.\n\nUse only in fights where you accept that risk.\n\nFixed-direction dashes may make a short setup turn before moving.");
+            iconTooltip: "Combat risk. Dashes are checked against BossMod safety, but snapshots, knockbacks, cleaves, or arena hazards can still make a landing bad.\n\nFixed-direction dashes may make a short setup turn before moving.");
         var gapCloserDisabledTooltip = !this.config.UseGapCloser ? "Requires Gap closers." : null;
         if (!this.config.UseGapCloser)
         {

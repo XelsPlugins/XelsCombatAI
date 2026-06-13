@@ -126,6 +126,44 @@ internal sealed class FacingController(
         }
     }
 
+    public bool ShouldPauseBossModMovementForDirectionalDash(DateTime now, out string reason)
+    {
+        return ShouldPauseBossModMovementForDirectionalDash(
+            this.pendingRequest,
+            mechanicPressure(),
+            now,
+            out reason);
+    }
+
+    internal static bool ShouldPauseBossModMovementForDirectionalDash(
+        FacingRequest? request,
+        BossModMechanicPressure pressure,
+        DateTime now,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (request == null || request.ExpiresUtc <= now)
+        {
+            return false;
+        }
+
+        if (request.Source != FacingRequestSource.DirectionalDash ||
+            !request.DashDestination.HasValue ||
+            request.BossModPolicy == FacingBossModPolicy.Conservative)
+        {
+            return false;
+        }
+
+        if (IsBlockingSpecialMode(pressure))
+        {
+            reason = FormatBossModSpecialModeReason(pressure);
+            return false;
+        }
+
+        reason = "BMR movement paused for directional dash turn";
+        return true;
+    }
+
     public void Update(DateTime now, bool suppressAutomatedMovement, BossModMovementDiagnostics bossModMovement)
     {
         if (this.pendingRequest?.ExpiresUtc <= now)
@@ -492,6 +530,12 @@ internal sealed class FacingController(
 
     private bool CanAssistBossModMovement(FacingRequest request, BossModMovementDiagnostics bossModMovement, out string reason)
     {
+        if (request.BossModPolicy == FacingBossModPolicy.AssistValidatedDash)
+        {
+            reason = "validated dash may pause BossMod movement";
+            return true;
+        }
+
         if (request.BossModPolicy != FacingBossModPolicy.AssistBmrMovementDash)
         {
             reason = "BossMod movement active";
@@ -522,6 +566,12 @@ internal sealed class FacingController(
 
     private bool CanAssistBossModMovementDirection(FacingRequest request, Vector3 playerPosition, Vector2 bossModDirection, out string reason)
     {
+        if (request.BossModPolicy == FacingBossModPolicy.AssistValidatedDash)
+        {
+            reason = "validated dash may pause BossMod movement";
+            return true;
+        }
+
         if (request.BossModPolicy != FacingBossModPolicy.AssistBmrMovementDash)
         {
             reason = "BossMod movement active";

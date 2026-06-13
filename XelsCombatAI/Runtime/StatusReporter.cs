@@ -204,6 +204,8 @@ internal static class StatusReporter
         Append(builder, "RsrSnapshotMode", status.AoePackPositioning.RsrSnapshotMode);
         Append(builder, "RsrLastRestore", status.AoePackPositioning.RsrLastRestoreStatus);
         Append(builder, "PriorityTargetCount", status.AoePackPositioning.PriorityTargetCount);
+        Append(builder, "BossModuleContext", status.AoePackPositioning.BossModuleContext);
+        Append(builder, "TrashContext", status.AoePackPositioning.TrashContext);
         builder.AppendLine();
 
         AppendSection(builder, "Trash Pull Cognition");

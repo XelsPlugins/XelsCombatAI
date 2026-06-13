@@ -17,7 +17,7 @@ While you are in combat, the plugin automatically:
 - **Manages your Ley Lines** — returns to them when safe, uses Between the Lines and Retrace if available
 - **Can move Red Mage for its enchanted melee combo** — an optional job-specific setting uses RDM mana state and RSR target context to move in for safe enchanted melee range, then prefers a safe Displacement out after the finisher
 - **Stays clear of forbidden zones** with a configurable buffer distance
-- **Uses BossMod-checked gap closers** to re-engage after being knocked away or escape a dangerous spot (optional, off by default). Greedy movement timing can also use a tightly guarded emergency target dash when you are already in danger.
+- **Uses BossMod-checked gap closers** to re-engage after being knocked away, recover melee range through safe party stacks, or escape a dangerous spot. Greedy movement timing can also use a tightly guarded emergency target dash when you are already in danger.
 - **Moves for better AoE hits** when your next AoE can hit more enemies from another spot, while yielding to active BossMod mechanic safety
 - **Picks better AoE and trash targets** when target choice affects how many enemies you hit
 - **Can help tanks recover trash aggro** by selecting nearby enemies that peel to party members, or by using ranged attacks/Provoke without walking to them
@@ -97,7 +97,9 @@ While you are casting, advisory movement goals are suppressed so comfort, uptime
 
 ### Dashes tab
 
-**Dashes** — Optional gap-closer automation for reaching safety faster, returning to a target, or recovering after forced movement. This option is off by default and can very likely kill you in some fights. A single job allow-list covers enemy-target dashes, ally-target dashes, location dashes, forward dashes, backsteps, and return anchors.
+**Dashes** — Gap-closer automation for reaching safety faster, returning to a target, or recovering after forced movement. This option is on by default and can still kill you in some fights if a dash interacts badly with snapshots, knockbacks, cleaves, or arena hazards. A single job allow-list covers enemy-target dashes, ally-target dashes, location dashes, forward dashes, backsteps, and return anchors.
+
+For melee jobs, a blocked walking path back to the boss can recover through a visible party stack in melee range when the job has a legal dash for that shape. Ally-target dashes can use a stacked player as the anchor, location dashes such as Shukuchi can place directly into the pocket, and target-only dashes still require their actual landing to be BossMod-safe. This lets compressed safe pockets behave like normal mechanic stacks instead of treating player overlap as something to avoid.
 
 Fixed-direction dashes can make a short setup turn when that turn is required for a safe, useful dash. Greedy movement timing also gives safe dash choices a style pass, preferring better ally anchors, precision Shukuchi landings, paired out-and-back returns, knockback recovery dashes, capped-charge spends, trash-pack dash anchors, and cleaner fixed-direction dash angles while still requiring BossMod-safe landings. In BossMod-known boss fights, greedy timing may also spend a safe re-engage dash from normal job range when it saves the configured minimum movement distance.
 

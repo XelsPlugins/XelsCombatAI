@@ -19,6 +19,8 @@ internal sealed record AoePackPositioningStatus(
     StateCommandType RsrSnapshotMode,
     string RsrLastRestoreStatus,
     int PriorityTargetCount,
+    bool BossModuleContext,
+    bool TrashContext,
     Vector3? Candidate,
     Vector3? PrimaryTarget,
     bool CandidateInjected,

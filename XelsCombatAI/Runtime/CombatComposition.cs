@@ -107,6 +107,7 @@ internal sealed class CombatComposition : IDisposable
             escapeGapCloserController,
             redMageMeleeComboController,
             pictomancerStarryMusePositioningController,
+            facingController,
             () => mechanicPressure.Current,
             () => aoeGoalHook.MovementDiagnostics);
 

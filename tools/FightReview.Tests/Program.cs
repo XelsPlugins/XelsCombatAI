@@ -42,6 +42,17 @@ var tests = new (string Name, Action Body)[]
     ("positional true north policy samples safe partial arcs", PositionalTrueNorthPolicySamplesSafePartialArcs),
     ("positional true north policy rejects mismatched action", PositionalTrueNorthPolicyRejectsMismatchedAction),
     ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
+    ("gap closer downtime policy holds early and permits late reentry", GapCloserDowntimePolicyHoldsEarlyAndPermitsLateReentry),
+    ("stable ally anchor policy rejects outliers and spread pressure", StableAllyAnchorPolicyRejectsOutliersAndSpreadPressure),
+    ("melee stack recovery anchor allows blocked stack pockets", MeleeStackRecoveryAnchorAllowsBlockedStackPockets),
+    ("gap closer landing policy avoids front and boss center alternatives", GapCloserLandingPolicyAvoidsFrontAndBossCenterAlternatives),
+    ("gap closer pressure policy suppresses optional capped dashes", GapCloserPressurePolicySuppressesOptionalCappedDashes),
+    ("paired return policy holds walkable returns", PairedReturnPolicyHoldsWalkableReturns),
+    ("knockback recovery direction rejects sideways dashes", KnockbackRecoveryDirectionRejectsSidewaysDashes),
+    ("manual suppression allows safety gap closer only", ManualSuppressionAllowsSafetyGapCloserOnly),
+    ("fixed direction pressure suppresses optional directional dashes", FixedDirectionPressureSuppressesOptionalDirectionalDashes),
+    ("directional dash facing can pause BMR movement", DirectionalDashFacingCanPauseBmrMovement),
+    ("caster immobility policy holds optional dashes", CasterImmobilityPolicyHoldsOptionalDashes),
     ("gap closer follows RSR auto target", GapCloserFollowsRsrAutoTarget),
     ("ranged gap closers skip boss reengage", RangedGapClosersSkipBossReengage),
     ("phantom gap closers inherit base job reengage rules", PhantomGapClosersInheritBaseJobReengageRules),
@@ -330,6 +341,7 @@ static void ConfigurationLoggingDefaultsAndReset()
     var config = new Configuration();
     var currentVersion = config.Version;
     AssertFalse(config.FightReviewLoggingEnabled, "default logging disabled");
+    AssertTrue(config.UseGapCloser, "default gap closers enabled");
     AssertFalse(config.UsePhantomGapClosers, "default Phantom dashes disabled");
     AssertFalse(config.IsGapCloserJobEnabled(31), "MCH has no native gap closer allow-list entry");
     AssertTrue(config.IsPhantomGapCloserJobEnabled(31), "MCH Phantom dashes follow physical ranged archetype");
@@ -344,16 +356,20 @@ static void ConfigurationLoggingDefaultsAndReset()
     config.GapCloserDNC = true;
 
     config.FightReviewLoggingEnabled = true;
+    config.UseGapCloser = false;
     config.UsePhantomGapClosers = true;
     config.ResetAll();
     AssertFalse(config.FightReviewLoggingEnabled, "reset disables logging");
+    AssertTrue(config.UseGapCloser, "reset enables gap closers");
     AssertFalse(config.UsePhantomGapClosers, "reset disables Phantom dashes");
 
     config.Version = 18;
     config.FightReviewLoggingEnabled = true;
+    config.UseGapCloser = false;
     config.UsePhantomGapClosers = true;
     config.Migrate();
     AssertEqual(currentVersion, config.Version, "migrated version");
+    AssertTrue(config.UseGapCloser, "migration enables gap closers by default");
     AssertFalse(config.UsePhantomGapClosers, "migration disables Phantom dashes");
 
     var oldLoggingConfig = new Configuration
@@ -382,7 +398,7 @@ static void LegacyGapCloserDistanceConfigLoads()
     config.Clamp();
 
     AssertTrue(config.UseGapCloser, "legacy gap closer enablement still migrates");
-    AssertEqual(27, config.Version, "legacy distance config migrates to current version");
+    AssertEqual(new Configuration().Version, config.Version, "legacy distance config migrates to current version");
 }
 
 static void TargetUptimeRangeFollowsNextGcd()
@@ -406,12 +422,20 @@ static void TargetUptimeRangeFollowsNextGcd()
 static void PositionalsSuppressOnAoePacks()
 {
     AssertTrue(
-        PositionalsController.ShouldSuppressPositionalsForAoePack(AoePackStatus(priorityTargetCount: 2)),
+        PositionalsController.ShouldSuppressPositionalsForAoePack(AoePackStatus(priorityTargetCount: 2, trashContext: true)),
         "multiple priority targets should suppress positional chasing");
 
     AssertTrue(
-        PositionalsController.ShouldSuppressPositionalsForAoePack(AoePackStatus(trashPull: TrashDiagnostics(dominantTargetCount: 2))),
+        PositionalsController.ShouldSuppressPositionalsForAoePack(AoePackStatus(trashPull: TrashDiagnostics(dominantTargetCount: 2), trashContext: true)),
         "trash pack diagnostics should suppress positional chasing");
+
+    AssertFalse(
+        PositionalsController.ShouldSuppressPositionalsForAoePack(AoePackStatus(priorityTargetCount: 2, bossModuleContext: true)),
+        "real boss module context should keep positional handling available even with multiple priority targets");
+
+    AssertTrue(
+        PositionalsController.ShouldSuppressPositionalsForAoePack(AoePackStatus(priorityTargetCount: 2, bossModuleContext: true, trashContext: true)),
+        "hallway trash context should still suppress positionals even when a BMR module is active");
 
     AssertFalse(
         PositionalsController.ShouldSuppressPositionalsForAoePack(AoePackStatus(priorityTargetCount: 1)),
@@ -773,6 +797,506 @@ static void FriendlyAnchorDashRequiresMeaningfulGain()
             pathGain: 0f,
             out _),
         "forward-diagonal ally anchor remains valid for meaningful boss reengage");
+}
+
+static void GapCloserDowntimePolicyHoldsEarlyAndPermitsLateReentry()
+{
+    var downtimeSoon = BossModMechanicPressure.None with { BMRDowntimeIn = 1.2f };
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldHoldReengageForMechanicPressure(
+            downtimeSoon,
+            walkingWouldMissUsefulGcd: true,
+            safetyDash: false,
+            strongStyleGainRequired: false,
+            out var downtimeReason),
+        "pre-downtime reengage should hold even when a GCD could be forced");
+    AssertContains("downtime", downtimeReason, "pre-downtime hold reason");
+
+    var vulnerableSoon = BossModMechanicPressure.None with { BMRDowntimeEndIn = 0.8f, BMRVulnerableIn = 0.8f };
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUsePostDowntimeReengage(
+            targetAttackable: false,
+            walkingWouldMissUsefulGcd: true,
+            vulnerableSoon,
+            out var untargetableReason),
+        "post-downtime reentry should not dash before target validation");
+    AssertContains("not attackable", untargetableReason, "untargetable downtime reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUsePostDowntimeReengage(
+            targetAttackable: true,
+            walkingWouldMissUsefulGcd: false,
+            vulnerableSoon,
+            out var walkReason),
+        "post-downtime reentry should walk when it can still make the offensive GCD");
+    AssertContains("walking", walkReason, "walkable downtime reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUsePostDowntimeReengage(
+            targetAttackable: true,
+            walkingWouldMissUsefulGcd: true,
+            vulnerableSoon,
+            out _),
+        "post-downtime reentry should allow a safe dash when walking would miss the next useful GCD");
+}
+
+static void StableAllyAnchorPolicyRejectsOutliersAndSpreadPressure()
+{
+    var player = Vector3.Zero;
+    var target = new Vector3(0f, 0f, 30f);
+    var stableAnchor = new Vector3(0f, 0f, 12f);
+    var party = new[]
+    {
+        new Vector3(0f, 0f, 10f),
+        new Vector3(1f, 0f, 11f),
+        new Vector3(-1f, 0f, 9f)
+    };
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseStableFriendlyAnchorDash(
+            player,
+            playerRadius: 0f,
+            stableAnchor,
+            target,
+            targetRadius: 0f,
+            safeDestination: new Vector3(0f, 0f, 14f),
+            party,
+            BossModMechanicPressure.None,
+            currentPositionUnsafe: false,
+            moveDistance: 12f,
+            safetyGain: 0f,
+            uptimeGain: 8f,
+            pathGain: 0f,
+            out _),
+        "stable ally near the party and safe destination should remain a valid anchor");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseStableFriendlyAnchorDash(
+            player,
+            playerRadius: 0f,
+            anchorPosition: new Vector3(20f, 0f, 12f),
+            target,
+            targetRadius: 0f,
+            safeDestination: new Vector3(0f, 0f, 14f),
+            party,
+            BossModMechanicPressure.None,
+            currentPositionUnsafe: false,
+            moveDistance: 23f,
+            safetyGain: 0f,
+            uptimeGain: 8f,
+            pathGain: 0f,
+            out var outlierReason),
+        "far party outliers should not become stack anchors");
+    AssertContains("sideways", outlierReason, "outlier anchor reason");
+
+    var sharedDamage = BossModMechanicPressure.None with
+    {
+        BMRDamageIn = 1f,
+        BMRNextDamageType = (int)BossModPredictedDamageType.Shared
+    };
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseStableFriendlyAnchorDash(
+            player,
+            playerRadius: 0f,
+            stableAnchor,
+            target,
+            targetRadius: 0f,
+            safeDestination: null,
+            party,
+            sharedDamage,
+            currentPositionUnsafe: false,
+            moveDistance: 12f,
+            safetyGain: 0f,
+            uptimeGain: 8f,
+            pathGain: 0f,
+            out var spreadReason),
+        "optional ally-target dashes should hold during spread/shared-damage pressure");
+    AssertContains("shared damage", spreadReason, "shared damage anchor reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseStableFriendlyAnchorDash(
+            player,
+            playerRadius: 0f,
+            stableAnchor,
+            target,
+            targetRadius: 0f,
+            safeDestination: null,
+            party,
+            sharedDamage,
+            currentPositionUnsafe: true,
+            moveDistance: 12f,
+            safetyGain: 2f,
+            uptimeGain: 0f,
+            pathGain: 0f,
+            out _),
+        "ally-target safety dashes may still proceed when the current position is unsafe");
+}
+
+static void MeleeStackRecoveryAnchorAllowsBlockedStackPockets()
+{
+    var target = Vector3.Zero;
+    var anchorInMeleeStack = new Vector3(2.4f, 0f, 0.4f);
+    var partyStack = new[]
+    {
+        anchorInMeleeStack,
+        new Vector3(2.2f, 0f, 0.6f),
+        new Vector3(2.7f, 0f, 0.2f)
+    };
+    var sharedDamage = BossModMechanicPressure.None with
+    {
+        BMRDamageIn = 1f,
+        BMRNextDamageType = (int)BossModPredictedDamageType.Shared
+    };
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseMeleeStackRecoveryAnchorDash(
+            playerIsMeleeRangeRole: true,
+            reengageWalkBlocked: true,
+            anchorPosition: anchorInMeleeStack,
+            targetPosition: target,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            partyPositions: partyStack,
+            pressure: sharedDamage,
+            moveDistance: 12f,
+            out var stackReason),
+        "blocked melee reengage should allow a safe ally stack pocket even during shared-damage pressure");
+    AssertContains("safe melee pocket", stackReason, "melee stack recovery reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseMeleeStackRecoveryAnchorDash(
+            playerIsMeleeRangeRole: true,
+            reengageWalkBlocked: false,
+            anchorPosition: anchorInMeleeStack,
+            targetPosition: target,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            partyPositions: partyStack,
+            pressure: BossModMechanicPressure.None,
+            moveDistance: 12f,
+            out var walkReason),
+        "walkable reengage should keep using the normal ally-anchor policy");
+    AssertContains("not blocked", walkReason, "walkable melee stack recovery reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseMeleeStackRecoveryAnchorDash(
+            playerIsMeleeRangeRole: true,
+            reengageWalkBlocked: true,
+            anchorPosition: new Vector3(6f, 0f, 0f),
+            targetPosition: target,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            partyPositions: partyStack,
+            pressure: BossModMechanicPressure.None,
+            moveDistance: 12f,
+            out var rangeReason),
+        "blocked melee recovery should still require an ally inside melee range");
+    AssertContains("outside melee", rangeReason, "range rejection reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseMeleeStackRecoveryAnchorDash(
+            playerIsMeleeRangeRole: true,
+            reengageWalkBlocked: true,
+            anchorPosition: anchorInMeleeStack,
+            targetPosition: target,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            partyPositions: [anchorInMeleeStack],
+            pressure: BossModMechanicPressure.None,
+            moveDistance: 12f,
+            out var soloReason),
+        "blocked melee recovery should not treat one isolated player as a mechanic stack");
+    AssertContains("party stack", soloReason, "solo anchor rejection reason");
+}
+
+static void GapCloserLandingPolicyAvoidsFrontAndBossCenterAlternatives()
+{
+    var target = Vector3.Zero;
+    var front = new Vector3(0f, 0f, 4f);
+    var center = new Vector3(0.2f, 0f, 0.2f);
+    var flank = new Vector3(4f, 0f, 0f);
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldRejectNonTankFrontOrCenterLanding(
+            playerIsTank: false,
+            front,
+            target,
+            targetRotation: 0f,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            alternativeExists: true,
+            out var frontReason),
+        "non-tank front landings should be rejected when a side/rear alternative exists");
+    AssertContains("front", frontReason, "front landing reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldRejectNonTankFrontOrCenterLanding(
+            playerIsTank: false,
+            center,
+            target,
+            targetRotation: 0f,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            alternativeExists: true,
+            out var centerReason),
+        "inside-hitbox-looking landings should be rejected when alternatives exist");
+    AssertContains("boss center", centerReason, "center landing reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldRejectNonTankFrontOrCenterLanding(
+            playerIsTank: false,
+            flank,
+            target,
+            targetRotation: 0f,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            alternativeExists: true,
+            out _),
+        "flank max-melee landing should remain valid");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldRejectNonTankFrontOrCenterLanding(
+            playerIsTank: true,
+            front,
+            target,
+            targetRotation: 0f,
+            playerRadius: 0f,
+            targetRadius: 0f,
+            alternativeExists: true,
+            out _),
+        "tanks may use safe front-adjacent landings");
+}
+
+static void GapCloserPressurePolicySuppressesOptionalCappedDashes()
+{
+    var raidwide = BossModMechanicPressure.None with { BMRRaidwideIn = 1f };
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldHoldReengageForMechanicPressure(
+            raidwide,
+            walkingWouldMissUsefulGcd: false,
+            safetyDash: false,
+            strongStyleGainRequired: false,
+            out var raidwideReason),
+        "capped-charge or style-only reengage should hold under raidwide pressure");
+    AssertContains("raidwide", raidwideReason, "raidwide hold reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldHoldReengageForMechanicPressure(
+            raidwide,
+            walkingWouldMissUsefulGcd: true,
+            safetyDash: false,
+            strongStyleGainRequired: false,
+            out _),
+        "strong uptime gain can still proceed to landing validation under raidwide pressure");
+}
+
+static void PairedReturnPolicyHoldsWalkableReturns()
+{
+    var action = new RsrGcdActionTimingSnapshot(0, 0, "melee GCD", "test", 0, 2.5f, 0f, 2.5f, 0.35f);
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUsePairedReturnDash(
+            distanceToHitbox: 5f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            action,
+            currentPositionUnsafe: false,
+            out var walkReason),
+        "paired return should hold when walking can make the next GCD");
+    AssertContains("walking", walkReason, "walkable paired return reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUsePairedReturnDash(
+            distanceToHitbox: 8f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            action with { GcdRemaining = 0.4f },
+            currentPositionUnsafe: false,
+            out _),
+        "paired return should be available when walking would miss useful uptime");
+}
+
+static void KnockbackRecoveryDirectionRejectsSidewaysDashes()
+{
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldAllowKnockbackRecoveryDashDirection(
+            playerPosition: Vector3.Zero,
+            destination: new Vector3(8f, 0f, 0f),
+            targetPosition: new Vector3(20f, 0f, 0f),
+            safeDestination: null,
+            onlyValidatedSafetyImprovement: false,
+            out _),
+        "knockback recovery dash toward the target should be allowed");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldAllowKnockbackRecoveryDashDirection(
+            playerPosition: Vector3.Zero,
+            destination: new Vector3(0f, 0f, 8f),
+            targetPosition: new Vector3(20f, 0f, 0f),
+            safeDestination: null,
+            onlyValidatedSafetyImprovement: false,
+            out var sidewaysReason),
+        "sideways knockback recovery should be rejected unless it is the only safety improvement");
+    AssertContains("sideways", sidewaysReason, "sideways knockback reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldAllowKnockbackRecoveryDashDirection(
+            playerPosition: Vector3.Zero,
+            destination: new Vector3(0f, 0f, 8f),
+            targetPosition: new Vector3(20f, 0f, 0f),
+            safeDestination: null,
+            onlyValidatedSafetyImprovement: true,
+            out _),
+        "sideways recovery may still be used when the landing is a validated safety improvement");
+}
+
+static void ManualSuppressionAllowsSafetyGapCloserOnly()
+{
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldRunSafetyGapCloserDuringManualSuppression(
+            suppressAutomatedMovement: true,
+            gapClosersEnabled: true),
+        "manual suppression should still let the safety gap closer controller check unsafe BossMod movement");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldRunSafetyGapCloserDuringManualSuppression(
+            suppressAutomatedMovement: false,
+            gapClosersEnabled: true),
+        "normal updates should use the normal gap closer sequence");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldRunSafetyGapCloserDuringManualSuppression(
+            suppressAutomatedMovement: true,
+            gapClosersEnabled: false),
+        "manual suppression should not enable disabled gap closers");
+}
+
+static void FixedDirectionPressureSuppressesOptionalDirectionalDashes()
+{
+    var misdirection = BossModMechanicPressure.None with
+    {
+        BMRSpecialModeIn = 0f,
+        BMRSpecialModeType = (int)BossModSpecialMode.Misdirection
+    };
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldBlockAllOptionalDashesForPressure(misdirection, out var reason),
+        "misdirection should block optional fixed-direction dash setup");
+    AssertContains("misdirection", reason, "misdirection hold reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldHoldReengageForMechanicPressure(
+            misdirection with { KnockbackRecoveryUntilUtc = DateTime.UtcNow.AddSeconds(1) },
+            walkingWouldMissUsefulGcd: true,
+            safetyDash: true,
+            strongStyleGainRequired: false,
+            out _),
+        "required safety movement may still proceed to BossMod landing validation");
+}
+
+static void DirectionalDashFacingCanPauseBmrMovement()
+{
+    var now = DateTime.UtcNow;
+    var validatedDash = new FacingRequest(
+        FacingRequestSource.DirectionalDash,
+        DesiredRotation: 0f,
+        ToleranceRadians: FacingController.DirectionalDashToleranceRadians,
+        MaxCorrectionRadians: MathF.PI,
+        ExpiresUtc: now.AddMilliseconds(250),
+        Priority: 50,
+        Reason: "turn for dash")
+    {
+        BossModPolicy = FacingBossModPolicy.AssistValidatedDash,
+        DashDestination = new Vector3(5f, 0f, 0f)
+    };
+
+    AssertTrue(
+        FacingController.ShouldPauseBossModMovementForDirectionalDash(
+            validatedDash,
+            BossModMechanicPressure.None,
+            now,
+            out var pauseReason),
+        "validated directional dash setup should pause BMR movement briefly");
+    AssertContains("paused", pauseReason, "directional dash pause reason");
+
+    AssertTrue(
+        FacingController.ShouldPauseBossModMovementForDirectionalDash(
+            validatedDash with { BossModPolicy = FacingBossModPolicy.AssistBmrMovementDash },
+            BossModMechanicPressure.None,
+            now,
+            out _),
+        "BMR-assist directional dash setup can also pause BMR movement for the turn");
+
+    AssertFalse(
+        FacingController.ShouldPauseBossModMovementForDirectionalDash(
+            validatedDash with { BossModPolicy = FacingBossModPolicy.Conservative },
+            BossModMechanicPressure.None,
+            now,
+            out _),
+        "conservative facing requests should not pause BMR movement");
+
+    AssertFalse(
+        FacingController.ShouldPauseBossModMovementForDirectionalDash(
+            validatedDash with { Source = FacingRequestSource.SocialTurning },
+            BossModMechanicPressure.None,
+            now,
+            out _),
+        "social facing should not pause BMR movement");
+
+    var noMovement = BossModMechanicPressure.None with
+    {
+        BMRSpecialModeIn = 0f,
+        BMRSpecialModeType = (int)BossModSpecialMode.NoMovement
+    };
+    AssertFalse(
+        FacingController.ShouldPauseBossModMovementForDirectionalDash(
+            validatedDash,
+            noMovement,
+            now,
+            out var specialReason),
+        "BossMod special movement modes should still block dash-turn pauses");
+    AssertContains("no-movement", specialReason, "special-mode pause rejection reason");
+}
+
+static void CasterImmobilityPolicyHoldsOptionalDashes()
+{
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldHoldCasterImmobilityWindow(
+            classJobId: 25,
+            playerCasting: false,
+            stationaryBuffActive: true,
+            currentPositionUnsafe: false,
+            out var leyReason),
+        "BLM should hold optional dashes while committed to Ley Lines");
+    AssertContains("stationary", leyReason, "stationary caster reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldHoldCasterImmobilityWindow(
+            classJobId: 42,
+            playerCasting: true,
+            stationaryBuffActive: false,
+            currentPositionUnsafe: false,
+            out var castReason),
+        "caster-like jobs should not dash during hard casts");
+    AssertContains("casting", castReason, "casting hold reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldHoldCasterImmobilityWindow(
+            classJobId: 34,
+            playerCasting: true,
+            stationaryBuffActive: false,
+            currentPositionUnsafe: false,
+            out _),
+        "existing all-job casting suppression should remain intact");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldHoldCasterImmobilityWindow(
+            classJobId: 42,
+            playerCasting: false,
+            stationaryBuffActive: true,
+            currentPositionUnsafe: true,
+            out _),
+        "unsafe current position should still proceed to safety validation");
 }
 
 static void GapCloserFollowsRsrAutoTarget()
@@ -2123,14 +2647,38 @@ static void MultiTargetLargeTrashRemainsTrashContext()
             previousBossLikeCombatActive: true),
         "multi-target trash clears sticky hitbox-only boss context");
 
-    AssertTrue(
+    AssertFalse(
         AoePackPositioningController.ShouldUseBossModuleContext(
             bossModEncounterActive: true,
             targetHasBossModule: false,
             packLikeTrashContext: true,
             hitboxBossLikeContext: false,
             previousBossLikeCombatActive: false),
-        "BossMod encounter context remains authoritative");
+        "multi-target hallway BMR module remains trash context");
+
+    AssertFalse(
+        AoePackPositioningController.IsPackLikeTrashContext(
+            bossModEncounterActive: true,
+            targetHasBossModule: false,
+            effectivePackTargetCount: 2,
+            hitboxBossLikeContext: true),
+        "multi-target real boss module with a boss-sized target is not trash context");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldUseBossModuleContext(
+            bossModEncounterActive: true,
+            targetHasBossModule: false,
+            packLikeTrashContext: false,
+            hitboxBossLikeContext: true,
+            previousBossLikeCombatActive: false),
+        "real BossMod encounter context remains boss-like");
+
+    AssertTrue(
+        AoePackPositioningController.IsPackLikeTrashContext(
+            bossModEncounterActive: true,
+            targetHasBossModule: false,
+            effectivePackTargetCount: 2),
+        "multi-target hallway BMR module without a boss-sized target is trash context");
 
     AssertTrue(
         AoePackPositioningController.ShouldUseBossModuleContext(
@@ -3349,7 +3897,7 @@ static TrashPullSnapshot TrashPull(
         leadClampApplied ? "clamped behind tank" : "<none>");
 }
 
-static AoePackPositioningStatus AoePackStatus(int priorityTargetCount = 0, TrashPullDiagnostics? trashPull = null)
+static AoePackPositioningStatus AoePackStatus(int priorityTargetCount = 0, TrashPullDiagnostics? trashPull = null, bool bossModuleContext = false, bool trashContext = false)
 {
     return new AoePackPositioningStatus(
         "test",
@@ -3367,6 +3915,8 @@ static AoePackPositioningStatus AoePackStatus(int priorityTargetCount = 0, Trash
         StateCommandType.Off,
         "test",
         priorityTargetCount,
+        bossModuleContext,
+        trashContext,
         null,
         null,
         false,

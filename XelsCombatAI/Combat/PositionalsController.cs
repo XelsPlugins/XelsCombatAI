@@ -111,6 +111,14 @@ internal sealed class PositionalsController(
                     this.ClearMovementIntent();
                     setPositional(Positional.Any);
                 }
+                else if (this.HasActiveTrueNorth())
+                {
+                    this.trueNorthStrategy = true;
+                    this.LastTrueNorthDecisionSource = "local";
+                    this.LastTrueNorthDecisionReason = $"True North active for {positional}; holding current position";
+                    this.ClearMovementIntent();
+                    setPositional(Positional.Any);
+                }
                 else if (this.trueNorthStrategy == true)
                 {
                     var shouldWalk = this.ShouldWalkForUpcomingPositional(positional, out var walkSource, out var walkReason);
@@ -493,6 +501,11 @@ internal sealed class PositionalsController(
 
     internal static bool ShouldSuppressPositionalsForAoePack(AoePackPositioningStatus status)
     {
+        if (status.BossModuleContext && !status.TrashContext)
+        {
+            return false;
+        }
+
         return status.PriorityTargetCount >= 2 ||
                status.TrashPull.DominantTargetCount >= 2 ||
                status.TrashPull.Phase is TrashPullPhase.Gathering or TrashPullPhase.Stabilizing or TrashPullPhase.Burning;
