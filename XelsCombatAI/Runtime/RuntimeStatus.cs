@@ -82,5 +82,7 @@ internal sealed record RuntimeStatus(
     string LastGapCloserSafety,
     string LastEscapeGapCloserSafety,
     Vector3? LastEscapeLanding,
+    GapCloserResourceSnapshot GapCloser,
+    RsrGcdActionTimingSnapshot? NextGcd,
     bool InitializedPreset,
     string ArenaEdgeReason);

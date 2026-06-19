@@ -64,6 +64,8 @@ internal static class ArtifactWriter
                 frame.TrashPull,
                 frame.Planner,
                 frame.BossMod,
+                frame.GapCloser,
+                frame.NextGcd,
                 frame.Mobility,
                 frame.Motion,
                 frame.PackTargetCount,
@@ -114,6 +116,8 @@ internal static class ArtifactWriter
                     frame.TrashPull,
                     frame.Planner,
                     frame.BossMod,
+                    frame.GapCloser,
+                    frame.NextGcd,
                     frame.Mobility,
                     frame.Motion,
                     frame.PackTargetCount,
@@ -955,6 +959,7 @@ resize();
         var resourcePenalty = MathF.Max(0f, generatedAverage - 10f) * 2f +
                               MathF.Max(0f, routeBudgetAverage - 1.5f) * 10f +
                               queryPendingRatio * 20f +
+                              review.Incidents.Where(incident => incident.Category.Contains("gap-close", StringComparison.OrdinalIgnoreCase)).Sum(incident => IncidentWeight(incident.Severity)) * 5f +
                               MathF.Max(0f, frameRate - 4.5f) * 5f;
 
         var safety = ClampScore(100f - (safetyPenalty * 11f));
@@ -1258,6 +1263,7 @@ resize();
                category.Contains("late", StringComparison.OrdinalIgnoreCase) ||
                category.Contains("slow", StringComparison.OrdinalIgnoreCase) ||
                category.Contains("aoe", StringComparison.OrdinalIgnoreCase) ||
+               category.Contains("gap-close", StringComparison.OrdinalIgnoreCase) ||
                category.Contains("pack", StringComparison.OrdinalIgnoreCase) ||
                category.Contains("tank", StringComparison.OrdinalIgnoreCase) ||
                category.Contains("route-memory", StringComparison.OrdinalIgnoreCase);
@@ -1428,6 +1434,14 @@ resize();
             yield return "XelsCombatAI/Game/JobRangeProvider.cs";
         }
 
+        if (category.Contains("gap-close", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "XelsCombatAI/Combat/GapCloserController.cs";
+            yield return "XelsCombatAI/Combat/GapCloserDecisionPolicy.cs";
+            yield return "XelsCombatAI/Combat/EscapeGapCloserController.cs";
+            yield return "XelsCombatAI/Runtime/CombatHistory.cs";
+        }
+
         yield return "tools/FightReview/IncidentDetector.cs";
     }
 
@@ -1457,6 +1471,11 @@ resize();
         if (category.Contains("manual", StringComparison.OrdinalIgnoreCase))
         {
             yield return "Manual suppression lookback slice review";
+        }
+
+        if (category.Contains("gap-close", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "Gap closer value, charge conservation, and current-GCD timing policy";
         }
     }
 

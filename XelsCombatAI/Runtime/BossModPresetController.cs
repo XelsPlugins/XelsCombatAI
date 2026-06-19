@@ -310,15 +310,14 @@ internal sealed class BossModPresetController(
             return false;
         }
 
-        if (!this.TryFindSafeBossRingPoint(player, target, targetUptimeRange, out var candidate, out var candidateReason))
+        if (!this.TryFindSafeBossRingPoint(player, target, targetUptimeRange, out var candidate, out var lineCheck, out var candidateReason))
         {
             this.ClearUptimeWalkSuppression();
             reason = candidateReason;
             return false;
         }
 
-        if (!bossModSafety.TryCheckNavigationLine(player.Position, candidate, out var lineCheck) ||
-            lineCheck.Clear)
+        if (lineCheck == null || lineCheck.Clear)
         {
             this.ClearUptimeWalkSuppression();
             return false;
@@ -359,42 +358,85 @@ internal sealed class BossModPresetController(
                waypointLine.Clear;
     }
 
-    private bool TryFindSafeBossRingPoint(IBattleChara player, IBattleChara target, float targetUptimeRange, out Vector3 point, out string reason)
+    private bool TryFindSafeBossRingPoint(IBattleChara player, IBattleChara target, float targetUptimeRange, out Vector3 point, out BossModNavigationLineCheck? lineCheck, out string reason)
     {
         var ringRadius = target.HitboxRadius + player.HitboxRadius + MathF.Max(CombatConstants.MeleeActionRange, targetUptimeRange);
+        Vector3? nearestBlockedPoint = null;
+        BossModNavigationLineCheck? nearestBlockedLine = null;
+        reason = string.Empty;
         foreach (var candidate in EnumerateBossRingCandidates(player.Position, target.Position, ringRadius))
         {
-            if (bossModSafety.TryIsPositionSafe(candidate, out var safe, out reason) && safe)
+            if (!bossModSafety.TryIsPositionSafe(candidate, out var safe, out var candidateReason))
+            {
+                reason = candidateReason;
+                continue;
+            }
+
+            if (!safe)
+            {
+                reason = candidateReason;
+                continue;
+            }
+
+            if (!bossModSafety.TryCheckNavigationLine(player.Position, candidate, out var candidateLine) ||
+                candidateLine.Clear)
             {
                 point = candidate;
+                lineCheck = candidateLine;
+                reason = candidateLine.Reason;
                 return true;
             }
+
+            nearestBlockedPoint ??= candidate;
+            nearestBlockedLine ??= candidateLine;
+            reason = candidateLine.Reason;
+        }
+
+        if (nearestBlockedPoint.HasValue)
+        {
+            point = nearestBlockedPoint.Value;
+            lineCheck = nearestBlockedLine;
+            reason = nearestBlockedLine?.Reason ?? "boss re-engage path blocked";
+            return true;
         }
 
         point = default;
+        lineCheck = null;
         reason = "no safe boss re-engage point found";
         return false;
     }
 
-    private static IEnumerable<Vector3> EnumerateBossRingCandidates(Vector3 playerPosition, Vector3 targetPosition, float ringRadius)
+    internal static IEnumerable<Vector3> EnumerateBossRingCandidates(Vector3 playerPosition, Vector3 targetPosition, float ringRadius)
     {
         var toPlayer = playerPosition - targetPosition;
         toPlayer.Y = 0f;
+        var baseAngle = 0f;
         if (toPlayer.LengthSquared() > 0.0001f)
         {
             var direction = Vector3.Normalize(toPlayer);
+            baseAngle = MathF.Atan2(direction.Z, direction.X);
             yield return new Vector3(targetPosition.X + direction.X * ringRadius, playerPosition.Y, targetPosition.Z + direction.Z * ringRadius);
         }
-
-        for (var i = 0; i < BossRingSampleCount; i++)
+        else
         {
-            var angle = i * (MathF.Tau / BossRingSampleCount);
-            yield return new Vector3(
-                targetPosition.X + MathF.Cos(angle) * ringRadius,
-                playerPosition.Y,
-                targetPosition.Z + MathF.Sin(angle) * ringRadius);
+            yield return RingPoint(targetPosition, playerPosition.Y, ringRadius, baseAngle);
         }
+
+        var angleStep = MathF.Tau / BossRingSampleCount;
+        for (var step = 1; step < BossRingSampleCount / 2; step++)
+        {
+            yield return RingPoint(targetPosition, playerPosition.Y, ringRadius, baseAngle + (angleStep * step));
+            yield return RingPoint(targetPosition, playerPosition.Y, ringRadius, baseAngle - (angleStep * step));
+        }
+
+        yield return RingPoint(targetPosition, playerPosition.Y, ringRadius, baseAngle + (angleStep * (BossRingSampleCount / 2)));
     }
+
+    private static Vector3 RingPoint(Vector3 targetPosition, float y, float ringRadius, float angle)
+        => new(
+            targetPosition.X + MathF.Cos(angle) * ringRadius,
+            y,
+            targetPosition.Z + MathF.Sin(angle) * ringRadius);
 
     private static Vector3 ToPlayerPlane(Vector3 playerPosition, Vector2 position)
         => new(position.X, playerPosition.Y, position.Y);

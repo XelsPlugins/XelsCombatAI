@@ -19,6 +19,7 @@ internal static class IncidentDetector
         DetectMovementJitter(log, incidents);
         DetectBmrConflicts(log, incidents);
         DetectRangeFailures(log, incidents);
+        DetectGapCloserIssues(log, incidents);
         DetectTrashPackLateEngagement(log, incidents);
         DetectTrashPullCognitionIssues(log, incidents);
         DetectRouteMemoryIssues(log, incidents);
@@ -824,6 +825,153 @@ internal static class IncidentDetector
         }
 
         return UptimeJobProfile.For(frame.PlayerClassJobId).PreferredSurfaceRange;
+    }
+
+    private static void DetectGapCloserIssues(XcaiLog log, List<Incident> incidents)
+    {
+        DetectLowValueGapCloserUses(log, incidents);
+        DetectGapCloserMissedCurrentGcd(log, incidents);
+        DetectDepletedGapCloserOpportunities(log, incidents);
+        DetectCappedGapCloserOpportunities(log, incidents);
+    }
+
+    private static void DetectLowValueGapCloserUses(XcaiLog log, List<Incident> incidents)
+    {
+        var nextAllowed = 0f;
+        for (var i = 0; i < log.Frames.Count; i++)
+        {
+            var frame = log.Frames[i];
+            if (frame.T < nextAllowed ||
+                !IsGapCloserUse(frame) ||
+                IsManualSuppressed(frame) ||
+                HasBmrSafetyPressure(frame) ||
+                frame.Mobility.MoveDistance >= 3f ||
+                frame.Mobility.SafetyGain >= 1f ||
+                frame.Mobility.UptimeGain >= 1f ||
+                frame.Mobility.PathGain >= 1f)
+            {
+                continue;
+            }
+
+            incidents.Add(NewIncident(
+                "gap-close-low-value",
+                frame,
+                "medium",
+                $"Gap close `{frame.Mobility.ActionName}` was used for only {frame.Mobility.MoveDistance:0.0}y movement with low gains: safety={frame.Mobility.SafetyGain:0.0}, uptime={frame.Mobility.UptimeGain:0.0}, path={frame.Mobility.PathGain:0.0}.",
+                "Require a clearer uptime, safety, path, positional, or charge-overcap benefit before spending a gap close for very small movement.",
+                Math.Max(0, i - 4),
+                Math.Min(log.Frames.Count - 1, i + 8)));
+            nextAllowed = frame.T + 6f;
+        }
+    }
+
+    private static void DetectGapCloserMissedCurrentGcd(XcaiLog log, List<Incident> incidents)
+    {
+        var nextAllowed = 0f;
+        for (var i = 0; i < log.Frames.Count; i++)
+        {
+            var frame = log.Frames[i];
+            if (frame.T < nextAllowed ||
+                !IsGapCloserUse(frame) ||
+                IsManualSuppressed(frame) ||
+                !HasReliableGcdTiming(frame.NextGcd) ||
+                !IsOutsideUsefulRange(frame))
+            {
+                continue;
+            }
+
+            var end = FindFrameIndexAtOrBefore(log.Frames, frame.T + 4f);
+            var firstInRange = FirstFrameInUsefulRange(log.Frames, i, end, frame.TargetObjectId);
+            var timeToRange = firstInRange >= 0 ? log.Frames[firstInRange].T - frame.T : (float?)null;
+            if (timeToRange.HasValue && timeToRange.Value <= frame.NextGcd.GcdRemaining + 0.25f)
+            {
+                continue;
+            }
+
+            incidents.Add(NewIncident(
+                "gap-close-missed-current-gcd",
+                frame,
+                "high",
+                timeToRange.HasValue
+                    ? $"Gap close `{frame.Mobility.ActionName}` was used with {frame.NextGcd.GcdRemaining:0.0}s left on the current GCD, but useful range was not restored until {timeToRange.Value:0.0}s later."
+                    : $"Gap close `{frame.Mobility.ActionName}` was used with {frame.NextGcd.GcdRemaining:0.0}s left on the current GCD, but useful range was not restored within the next 4.0s.",
+                "Time re-engage dashes so the landing restores useful target range before the current GCD becomes available, or hold the dash for the next meaningful window.",
+                Math.Max(0, i - 4),
+                end));
+            nextAllowed = frame.T + 6f;
+        }
+    }
+
+    private static void DetectDepletedGapCloserOpportunities(XcaiLog log, List<Incident> incidents)
+    {
+        var nextAllowed = 0f;
+        for (var i = 0; i < log.Frames.Count; i++)
+        {
+            var frame = log.Frames[i];
+            if (frame.T < nextAllowed ||
+                !HasGapCloserCharges(frame, 0) ||
+                !HasRecentGapCloserUse(log.Frames, i, 25f) ||
+                !IsSignificantGapCloserOpportunity(frame))
+            {
+                continue;
+            }
+
+            var end = FindFrameIndexAtOrBefore(log.Frames, frame.T + 2.5f);
+            var span = Enumerable.Range(i, end - i + 1)
+                .Select(index => log.Frames[index])
+                .Where(current => HasGapCloserCharges(current, 0) && IsSignificantGapCloserOpportunity(current))
+                .ToArray();
+            if (span.Length < 2 || span[^1].T - span[0].T < 0.5f)
+            {
+                continue;
+            }
+
+            incidents.Add(NewIncident(
+                "gap-close-depleted-opportunity",
+                span[0],
+                "high",
+                $"Gap close `{span[0].GapCloser.PrimaryActionName}` was depleted while a significant mobility opportunity persisted for {span[^1].T - span[0].T:0.0}s. {DescribeGapOpportunity(span[0])}",
+                "Conserve the last gap-close charge unless the current use has clear value, so a charge remains for large range, safety, or path-recovery improvements.",
+                Math.Max(0, i - 6),
+                end));
+            nextAllowed = span[^1].T + 8f;
+        }
+    }
+
+    private static void DetectCappedGapCloserOpportunities(XcaiLog log, List<Incident> incidents)
+    {
+        var nextAllowed = 0f;
+        for (var i = 0; i < log.Frames.Count; i++)
+        {
+            var frame = log.Frames[i];
+            if (frame.T < nextAllowed ||
+                !HasGapCloserChargesAtLeast(frame, 2) ||
+                IsGapCloserUse(frame) ||
+                !IsSignificantGapCloserOpportunity(frame))
+            {
+                continue;
+            }
+
+            var end = FindFrameIndexAtOrBefore(log.Frames, frame.T + 2.5f);
+            var span = Enumerable.Range(i, end - i + 1)
+                .Select(index => log.Frames[index])
+                .Where(current => HasGapCloserChargesAtLeast(current, 2) && !IsGapCloserUse(current) && IsSignificantGapCloserOpportunity(current))
+                .ToArray();
+            if (span.Length < 3 || span[^1].T - span[0].T < 1f)
+            {
+                continue;
+            }
+
+            incidents.Add(NewIncident(
+                "gap-close-capped-opportunity",
+                span[0],
+                "medium",
+                $"Gap close `{span[0].GapCloser.PrimaryActionName}` stayed at {span[0].GapCloser.PrimaryActionCharges} charges during a significant mobility opportunity for {span[^1].T - span[0].T:0.0}s. {DescribeGapOpportunity(span[0])}",
+                "When charges are capped, allow a bounded gap close for strong range, safety, path-recovery, or positional value instead of losing recharge time.",
+                Math.Max(0, i - 4),
+                end));
+            nextAllowed = span[^1].T + 8f;
+        }
     }
 
     private static void DetectTrashAoeOpportunities(XcaiLog log, List<Incident> incidents)
@@ -1995,6 +2143,140 @@ internal static class IncidentDetector
     {
         return frame.Motion.TargetSurfaceDistance.HasValue &&
                frame.Motion.TargetSurfaceDistance.Value > frame.EngagementRange + 1.5f;
+    }
+
+    private static bool IsGapCloserUse(XcaiFrame frame)
+    {
+        return frame.Mobility.State.Equals("Used", StringComparison.Ordinal) &&
+               frame.Mobility.ActionId != 0 &&
+               !frame.Mobility.ActionName.Equals("<none>", StringComparison.Ordinal);
+    }
+
+    private static bool HasGapCloserCharges(XcaiFrame frame, uint charges)
+    {
+        return frame.GapCloser.Enabled &&
+               frame.GapCloser.PrimaryActionId != 0 &&
+               frame.GapCloser.PrimaryActionCharges == charges;
+    }
+
+    private static bool HasGapCloserChargesAtLeast(XcaiFrame frame, uint charges)
+    {
+        return frame.GapCloser.Enabled &&
+               frame.GapCloser.PrimaryActionId != 0 &&
+               frame.GapCloser.PrimaryActionCharges >= charges;
+    }
+
+    private static bool HasRecentGapCloserUse(IReadOnlyList<XcaiFrame> frames, int index, float seconds)
+    {
+        var startT = frames[index].T - seconds;
+        for (var i = index - 1; i >= 0; i--)
+        {
+            if (frames[i].T < startT)
+            {
+                break;
+            }
+
+            if (IsGapCloserUse(frames[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSignificantGapCloserOpportunity(XcaiFrame frame)
+    {
+        if (!frame.InCombat ||
+            frame.IsDead ||
+            IsManualSuppressed(frame))
+        {
+            return false;
+        }
+
+        if (IsOutsideUsefulRange(frame))
+        {
+            var extraDistance = frame.Motion.TargetSurfaceDistance!.Value - EffectiveRangeFailureSurfaceRange(frame);
+            return extraDistance >= 8f ||
+                   (extraDistance >= 3f && HasReliableGcdTiming(frame.NextGcd) && !CanWalkToRangeBeforeNextGcd(frame));
+        }
+
+        if (HasBmrSafetyPressure(frame) &&
+            frame.PlayerPosition != null &&
+            frame.Planner.BmrForcedMovement != null &&
+            Vec3.Distance2D(frame.PlayerPosition, frame.Planner.BmrForcedMovement) >= 6f)
+        {
+            return true;
+        }
+
+        return SafetyRasterCodec.IsHardBlocked(frame.BossMod.SafetyRaster.Player.State) &&
+               SafetyRasterCodec.IsSafeForMovement(frame.BossMod.SafetyRaster.Destination.State);
+    }
+
+    private static bool IsOutsideUsefulRange(XcaiFrame frame)
+    {
+        return frame.TargetObjectId != 0 &&
+               frame.Motion.TargetSurfaceDistance.HasValue &&
+               frame.Motion.TargetSurfaceDistance.Value > EffectiveRangeFailureSurfaceRange(frame) + 1.5f;
+    }
+
+    private static bool HasReliableGcdTiming(NextGcdSnapshot nextGcd)
+    {
+        return nextGcd.GcdRemaining >= 0f &&
+               nextGcd.GcdElapsed >= 0f &&
+               nextGcd.GcdTotal > 0f &&
+               nextGcd.GcdRemaining <= nextGcd.GcdTotal + 0.5f;
+    }
+
+    private static bool CanWalkToRangeBeforeNextGcd(XcaiFrame frame)
+    {
+        if (!frame.Motion.TargetSurfaceDistance.HasValue || !HasReliableGcdTiming(frame.NextGcd))
+        {
+            return false;
+        }
+
+        const float assumedWalkSpeed = 6f;
+        const float movementBufferSeconds = 0.15f;
+        var distanceToCover = MathF.Max(0f, frame.Motion.TargetSurfaceDistance.Value - EffectiveRangeFailureSurfaceRange(frame));
+        var requiredSeconds = (distanceToCover / assumedWalkSpeed) + movementBufferSeconds;
+        var budgetSeconds = MathF.Max(0f, frame.NextGcd.GcdRemaining - MathF.Max(0f, frame.NextGcd.GcdActionAhead));
+        return requiredSeconds <= budgetSeconds;
+    }
+
+    private static int FirstFrameInUsefulRange(IReadOnlyList<XcaiFrame> frames, int start, int end, ulong targetObjectId)
+    {
+        for (var i = start; i <= end; i++)
+        {
+            var frame = frames[i];
+            if ((targetObjectId == 0 || frame.TargetObjectId == targetObjectId) &&
+                frame.Motion.TargetSurfaceDistance.HasValue &&
+                frame.Motion.TargetSurfaceDistance.Value <= EffectiveRangeFailureSurfaceRange(frame) + 0.25f)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string DescribeGapOpportunity(XcaiFrame frame)
+    {
+        if (IsOutsideUsefulRange(frame))
+        {
+            var range = EffectiveRangeFailureSurfaceRange(frame);
+            var distance = frame.Motion.TargetSurfaceDistance!.Value;
+            var gcd = HasReliableGcdTiming(frame.NextGcd)
+                ? $" next GCD `{frame.NextGcd.ActionName}` in {frame.NextGcd.GcdRemaining:0.0}s"
+                : " next GCD timing unavailable";
+            return $"Target surface distance was {distance:0.0}y versus {range:0.0}y useful range;{gcd}.";
+        }
+
+        if (frame.PlayerPosition != null && frame.Planner.BmrForcedMovement != null)
+        {
+            return $"BMR forced movement was {Vec3.Distance2D(frame.PlayerPosition, frame.Planner.BmrForcedMovement):0.0}y away.";
+        }
+
+        return $"Safety states: player={frame.BossMod.SafetyRaster.Player.State}, destination={frame.BossMod.SafetyRaster.Destination.State}.";
     }
 
     private static bool IsUnsupportedSingleTargetFallback(XcaiFrame frame)

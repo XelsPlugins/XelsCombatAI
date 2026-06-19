@@ -7,6 +7,7 @@ using XelsCombatAI.Config;
 using XelsCombatAI.Game;
 using XelsCombatAI.Integrations;
 using XelsCombatAI.Models;
+using XelsCombatAI.Runtime;
 
 CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
@@ -33,6 +34,7 @@ var tests = new (string Name, Action Body)[]
     ("configuration logging defaults/reset", ConfigurationLoggingDefaultsAndReset),
     ("legacy gap closer distance config loads", LegacyGapCloserDistanceConfigLoads),
     ("target uptime range follows next GCD", TargetUptimeRangeFollowsNextGcd),
+    ("boss ring reengage probes local sidesteps first", BossRingReengageProbesLocalSidestepsFirst),
     ("positionals suppress on AoE packs", PositionalsSuppressOnAoePacks),
     ("boss center avoidance stays active for positional goals", BossCenterAvoidanceStaysActiveForPositionalGoals),
     ("positional dash policy matches rear and flank", PositionalDashPolicyMatchesRearAndFlank),
@@ -47,6 +49,7 @@ var tests = new (string Name, Action Body)[]
     ("melee stack recovery anchor allows blocked stack pockets", MeleeStackRecoveryAnchorAllowsBlockedStackPockets),
     ("gap closer landing policy avoids front and boss center alternatives", GapCloserLandingPolicyAvoidsFrontAndBossCenterAlternatives),
     ("gap closer pressure policy suppresses optional capped dashes", GapCloserPressurePolicySuppressesOptionalCappedDashes),
+    ("trash gap closer conservation yields to spare urgent charges", TrashGapCloserConservationYieldsToSpareUrgentCharges),
     ("paired return policy holds walkable returns", PairedReturnPolicyHoldsWalkableReturns),
     ("knockback recovery direction rejects sideways dashes", KnockbackRecoveryDirectionRejectsSidewaysDashes),
     ("manual suppression allows safety gap closer only", ManualSuppressionAllowsSafetyGapCloserOnly),
@@ -121,6 +124,10 @@ var tests = new (string Name, Action Body)[]
     ("range failure ignores all-pressure Greed linger", RangeFailureIgnoresAllPressureGreedLinger),
     ("range failure keeps Greed recovery failures", RangeFailureKeepsGreedRecoveryFailures),
     ("range failure ignores manual suppression", RangeFailureIgnoresManualSuppression),
+    ("low value gap closer detector", LowValueGapCloserDetector),
+    ("gap closer missed current GCD detector", GapCloserMissedCurrentGcdDetector),
+    ("depleted gap closer opportunity detector", DepletedGapCloserOpportunityDetector),
+    ("capped gap closer opportunity detector", CappedGapCloserOpportunityDetector),
     ("trash late pack engagement detector", TrashLatePackEngagementDetector),
     ("trash late pack engagement ignores BMR safety", TrashLatePackEngagementIgnoresBmrSafety),
     ("trash late pack engagement ignores in-range single target", TrashLatePackEngagementIgnoresInRangeSingleTarget),
@@ -417,6 +424,25 @@ static void TargetUptimeRangeFollowsNextGcd()
         3f,
         TargetUptimePlanner.ResolveTargetUptimeRange(RangeRole.PhysicalRanged, 24f, 1f),
         "invalid tiny action ranges clamp to minimum action range");
+}
+
+static void BossRingReengageProbesLocalSidestepsFirst()
+{
+    var player = new Vector3(0f, 0f, 10f);
+    var target = Vector3.Zero;
+    var candidates = BossModPresetController.EnumerateBossRingCandidates(player, target, 10f).ToArray();
+
+    AssertEqual(24, candidates.Length, "boss ring candidate count");
+    AssertApproximately(0f, candidates[0].X, 0.001f, "first candidate preserves current radial x");
+    AssertApproximately(10f, candidates[0].Z, 0.001f, "first candidate preserves current radial z");
+    AssertApproximately(-2.588f, candidates[1].X, 0.001f, "second candidate samples left sidestep");
+    AssertApproximately(9.659f, candidates[1].Z, 0.001f, "second candidate stays near player radial");
+    AssertApproximately(2.588f, candidates[2].X, 0.001f, "third candidate samples right sidestep");
+    AssertApproximately(9.659f, candidates[2].Z, 0.001f, "third candidate stays near player radial");
+
+    AssertTrue(
+        Vector3.Distance(player, candidates[1]) < Vector3.Distance(player, candidates[^1]),
+        "near sidesteps should be considered before cross-boss reengage points");
 }
 
 static void PositionalsSuppressOnAoePacks()
@@ -1092,6 +1118,51 @@ static void GapCloserPressurePolicySuppressesOptionalCappedDashes()
             strongStyleGainRequired: false,
             out _),
         "strong uptime gain can still proceed to landing validation under raidwide pressure");
+}
+
+static void TrashGapCloserConservationYieldsToSpareUrgentCharges()
+{
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldConserveTrashPullGapCloser(
+            triggerDistance: 16f,
+            useThreshold: 17.5f,
+            currentCharges: 1,
+            currentPositionUnsafe: false,
+            walkingWouldMissUsefulGcd: true,
+            out var lastChargeReason),
+        "trash conservation should still preserve the last charge below the use threshold");
+    AssertContains("conserving", lastChargeReason, "last-charge conservation reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldConserveTrashPullGapCloser(
+            triggerDistance: 16f,
+            useThreshold: 17.5f,
+            currentCharges: 2,
+            currentPositionUnsafe: false,
+            walkingWouldMissUsefulGcd: true,
+            out _),
+        "spare charges should be usable when walking misses the current useful GCD");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldConserveTrashPullGapCloser(
+            triggerDistance: 16f,
+            useThreshold: 17.5f,
+            currentCharges: 2,
+            currentPositionUnsafe: false,
+            walkingWouldMissUsefulGcd: false,
+            out var walkableReason),
+        "spare charges should still hold when walking can make the useful GCD");
+    AssertContains("conserving", walkableReason, "walkable spare-charge conservation reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldConserveTrashPullGapCloser(
+            triggerDistance: 16f,
+            useThreshold: 17.5f,
+            currentCharges: 1,
+            currentPositionUnsafe: true,
+            walkingWouldMissUsefulGcd: false,
+            out _),
+        "BossMod-unsafe positions should not be blocked by trash conservation");
 }
 
 static void PairedReturnPolicyHoldsWalkableReturns()
@@ -3238,6 +3309,67 @@ static void RangeFailureIgnoresManualSuppression()
     AssertNoIncident(IncidentDetector.Detect(Log(frames)), "range-failure");
 }
 
+static void LowValueGapCloserDetector()
+{
+    var frame = Frame(
+        0,
+        gapCloser: GapCloser(charges: 1),
+        mobility: MobilityUsed(moveDistance: 2.2f, safetyGain: 0.1f, uptimeGain: 0.2f, pathGain: 0.1f));
+
+    var incident = IncidentDetector.Detect(Log(frame)).Single(i => i.Category == "gap-close-low-value");
+    AssertContains("low gains", incident.Evidence, "low value gap evidence");
+}
+
+static void GapCloserMissedCurrentGcdDetector()
+{
+    var frames = new[]
+    {
+        Frame(
+            0,
+            targetSurfaceDistance: 12f,
+            engagementRange: 3f,
+            gapCloser: GapCloser(charges: 0),
+            nextGcd: NextGcd(gcdRemaining: 0.4f),
+            mobility: MobilityUsed(moveDistance: 10f, uptimeGain: 7f)),
+        Frame(0.5f, targetSurfaceDistance: 8f, engagementRange: 3f, gapCloser: GapCloser(charges: 0), nextGcd: NextGcd(gcdRemaining: 0f)),
+        Frame(0.9f, targetSurfaceDistance: 2.5f, engagementRange: 3f, gapCloser: GapCloser(charges: 0), nextGcd: NextGcd(gcdRemaining: 0f)),
+    };
+
+    var incident = IncidentDetector.Detect(Log(frames)).Single(i => i.Category == "gap-close-missed-current-gcd");
+    AssertContains("current GCD", incident.Evidence, "missed current GCD evidence");
+}
+
+static void DepletedGapCloserOpportunityDetector()
+{
+    var frames = new[]
+    {
+        Frame(
+            0,
+            targetSurfaceDistance: 2f,
+            engagementRange: 3f,
+            gapCloser: GapCloser(charges: 0),
+            mobility: MobilityUsed(moveDistance: 2.2f, safetyGain: 0.1f, uptimeGain: 0.1f, pathGain: 0.1f)),
+        Frame(1.0f, targetSurfaceDistance: 14f, engagementRange: 3f, gapCloser: GapCloser(charges: 0), nextGcd: NextGcd(gcdRemaining: 0.5f)),
+        Frame(1.6f, targetSurfaceDistance: 14f, engagementRange: 3f, gapCloser: GapCloser(charges: 0), nextGcd: NextGcd(gcdRemaining: 0.1f)),
+    };
+
+    var incident = IncidentDetector.Detect(Log(frames)).Single(i => i.Category == "gap-close-depleted-opportunity");
+    AssertContains("depleted", incident.Evidence, "depleted gap opportunity evidence");
+}
+
+static void CappedGapCloserOpportunityDetector()
+{
+    var frames = new[]
+    {
+        Frame(0, targetSurfaceDistance: 14f, engagementRange: 3f, gapCloser: GapCloser(charges: 2), nextGcd: NextGcd(gcdRemaining: 0.6f)),
+        Frame(0.6f, targetSurfaceDistance: 14f, engagementRange: 3f, gapCloser: GapCloser(charges: 2), nextGcd: NextGcd(gcdRemaining: 0.2f)),
+        Frame(1.2f, targetSurfaceDistance: 13f, engagementRange: 3f, gapCloser: GapCloser(charges: 2), nextGcd: NextGcd(gcdRemaining: 0.1f)),
+    };
+
+    var incident = IncidentDetector.Detect(Log(frames)).Single(i => i.Category == "gap-close-capped-opportunity");
+    AssertContains("stayed at 2 charges", incident.Evidence, "capped gap opportunity evidence");
+}
+
 static void TrashLatePackEngagementDetector()
 {
     var frames = new[]
@@ -3691,6 +3823,9 @@ static XcaiFrame Frame(
     string redMageNextActionSource = "none",
     string redMageNextActionName = "<none>",
     uint redMageNextActionId = 0,
+    GapCloserSnapshot? gapCloser = null,
+    NextGcdSnapshot? nextGcd = null,
+    MobilitySnapshot? mobility = null,
     string aoeReason = "<none>",
     TrashPullSnapshot? trashPull = null,
     string pathStatus = "Ready",
@@ -3792,7 +3927,9 @@ static XcaiFrame Frame(
             bmrForbiddenZones,
             "<none>",
             safetyRaster ?? SafetyRasterSnapshot.Unavailable("test fixture")),
-        MobilitySnapshot.Empty,
+        gapCloser ?? GapCloserSnapshot.Empty,
+        nextGcd ?? NextGcdSnapshot.Empty,
+        mobility ?? MobilitySnapshot.Empty,
         new MotionSnapshot(playerStepDistance, playerSpeed, null, targetSurfaceDistance),
         positionalIntentSource,
         trueNorthDecisionSource,
@@ -3941,6 +4078,42 @@ static XcaiFrame RouteMemoryFrame(float t, Vec3 localDestination, string source 
         packTargetCount: 4,
         trashPull: TrashPull(),
         routeMemory: RouteMemory(localDestination: localDestination, source: source));
+}
+
+static GapCloserSnapshot GapCloser(uint charges, uint actionId = ActionUse.SamuraiGyotenActionId, string actionName = "Gyoten")
+{
+    return new GapCloserSnapshot(true, actionId, actionName, charges);
+}
+
+static NextGcdSnapshot NextGcd(float gcdRemaining, string actionName = "Hakaze")
+{
+    return new NextGcdSnapshot(0, 0, actionName, "test", 4096, gcdRemaining, 2.5f - gcdRemaining, 2.5f, 0.35f);
+}
+
+static MobilitySnapshot MobilityUsed(
+    float moveDistance,
+    float safetyGain = 0,
+    float uptimeGain = 0,
+    float pathGain = 0,
+    uint actionId = ActionUse.SamuraiGyotenActionId,
+    string actionName = "Gyoten")
+{
+    return new MobilitySnapshot(
+        "Used",
+        "Uptime",
+        "uptime",
+        actionName,
+        actionId,
+        new Vec3(8, 0, 0),
+        moveDistance,
+        safetyGain,
+        uptimeGain,
+        pathGain,
+        "local",
+        "safe landing",
+        "uptime gain",
+        "path gain",
+        "used");
 }
 
 static RouteMemorySnapshot RouteMemory(

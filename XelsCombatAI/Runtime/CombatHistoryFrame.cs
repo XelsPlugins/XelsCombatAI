@@ -44,6 +44,8 @@ internal sealed record CombatHistoryFrame(
     string GapSafety,
     string EscapeSafety,
     Vector3? EscapeLanding,
+    GapCloserResourceSnapshot GapCloser,
+    RsrGcdActionTimingSnapshot? NextGcd,
     MobilityDecisionDiagnostics MobilityDecision,
     // Healer coverage zone
     string HealerCoverageReason,
@@ -104,6 +106,15 @@ internal sealed record CombatHistoryFrame(
     RedMageMeleeComboStatus RedMageMeleeCombo,
     TrashPullDiagnostics TrashPull,
     IReadOnlyList<CombatHistoryActorSnapshot> Actors);
+
+internal sealed record GapCloserResourceSnapshot(
+    bool Enabled,
+    uint PrimaryActionId,
+    string PrimaryActionName,
+    uint PrimaryActionCharges)
+{
+    public static GapCloserResourceSnapshot Empty { get; } = new(false, 0, "<none>", 0);
+}
 
 internal sealed record CombatHistoryActorSnapshot(
     string Relation,

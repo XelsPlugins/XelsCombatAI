@@ -359,8 +359,82 @@ internal sealed class CombatRuntime(
             gapCloserController.LastGapCloserSafety,
             escapeGapCloserController.LastEscapeGapCloserSafety,
             escapeGapCloserController.LastSafeEscapeDestination,
+            player != null ? this.BuildGapCloserResourceSnapshot(player.ClassJob.RowId) : GapCloserResourceSnapshot.Empty,
+            this.GetNextGcdTimingSnapshot(),
             presetController.InitializedPreset,
             arenaEdgePositioningController.LastReason);
+    }
+
+    private RsrGcdActionTimingSnapshot? GetNextGcdTimingSnapshot()
+    {
+        return rotationSolverActions.TryGetUpcomingGcdTiming(out var timing, out _)
+            ? timing
+            : null;
+    }
+
+    private unsafe GapCloserResourceSnapshot BuildGapCloserResourceSnapshot(uint classJobId)
+    {
+        var actionId = this.ResolvePrimaryGapCloserActionId(classJobId);
+        if (!config.UseGapCloser || actionId == 0)
+        {
+            return GapCloserResourceSnapshot.Empty;
+        }
+
+        return new GapCloserResourceSnapshot(
+            true,
+            actionId,
+            ResolveGapCloserActionName(actionId),
+            ActionUse.GetCurrentCharges(actionId));
+    }
+
+    private uint ResolvePrimaryGapCloserActionId(uint classJobId)
+    {
+        return classJobId switch
+        {
+            1 or 19 when config.GapCloserPLD => ActionUse.PaladinInterveneActionId,
+            3 or 21 when config.GapCloserWAR => ActionUse.WarriorOnslaughtActionId,
+            32 when config.GapCloserDRK => ActionUse.DarkKnightShadowstrideActionId,
+            37 when config.GapCloserGNB => ActionUse.GunbreakerTrajectoryActionId,
+            2 or 20 when config.GapCloserMNK => ActionUse.MonkThunderclapActionId,
+            4 or 22 when config.GapCloserDRG => ActionUse.DragoonWingedGlideActionId,
+            5 or 23 when config.GapCloserBRD => ActionUse.BardRepellingShotActionId,
+            29 or 30 when config.GapCloserNIN => ActionUse.NinjaShukuchiActionId,
+            34 when config.GapCloserSAM => ActionUse.SamuraiGyotenActionId,
+            35 when config.GapCloserRDM => ActionUse.RedMageCorpsACorpsActionId,
+            38 when config.GapCloserDNC => ActionUse.DancerEnAvantActionId,
+            39 when config.GapCloserRPR => ActionUse.ReaperHellsIngressActionId,
+            40 when config.GapCloserSGE => ActionUse.SageIcarusActionId,
+            41 when config.GapCloserVPR => ActionUse.ViperSlitherActionId,
+            42 when config.GapCloserPCT => ActionUse.PictomancerSmudgeActionId,
+            24 when config.GapCloserWHM => ActionUse.WhiteMageAetherialShiftActionId,
+            25 when config.GapCloserBLM => ActionUse.BlackMageAetherialManipulationActionId,
+            _ => 0
+        };
+    }
+
+    private static string ResolveGapCloserActionName(uint actionId)
+    {
+        return actionId switch
+        {
+            ActionUse.PaladinInterveneActionId => "Intervene",
+            ActionUse.WarriorOnslaughtActionId => "Onslaught",
+            ActionUse.DarkKnightShadowstrideActionId => "Shadowstride",
+            ActionUse.GunbreakerTrajectoryActionId => "Trajectory",
+            ActionUse.MonkThunderclapActionId => "Thunderclap",
+            ActionUse.DragoonWingedGlideActionId => "Winged Glide",
+            ActionUse.BardRepellingShotActionId => "Repelling Shot",
+            ActionUse.NinjaShukuchiActionId => "Shukuchi",
+            ActionUse.SamuraiGyotenActionId => "Gyoten",
+            ActionUse.RedMageCorpsACorpsActionId => "Corps-a-corps",
+            ActionUse.DancerEnAvantActionId => "En Avant",
+            ActionUse.ReaperHellsIngressActionId => "Hell's Ingress",
+            ActionUse.SageIcarusActionId => "Icarus",
+            ActionUse.ViperSlitherActionId => "Slither",
+            ActionUse.PictomancerSmudgeActionId => "Smudge",
+            ActionUse.WhiteMageAetherialShiftActionId => "Aetherial Shift",
+            ActionUse.BlackMageAetherialManipulationActionId => "Aetherial Manipulation",
+            _ => "<none>"
+        };
     }
 
     public void DisposeRuntime()

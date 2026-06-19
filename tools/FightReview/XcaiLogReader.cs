@@ -174,6 +174,8 @@ internal static class XcaiLogReader
             ParseTrashPull(frame),
             planner,
             bossMod,
+            ParseGapCloser(frame),
+            ParseNextGcd(frame),
             ParseMobility(frame),
             ParseMotion(motion),
             ReadString(frame, "PositionalIntentSource", "none"),
@@ -355,6 +357,39 @@ internal static class XcaiLogReader
             ReadNullableInt(hints, "ForbiddenZones"),
             ReadString(hints, "ImminentSpecialMode", "<none>"),
             ParseSafetyRaster(element));
+    }
+
+    private static GapCloserSnapshot ParseGapCloser(JsonElement frame)
+    {
+        if (!frame.TryGetProperty("GapCloser", out var gapCloser) || gapCloser.ValueKind != JsonValueKind.Object)
+        {
+            return GapCloserSnapshot.Empty;
+        }
+
+        return new GapCloserSnapshot(
+            ReadBool(gapCloser, "Enabled"),
+            ReadUInt(gapCloser, "PrimaryActionId"),
+            ReadString(gapCloser, "PrimaryActionName", "<none>"),
+            ReadUInt(gapCloser, "PrimaryActionCharges"));
+    }
+
+    private static NextGcdSnapshot ParseNextGcd(JsonElement frame)
+    {
+        if (!frame.TryGetProperty("NextGcd", out var nextGcd) || nextGcd.ValueKind != JsonValueKind.Object)
+        {
+            return NextGcdSnapshot.Empty;
+        }
+
+        return new NextGcdSnapshot(
+            ReadUInt(nextGcd, "ActionId"),
+            ReadUInt(nextGcd, "AdjustedActionId"),
+            ReadString(nextGcd, "ActionName", "<none>"),
+            ReadString(nextGcd, "Source", "none"),
+            ReadULong(nextGcd, "TargetObjectId"),
+            ReadFloat(nextGcd, "GcdRemaining"),
+            ReadFloat(nextGcd, "GcdElapsed"),
+            ReadFloat(nextGcd, "GcdTotal"),
+            ReadFloat(nextGcd, "GcdActionAhead"));
     }
 
     private static MobilitySnapshot ParseMobility(JsonElement frame)

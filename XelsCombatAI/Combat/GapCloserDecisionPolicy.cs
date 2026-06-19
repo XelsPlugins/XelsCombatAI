@@ -517,6 +517,34 @@ internal static class GapCloserDecisionPolicy
         return true;
     }
 
+    public static bool ShouldConserveTrashPullGapCloser(
+        float triggerDistance,
+        float useThreshold,
+        uint currentCharges,
+        bool currentPositionUnsafe,
+        bool walkingWouldMissUsefulGcd,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (triggerDistance >= useThreshold)
+        {
+            return false;
+        }
+
+        if (currentPositionUnsafe)
+        {
+            return false;
+        }
+
+        if (currentCharges >= 2 && walkingWouldMissUsefulGcd)
+        {
+            return false;
+        }
+
+        reason = $"trash pull conserving gap closer: {triggerDistance:0.#}y / {useThreshold:0.#}y";
+        return true;
+    }
+
     public static bool ShouldUseHostileRelayDash(
         Vector3 playerPosition,
         float playerRadius,

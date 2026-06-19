@@ -341,6 +341,7 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
+        var candidates = new List<DashStyleCandidate<IBattleChara>>();
         foreach (var ally in this.EnumerateFriendlyEscapeTargets(player, maxRange))
         {
             if (!mobilityEvaluator.TryValidateDashDestination(
@@ -361,16 +362,29 @@ internal sealed class EscapeGapCloserController(
                 continue;
             }
 
-            this.lastSafeEscapeDestination = ally.Position;
-            var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, ally.GameObjectId);
-            mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
+            candidates.Add(dashStyleController.ScoreCandidate(
+                ally,
+                player,
+                ally.Position,
+                services.TargetManager.Target as IBattleChara,
+                safeMovementDestination,
+                decision,
+                "ally anchor"));
+        }
+
+        if (dashStyleController.TrySelectBest(candidates, out var selectedAnchor))
+        {
+            this.lastSafeEscapeDestination = selectedAnchor.Destination;
+            var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, selectedAnchor.Source.GameObjectId);
+            mobilityEvaluator.RecordActionResult(selectedAnchor.Decision, used, used ? "action used" : "action failed");
             if (used)
             {
-                this.lastEscapeGapCloserSafety = $"used {actionName} on ally ({decision.IntentLabel})";
+                this.lastEscapeGapCloserSafety = $"used {actionName} on ally ({selectedAnchor.Decision.IntentLabel}, {selectedAnchor.Reason})";
                 return true;
             }
 
-            this.lastEscapeGapCloserSafety = $"failed to use {actionName} on ally ({decision.IntentLabel})";
+            this.lastEscapeGapCloserSafety = $"failed to use {actionName} on ally ({selectedAnchor.Decision.IntentLabel}, {selectedAnchor.Reason})";
+            return false;
         }
 
         if (string.IsNullOrEmpty(this.lastEscapeGapCloserSafety) || this.lastEscapeGapCloserSafety == "current position safe")

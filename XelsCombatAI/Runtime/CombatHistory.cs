@@ -112,6 +112,8 @@ internal sealed class CombatHistory
             GapSafety: status.LastGapCloserSafety,
             EscapeSafety: status.LastEscapeGapCloserSafety,
             EscapeLanding: status.LastEscapeLanding,
+            GapCloser: status.GapCloser,
+            NextGcd: status.NextGcd,
             MobilityDecision: FreshMobilityDecision(now, status.MobilityDecision),
             HealerCoverageReason: status.HealerCoveragePositioning.LastReason,
             HealerCoverageInjected: status.HealerCoveragePositioning.Injected,
@@ -250,6 +252,8 @@ internal sealed class CombatHistory
             AppendIfChanged(sb, "Gap", frame.GapSafety, prev?.GapSafety);
             AppendIfChanged(sb, "Escape", frame.EscapeSafety, prev?.EscapeSafety);
             AppendIfChanged(sb, "EscapeLanding", FormatVector(frame.EscapeLanding), prev == null ? null : FormatVector(prev.EscapeLanding));
+            AppendIfChanged(sb, "GapCharges", FormatGapCloser(frame.GapCloser), prev == null ? null : FormatGapCloser(prev.GapCloser));
+            AppendIfChanged(sb, "NextGcd", FormatNextGcd(frame.NextGcd), prev == null ? null : FormatNextGcd(prev.NextGcd));
             AppendIfChanged(sb, "Mobility", FormatMobility(frame.MobilityDecision), prev == null ? null : FormatMobility(prev.MobilityDecision));
             AppendIfChanged(sb, "HealerCoverage", frame.HealerCoverageReason, prev?.HealerCoverageReason);
             AppendIfChanged(sb, "HCInjected", frame.HealerCoverageInjected, prev?.HealerCoverageInjected);
@@ -446,6 +450,20 @@ internal sealed class CombatHistory
     private static string FormatMobility(MobilityDecisionDiagnostics mobility)
     {
         return $"{mobility.State}/{mobility.IntentLabel}/{mobility.ActionName}/{mobility.SafetySource}/{mobility.RiskReason}";
+    }
+
+    private static string FormatGapCloser(GapCloserResourceSnapshot gapCloser)
+    {
+        return gapCloser.Enabled
+            ? $"{gapCloser.PrimaryActionName}/{gapCloser.PrimaryActionId}/charges={gapCloser.PrimaryActionCharges}"
+            : "<none>";
+    }
+
+    private static string FormatNextGcd(RsrGcdActionTimingSnapshot? nextGcd)
+    {
+        return nextGcd == null
+            ? "<none>"
+            : $"{nextGcd.ActionName}/{nextGcd.AdjustedActionId}/remaining={nextGcd.GcdRemaining:0.00}/elapsed={nextGcd.GcdElapsed:0.00}/total={nextGcd.GcdTotal:0.00}/ahead={nextGcd.GcdActionAhead:0.00}";
     }
 
     private static string FormatFacing(FacingStatus facing)

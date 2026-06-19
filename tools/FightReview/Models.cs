@@ -69,6 +69,8 @@ internal sealed record XcaiFrame(
     TrashPullSnapshot TrashPull,
     PlannerSnapshot Planner,
     BossModSnapshot BossMod,
+    GapCloserSnapshot GapCloser,
+    NextGcdSnapshot NextGcd,
     MobilitySnapshot Mobility,
     MotionSnapshot Motion,
     string PositionalIntentSource,
@@ -302,6 +304,29 @@ internal sealed record BossModSnapshot(
     int? ForbiddenZones,
     string ImminentSpecialMode,
     SafetyRasterSnapshot SafetyRaster);
+
+internal sealed record GapCloserSnapshot(
+    bool Enabled,
+    uint PrimaryActionId,
+    string PrimaryActionName,
+    uint PrimaryActionCharges)
+{
+    public static GapCloserSnapshot Empty { get; } = new(false, 0, "<none>", 0);
+}
+
+internal sealed record NextGcdSnapshot(
+    uint ActionId,
+    uint AdjustedActionId,
+    string ActionName,
+    string Source,
+    ulong TargetObjectId,
+    float GcdRemaining,
+    float GcdElapsed,
+    float GcdTotal,
+    float GcdActionAhead)
+{
+    public static NextGcdSnapshot Empty { get; } = new(0, 0, "<none>", "none", 0, -1f, -1f, -1f, -1f);
+}
 
 internal sealed record MobilitySnapshot(
     string State,

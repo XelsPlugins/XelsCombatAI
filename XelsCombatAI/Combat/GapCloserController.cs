@@ -251,7 +251,15 @@ internal sealed class GapCloserController(
             return false;
         }
 
-        if (this.ShouldConserveTrashPullGapCloser(player, target, distanceToHitbox, classJobId, out var trashConserveReason))
+        if (this.ShouldConserveTrashPullGapCloser(
+                player,
+                target,
+                distanceToHitbox,
+                classJobId,
+                primaryActionId,
+                currentPositionUnsafe,
+                reengageDashNeeded,
+                out var trashConserveReason))
         {
             this.lastGapCloserSafety = trashConserveReason;
             this.lastSafeLandingPosition = null;
@@ -1835,7 +1843,15 @@ internal sealed class GapCloserController(
                !dashStyleController.KnockbackRecoveryActive;
     }
 
-    private bool ShouldConserveTrashPullGapCloser(IBattleChara player, IGameObject target, float distanceToHitbox, uint classJobId, out string reason)
+    private bool ShouldConserveTrashPullGapCloser(
+        IBattleChara player,
+        IGameObject target,
+        float distanceToHitbox,
+        uint classJobId,
+        uint? primaryActionId,
+        bool currentPositionUnsafe,
+        bool walkingWouldMissUsefulGcd,
+        out string reason)
     {
         reason = string.Empty;
 
@@ -1854,13 +1870,14 @@ internal sealed class GapCloserController(
         var anchor = GapCloserDecisionPolicy.ResolveTrashPullGapCloserAnchor(trash, target);
         var anchorDistance = Geometry.Distance2D(player.Position, anchor);
         var triggerDistance = MathF.Max(distanceToHitbox, anchorDistance);
-        if (triggerDistance >= useThreshold)
-        {
-            return false;
-        }
-
-        reason = $"trash pull conserving gap closer: {triggerDistance:0.#}y / {useThreshold:0.#}y";
-        return true;
+        var currentCharges = primaryActionId.HasValue ? ActionUse.GetCurrentCharges(primaryActionId.Value) : 0u;
+        return GapCloserDecisionPolicy.ShouldConserveTrashPullGapCloser(
+            triggerDistance,
+            useThreshold,
+            currentCharges,
+            currentPositionUnsafe,
+            walkingWouldMissUsefulGcd,
+            out reason);
     }
 
     private bool ShouldAllowTrashPullGapCloserTarget(IBattleChara player, IGameObject target, out string reason)
