@@ -75,26 +75,18 @@ internal sealed class GoalPlan(
         var best = playerAllowed ? this.ScoreCandidate(playerPosition) : new CandidateScore(playerPosition, 0);
         var bestPosition = playerPosition;
         var bestPreference = playerAllowed ? this.CandidatePreference(playerPosition, playerPosition) : float.NegativeInfinity;
-        foreach (var candidate in this.GenerateCandidates(playerPosition))
+        this.ConsiderCandidate(playerPosition, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
+        this.ConsiderCandidate(this.centroid, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
+        foreach (var target in targets)
         {
-            if (candidateAllowed != null && !candidateAllowed(candidate))
-            {
-                continue;
-            }
-
-            var score = this.ScoreCandidate(candidate);
-            var preference = this.CandidatePreference(candidate, playerPosition);
-            if (score.Hits > best.Hits ||
-                (score.Hits == best.Hits &&
-                 (preference > bestPreference + 0.05f ||
-                  MathF.Abs(preference - bestPreference) <= 0.05f &&
-                  Vector2.DistanceSquared(candidate, playerPosition) < Vector2.DistanceSquared(bestPosition, playerPosition))))
-            {
-                best = score;
-                bestPosition = candidate;
-                bestPreference = preference;
-            }
+            this.ConsiderCandidate(target.Position, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
         }
+
+        var distance0 = Math.Min(3f, range);
+        var distance1 = Math.Min(6f, range);
+        var distance2 = Math.Min(radius, range);
+        this.ConsiderAnchorCandidates(primaryTarget.Position, distance0, distance1, distance2, range, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
+        this.ConsiderAnchorCandidates(this.centroid, distance0, distance1, distance2, range, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
 
         if (retainedPosition.HasValue &&
             (candidateAllowed == null || candidateAllowed(retainedPosition.Value)))
@@ -152,61 +144,68 @@ internal sealed class GoalPlan(
         return new(position, this.ScoreHits(position));
     }
 
-    private IEnumerable<Vector2> GenerateCandidates(Vector2 playerPosition)
+    private void ConsiderAnchorCandidates(
+        Vector2 anchor,
+        float distance0,
+        float distance1,
+        float distance2,
+        float distance3,
+        Vector2 playerPosition,
+        Func<Vector2, bool>? candidateAllowed,
+        ref CandidateScore best,
+        ref Vector2 bestPosition,
+        ref float bestPreference)
     {
-        yield return playerPosition;
-        yield return this.centroid;
-        foreach (var target in targets)
+        this.ConsiderCandidatesAtDistance(anchor, distance0, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
+        this.ConsiderCandidatesAtDistance(anchor, distance1, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
+        this.ConsiderCandidatesAtDistance(anchor, distance2, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
+        this.ConsiderCandidatesAtDistance(anchor, distance3, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
+    }
+
+    private void ConsiderCandidatesAtDistance(
+        Vector2 anchor,
+        float distance,
+        Vector2 playerPosition,
+        Func<Vector2, bool>? candidateAllowed,
+        ref CandidateScore best,
+        ref Vector2 bestPosition,
+        ref float bestPreference)
+    {
+        if (distance <= 0.1f)
         {
-            yield return target.Position;
+            return;
         }
 
-        var distance0 = Math.Min(3f, range);
-        var distance1 = Math.Min(6f, range);
-        var distance2 = Math.Min(radius, range);
-        foreach (var candidate in GenerateCandidatesForAnchor(primaryTarget.Position, distance0, distance1, distance2, range))
+        foreach (var direction in Directions)
         {
-            yield return candidate;
-        }
-
-        foreach (var candidate in GenerateCandidatesForAnchor(this.centroid, distance0, distance1, distance2, range))
-        {
-            yield return candidate;
+            this.ConsiderCandidate(anchor - direction * distance, playerPosition, candidateAllowed, ref best, ref bestPosition, ref bestPreference);
         }
     }
 
-    private static IEnumerable<Vector2> GenerateCandidatesForAnchor(Vector2 anchor, float distance0, float distance1, float distance2, float distance3)
+    private void ConsiderCandidate(
+        Vector2 candidate,
+        Vector2 playerPosition,
+        Func<Vector2, bool>? candidateAllowed,
+        ref CandidateScore best,
+        ref Vector2 bestPosition,
+        ref float bestPreference)
     {
-        if (distance0 > 0.1f)
+        if (candidateAllowed != null && !candidateAllowed(candidate))
         {
-            foreach (var direction in Directions)
-            {
-                yield return anchor - direction * distance0;
-            }
+            return;
         }
 
-        if (distance1 > 0.1f)
+        var score = this.ScoreCandidate(candidate);
+        var preference = this.CandidatePreference(candidate, playerPosition);
+        if (score.Hits > best.Hits ||
+            (score.Hits == best.Hits &&
+             (preference > bestPreference + 0.05f ||
+              MathF.Abs(preference - bestPreference) <= 0.05f &&
+              Vector2.DistanceSquared(candidate, playerPosition) < Vector2.DistanceSquared(bestPosition, playerPosition))))
         {
-            foreach (var direction in Directions)
-            {
-                yield return anchor - direction * distance1;
-            }
-        }
-
-        if (distance2 > 0.1f)
-        {
-            foreach (var direction in Directions)
-            {
-                yield return anchor - direction * distance2;
-            }
-        }
-
-        if (distance3 > 0.1f)
-        {
-            foreach (var direction in Directions)
-            {
-                yield return anchor - direction * distance3;
-            }
+            best = score;
+            bestPosition = candidate;
+            bestPreference = preference;
         }
     }
 

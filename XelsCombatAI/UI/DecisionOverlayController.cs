@@ -573,12 +573,100 @@ internal sealed class DecisionOverlayController(
             : "AoE";
     }
 
+    private static string AoeOverlayDetail(AoePackOverlaySnapshot snapshot)
+    {
+        if (string.Equals(snapshot.ActionName, "Pack AoE prep", StringComparison.Ordinal) &&
+            snapshot.Radius <= Configuration.InternalMeleeUptimeRange + 0.05f)
+        {
+            return "close-range pack AoE prep";
+        }
+
+        return snapshot.ActionName;
+    }
+
     private static (int Covered, int Total) HealerCoverageDisplayCounts(IBattleChara player, HealerCoverageOverlaySnapshot snapshot)
     {
         var includesPlayer = snapshot.Members.Any(member => Geometry.Distance2D(member, player.Position) <= 0.5f);
         return includesPlayer
             ? (snapshot.CoveredMembers, snapshot.TotalMembers)
             : (snapshot.CoveredMembers + 1, snapshot.TotalMembers + 1);
+    }
+
+    private DecisionOverlayState ResolveHealerCoverageState(HealerCoverageOverlaySnapshot snapshot, HealerAoePositioningStatus status)
+    {
+        if (!config.Enabled || !config.ManageMovement || !config.ManageHealerCoverageZone)
+        {
+            return DecisionOverlayState.Suppressed;
+        }
+
+        if (snapshot.Injected)
+        {
+            return DecisionOverlayState.Candidate;
+        }
+
+        return IsHealerCoverageBlocked(status.LastReason)
+            ? DecisionOverlayState.Rejected
+            : DecisionOverlayState.Active;
+    }
+
+    private static bool IsHealerCoverageBlocked(string reason)
+    {
+        return reason.Contains("held during slidecast", StringComparison.OrdinalIgnoreCase) ||
+               reason.Contains("too far", StringComparison.OrdinalIgnoreCase) ||
+               reason.Contains("too late", StringComparison.OrdinalIgnoreCase) ||
+               reason.Contains("forced mechanic movement", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string HealerCoverageLabel(DecisionOverlayState state, string reason, string coverageLabel)
+    {
+        if (state == DecisionOverlayState.Active)
+        {
+            return coverageLabel;
+        }
+
+        if (state == DecisionOverlayState.Rejected)
+        {
+            return reason.Contains("held during slidecast", StringComparison.OrdinalIgnoreCase)
+                ? "Healer coverage held"
+                : "Healer coverage blocked";
+        }
+
+        if (reason.Contains("tankbuster", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Move for tankbuster coverage";
+        }
+
+        if (reason.Contains("party AoE heal", StringComparison.OrdinalIgnoreCase) ||
+            reason.Contains("critical party coverage", StringComparison.OrdinalIgnoreCase) ||
+            reason.Contains("urgent healing coverage", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Move for healing coverage";
+        }
+
+        return "Move for healer coverage";
+    }
+
+    private static string HealerCoverageDetail(
+        string reason,
+        HealerCoverageOverlaySnapshot snapshot,
+        int coveredMembers,
+        int totalMembers)
+    {
+        if (!string.IsNullOrWhiteSpace(reason) &&
+            !reason.Equals("not evaluated", StringComparison.OrdinalIgnoreCase) &&
+            !reason.Equals("reset", StringComparison.OrdinalIgnoreCase))
+        {
+            return reason;
+        }
+
+        if (snapshot.Injected)
+        {
+            return $"{snapshot.DistanceToCenter:0.0}y to better coverage";
+        }
+
+        return coveredMembers >= totalMembers
+            ? "party covered"
+            : $"{coveredMembers}/{totalMembers} covered";
     }
 
     private IEnumerable<DecisionOverlaySnapshot> BuildSnapshots(IBattleChara player)
@@ -644,23 +732,22 @@ internal sealed class DecisionOverlayController(
         var healerCoverage = healerAoePositioningController.Overlay;
         if (healerCoverage != null)
         {
+            var healerCoverageStatus = healerAoePositioningController.Status;
             var (displayCoveredMembers, displayTotalMembers) = HealerCoverageDisplayCounts(player, healerCoverage);
-            var coverageState = !config.Enabled || !config.ManageMovement || !config.ManageHealerCoverageZone
-                ? DecisionOverlayState.Suppressed
-                : healerCoverage.Injected
-                ? DecisionOverlayState.Candidate
-                : DecisionOverlayState.Active;
+            var coverageState = this.ResolveHealerCoverageState(healerCoverage, healerCoverageStatus);
             var coverageLabel = $"Healer coverage: {displayCoveredMembers}/{displayTotalMembers}";
             var coverageReason = coverageState == DecisionOverlayState.Suppressed
                 ? this.DisabledReason((config.Enabled, "Enabled"), (config.ManageMovement, "Automate movement"), (config.ManageHealerCoverageZone, "Healer coverage zone"))
-                : null;
+                : HealerCoverageDetail(
+                    healerCoverageStatus.LastReason,
+                    healerCoverage,
+                    displayCoveredMembers,
+                    displayTotalMembers);
             yield return new(
                 DecisionOverlaySource.HealerCoverage,
                 coverageState,
-                coverageState == DecisionOverlayState.Active ? coverageLabel : "Healer coverage",
-                coverageReason ?? (healerCoverage.Injected
-                    ? $"{healerCoverage.DistanceToCenter:0.0}y to better coverage"
-                    : displayCoveredMembers >= displayTotalMembers ? "party covered" : $"{displayCoveredMembers}/{displayTotalMembers} covered"),
+                HealerCoverageLabel(coverageState, healerCoverageStatus.LastReason, coverageLabel),
+                coverageReason,
                 20,
                 [new(DecisionOverlayShapeKind.Circle, coverageState, healerCoverage.Center, healerCoverage.Radius, 0f, 0f, 0f, "coverage zone")],
                 healerCoverage.Injected
@@ -744,7 +831,7 @@ internal sealed class DecisionOverlayController(
                     DecisionOverlaySource.AoE,
                     DecisionOverlayState.Candidate,
                     label,
-                    aoe.ActionName,
+                    AoeOverlayDetail(aoe),
                     40,
                     [new(shapeKind, DecisionOverlayState.Candidate, aoe.Candidate, aoe.Radius, aoe.HalfWidth, aoe.Radius, rotation, "AoE from here")],
                     [new(DecisionOverlayState.Candidate, player.Position, aoe.Candidate, "")],
@@ -2167,7 +2254,9 @@ internal sealed class DecisionOverlayController(
             DecisionOverlaySource.EscapeLanding => ("Dash landing", "Safe landing preview"),
             DecisionOverlaySource.HealerCoverage => snapshot.State == DecisionOverlayState.Active
                 ? ("Healer coverage", ReadableDetail(snapshot.Reason, "Party is covered"))
-                : ("Move for healer coverage", ReadableDetail(snapshot.Reason, "Better party coverage")),
+                : snapshot.State == DecisionOverlayState.Rejected
+                    ? (snapshot.Label, ReadableDetail(snapshot.Reason, "Routine coverage movement is held"))
+                    : (snapshot.Label, ReadableDetail(snapshot.Reason, "Better party coverage")),
             DecisionOverlaySource.PartyHealerRange => snapshot.State == DecisionOverlayState.Active
                 ? ("Healer range", ReadableDetail(snapshot.Reason, "Inside healing range"))
                 : snapshot.State == DecisionOverlayState.Rejected

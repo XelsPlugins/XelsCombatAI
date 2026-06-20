@@ -46,6 +46,7 @@ var tests = new (string Name, Action Body)[]
     ("friendly anchor dash requires meaningful gain", FriendlyAnchorDashRequiresMeaningfulGain),
     ("gap closer downtime policy holds early and permits late reentry", GapCloserDowntimePolicyHoldsEarlyAndPermitsLateReentry),
     ("stable ally anchor policy rejects outliers and spread pressure", StableAllyAnchorPolicyRejectsOutliersAndSpreadPressure),
+    ("stable ally anchor policy rejects pushed knockback anchors", StableAllyAnchorPolicyRejectsPushedKnockbackAnchors),
     ("melee stack recovery anchor allows blocked stack pockets", MeleeStackRecoveryAnchorAllowsBlockedStackPockets),
     ("gap closer landing policy avoids front and boss center alternatives", GapCloserLandingPolicyAvoidsFrontAndBossCenterAlternatives),
     ("gap closer pressure policy suppresses optional capped dashes", GapCloserPressurePolicySuppressesOptionalCappedDashes),
@@ -56,6 +57,7 @@ var tests = new (string Name, Action Body)[]
     ("fixed direction pressure suppresses optional directional dashes", FixedDirectionPressureSuppressesOptionalDirectionalDashes),
     ("directional dash facing can pause BMR movement", DirectionalDashFacingCanPauseBmrMovement),
     ("caster immobility policy holds optional dashes", CasterImmobilityPolicyHoldsOptionalDashes),
+    ("caster advisory movement holds near GCD ready", CasterAdvisoryMovementHoldsNearGcdReady),
     ("gap closer follows RSR auto target", GapCloserFollowsRsrAutoTarget),
     ("ranged gap closers skip boss reengage", RangedGapClosersSkipBossReengage),
     ("phantom gap closers inherit base job reengage rules", PhantomGapClosersInheritBaseJobReengageRules),
@@ -73,6 +75,7 @@ var tests = new (string Name, Action Body)[]
     ("healer coverage pre-positions for comfort", HealerCoveragePrepositionsForComfort),
     ("healer coverage catches up for party-saving AoE heals", HealerCoverageCatchesUpForPartySavingAoeHeals),
     ("healer coverage catches up from critical party isolation", HealerCoverageCatchesUpFromCriticalPartyIsolation),
+    ("healer coverage uses urgent healing awareness", HealerCoverageUsesUrgentHealingAwareness),
     ("healer coverage combines with forbidden zones", HealerCoverageCombinesWithForbiddenZones),
     ("healer coverage respects cast timing", HealerCoverageRespectsCastTiming),
     ("healer boss coverage prefers ranged comfort", HealerBossCoveragePrefersRangedComfort),
@@ -83,7 +86,7 @@ var tests = new (string Name, Action Body)[]
     ("mechanic safety isolates top goal contributions", MechanicSafetyIsolatesTopGoalContributions),
     ("mechanic escape margin follows BMR movement", MechanicEscapeMarginFollowsBmrMovement),
     ("trash AoE short one-hit gain is worth moving", TrashAoeShortOneHitGainIsWorthMoving),
-    ("melee AoE healer fallback uses melee range", MeleeAoeHealerFallbackUsesMeleeRange),
+    ("local healer AoE fallback keeps Art of War close", LocalHealerAoeFallbackKeepsArtOfWarClose),
     ("trash AoE prep skips good-enough one-hit churn", TrashAoePrepSkipsGoodEnoughOneHitChurn),
     ("trash AoE retains equal-hit candidate", TrashAoeRetainsEqualHitCandidate),
     ("trash target retention yields to tank pack", TrashTargetRetentionYieldsToTankPack),
@@ -893,6 +896,8 @@ static void StableAllyAnchorPolicyRejectsOutliersAndSpreadPressure()
             safetyGain: 0f,
             uptimeGain: 8f,
             pathGain: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            anchorAntiKnockbackActive: false,
             out _),
         "stable ally near the party and safe destination should remain a valid anchor");
 
@@ -911,6 +916,8 @@ static void StableAllyAnchorPolicyRejectsOutliersAndSpreadPressure()
             safetyGain: 0f,
             uptimeGain: 8f,
             pathGain: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            anchorAntiKnockbackActive: false,
             out var outlierReason),
         "far party outliers should not become stack anchors");
     AssertContains("sideways", outlierReason, "outlier anchor reason");
@@ -935,6 +942,8 @@ static void StableAllyAnchorPolicyRejectsOutliersAndSpreadPressure()
             safetyGain: 0f,
             uptimeGain: 8f,
             pathGain: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            anchorAntiKnockbackActive: false,
             out var spreadReason),
         "optional ally-target dashes should hold during spread/shared-damage pressure");
     AssertContains("shared damage", spreadReason, "shared damage anchor reason");
@@ -954,8 +963,80 @@ static void StableAllyAnchorPolicyRejectsOutliersAndSpreadPressure()
             safetyGain: 2f,
             uptimeGain: 0f,
             pathGain: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            anchorAntiKnockbackActive: false,
             out _),
         "ally-target safety dashes may still proceed when the current position is unsafe");
+}
+
+static void StableAllyAnchorPolicyRejectsPushedKnockbackAnchors()
+{
+    var player = new Vector3(0f, 0f, -20f);
+    var target = Vector3.Zero;
+    var pushedAnchor = new Vector3(0f, 0f, -10f);
+    var stableMeleeAnchor = new Vector3(0f, 0f, -3f);
+    var knockbackRecovery = BossModMechanicPressure.None.WithKnockbackRecoveryUntil(DateTime.UtcNow.AddSeconds(1));
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseStableFriendlyAnchorDash(
+            player,
+            playerRadius: 0f,
+            pushedAnchor,
+            target,
+            targetRadius: 0f,
+            safeDestination: null,
+            partyPositions: [pushedAnchor, new Vector3(0.5f, 0f, -10.5f), new Vector3(-0.5f, 0f, -9.5f)],
+            knockbackRecovery,
+            currentPositionUnsafe: false,
+            moveDistance: Geometry.Distance2D(player, pushedAnchor),
+            safetyGain: 0f,
+            uptimeGain: 10f,
+            pathGain: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            anchorAntiKnockbackActive: false,
+            out var pushedReason),
+        "knockback recovery should not Thunderclap to a party member who is still far from the boss");
+    AssertContains("knockback recovery", pushedReason, "pushed knockback anchor rejection reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseStableFriendlyAnchorDash(
+            player,
+            playerRadius: 0f,
+            stableMeleeAnchor,
+            target,
+            targetRadius: 0f,
+            safeDestination: null,
+            partyPositions: [stableMeleeAnchor, new Vector3(0.5f, 0f, -3.2f), new Vector3(-0.5f, 0f, -2.8f)],
+            knockbackRecovery,
+            currentPositionUnsafe: false,
+            moveDistance: Geometry.Distance2D(player, stableMeleeAnchor),
+            safetyGain: 0f,
+            uptimeGain: 17f,
+            pathGain: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            anchorAntiKnockbackActive: false,
+            out _),
+        "knockback recovery should still allow an ally anchor that is already a useful melee landing");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseStableFriendlyAnchorDash(
+            player,
+            playerRadius: 0f,
+            pushedAnchor,
+            target,
+            targetRadius: 0f,
+            safeDestination: null,
+            partyPositions: [pushedAnchor, new Vector3(0.5f, 0f, -10.5f), new Vector3(-0.5f, 0f, -9.5f)],
+            knockbackRecovery,
+            currentPositionUnsafe: false,
+            moveDistance: Geometry.Distance2D(player, pushedAnchor),
+            safetyGain: 0f,
+            uptimeGain: 10f,
+            pathGain: 0f,
+            engagementRange: Configuration.InternalMeleeUptimeRange,
+            anchorAntiKnockbackActive: true,
+            out _),
+        "knockback recovery should allow a pushed-line ally anchor when anti-knockback visibly held them in place");
 }
 
 static void MeleeStackRecoveryAnchorAllowsBlockedStackPockets()
@@ -1368,6 +1449,54 @@ static void CasterImmobilityPolicyHoldsOptionalDashes()
             currentPositionUnsafe: true,
             out _),
         "unsafe current position should still proceed to safety validation");
+}
+
+static void CasterAdvisoryMovementHoldsNearGcdReady()
+{
+    AssertTrue(
+        CasterMovementPolicy.ShouldSuppressAdvisoryMovementForGcd(
+            classJobId: 24,
+            gcdRemaining: 0.2f,
+            gcdElapsed: 2.3f,
+            gcdTotal: 2.5f,
+            gcdActionAhead: 0.35f),
+        "WHM advisory movement should hold when the next GCD is about to be ready");
+
+    AssertTrue(
+        CasterMovementPolicy.ShouldSuppressAdvisoryMovementForGcd(
+            classJobId: 42,
+            gcdRemaining: 0.6f,
+            gcdElapsed: 1.9f,
+            gcdTotal: 2.5f,
+            gcdActionAhead: 0.35f),
+        "magic ranged advisory movement should use the caster GCD hold window");
+
+    AssertFalse(
+        CasterMovementPolicy.ShouldSuppressAdvisoryMovementForGcd(
+            classJobId: 24,
+            gcdRemaining: 1.2f,
+            gcdElapsed: 1.3f,
+            gcdTotal: 2.5f,
+            gcdActionAhead: 0.35f),
+        "healer advisory movement should remain available early in the recast");
+
+    AssertFalse(
+        CasterMovementPolicy.ShouldSuppressAdvisoryMovementForGcd(
+            classJobId: 31,
+            gcdRemaining: 0.2f,
+            gcdElapsed: 2.3f,
+            gcdTotal: 2.5f,
+            gcdActionAhead: 0.35f),
+        "physical ranged jobs should not use hardcast advisory movement holds");
+
+    AssertFalse(
+        CasterMovementPolicy.ShouldSuppressAdvisoryMovementForGcd(
+            classJobId: 24,
+            gcdRemaining: -1f,
+            gcdElapsed: -1f,
+            gcdTotal: -1f,
+            gcdActionAhead: -1f),
+        "unavailable timing should fall back to active-cast suppression only");
 }
 
 static void GapCloserFollowsRsrAutoTarget()
@@ -2094,6 +2223,84 @@ static void HealerCoverageCatchesUpFromCriticalPartyIsolation()
         "critical recovery keeps a sanity bound for impossible or stale party positions");
 }
 
+static void HealerCoverageUsesUrgentHealingAwareness()
+{
+    AssertTrue(
+        HealerAoePositioningController.ShouldImproveUrgentHealingCoverage(
+            currentCoveredCount: 3,
+            bestCoveredCount: 7,
+            totalMembers: 8,
+            currentCoversTank: true,
+            bestCoversTank: true,
+            partyAoeHealPending: true,
+            sharedDamageSoon: false,
+            tankbusterHealCoveragePending: false),
+        "incoming party damage should promote a large coverage gain to urgent healing coverage");
+
+    AssertTrue(
+        HealerAoePositioningController.ShouldImproveUrgentHealingCoverage(
+            currentCoveredCount: 5,
+            bestCoveredCount: 5,
+            totalMembers: 8,
+            currentCoversTank: false,
+            bestCoversTank: true,
+            partyAoeHealPending: false,
+            sharedDamageSoon: false,
+            tankbusterHealCoveragePending: true),
+        "incoming tankbusters should promote restoring tank healing coverage even without raw party-count gain");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldImproveUrgentHealingCoverage(
+            currentCoveredCount: 6,
+            bestCoveredCount: 7,
+            totalMembers: 8,
+            currentCoversTank: true,
+            bestCoversTank: true,
+            partyAoeHealPending: false,
+            sharedDamageSoon: false,
+            tankbusterHealCoveragePending: false),
+        "routine coverage gains should not be treated as urgent without incoming damage pressure");
+
+    AssertTrue(
+        HealerAoePositioningController.ShouldUseCoverageDashLanding(
+            currentCoveredCount: 3,
+            bestCoveredCount: 7,
+            totalMembers: 8,
+            distanceGain: 8f,
+            landingCoveredCount: 5,
+            urgent: true,
+            tankbusterHealCoveragePending: false,
+            currentCoversTank: false,
+            landingCoversTank: false),
+        "urgent party coverage dash should be allowed when it reaches several more party members");
+
+    AssertTrue(
+        HealerAoePositioningController.ShouldUseCoverageDashLanding(
+            currentCoveredCount: 5,
+            bestCoveredCount: 5,
+            totalMembers: 8,
+            distanceGain: 8f,
+            landingCoveredCount: 5,
+            urgent: true,
+            tankbusterHealCoveragePending: true,
+            currentCoversTank: false,
+            landingCoversTank: true),
+        "urgent tankbuster dash should be allowed when it restores tank healing coverage");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldUseCoverageDashLanding(
+            currentCoveredCount: 3,
+            bestCoveredCount: 7,
+            totalMembers: 8,
+            distanceGain: 8f,
+            landingCoveredCount: 4,
+            urgent: true,
+            tankbusterHealCoveragePending: false,
+            currentCoversTank: false,
+            landingCoversTank: false),
+        "urgent party coverage dash should require a meaningful coverage gain");
+}
+
 static void HealerCoverageCombinesWithForbiddenZones()
 {
     AssertFalse(
@@ -2179,6 +2386,39 @@ static void HealerCoverageRespectsCastTiming()
             bossModSafetyMovementActive: false,
             out _),
         "slidecast window should allow healer coverage movement even late in the GCD");
+
+    AssertTrue(
+        HealerAoePositioningController.ShouldSuppressBossSlideWindowCoverage(
+            bossModuleContext: true,
+            slidecastWindow: true,
+            urgentHealingCoverage: false,
+            partyAoeHealCatchUp: false,
+            criticalCoverageCatchUp: false,
+            partyAoeHealPending: false,
+            tankbusterHealCoveragePending: false),
+        "routine boss healer coverage should not step during every slidecast window");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldSuppressBossSlideWindowCoverage(
+            bossModuleContext: true,
+            slidecastWindow: true,
+            urgentHealingCoverage: true,
+            partyAoeHealCatchUp: false,
+            criticalCoverageCatchUp: false,
+            partyAoeHealPending: true,
+            tankbusterHealCoveragePending: false),
+        "urgent healing coverage should still be allowed during a boss slidecast window");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldSuppressBossSlideWindowCoverage(
+            bossModuleContext: false,
+            slidecastWindow: true,
+            urgentHealingCoverage: false,
+            partyAoeHealCatchUp: false,
+            criticalCoverageCatchUp: false,
+            partyAoeHealPending: false,
+            tankbusterHealCoveragePending: false),
+        "trash and non-boss contexts keep their normal slidecast movement behavior");
 
     AssertTrue(
         HealerAoePositioningController.IsBossModSafetyMovementActive(
@@ -2560,22 +2800,59 @@ static void TrashAoeShortOneHitGainIsWorthMoving()
     AssertContains("skipped", reason, "marginal AoE skip reason");
 }
 
-static void MeleeAoeHealerFallbackUsesMeleeRange()
+static void LocalHealerAoeFallbackKeepsArtOfWarClose()
 {
+    AssertFalse(
+        AoePackPositioningController.ShouldUseMeleeAoeHealerFallback(
+            classJobId: 24,
+            packAoeRange: 8f,
+            inAoeSituation: true,
+            targetCount: 2),
+        "WHM should not be forced into melee for only two pack targets");
+
     AssertTrue(
         AoePackPositioningController.ShouldUseMeleeAoeHealerFallback(
             classJobId: 24,
             packAoeRange: 8f,
-            inAoeSituation: true),
-        "WHM Holy should use local melee AoE fallback when RSR stays on single-target at range");
+            inAoeSituation: true,
+            targetCount: 3),
+        "WHM should run in for Holy on 3+ target packs when healing pressure is not active");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldUseMeleeAoeHealerFallback(
+            classJobId: 28,
+            packAoeRange: 5f,
+            inAoeSituation: true,
+            targetCount: 2),
+        "SCH Art of War should use local melee AoE fallback on 2+ target packs");
 
     AssertEqual(
         Configuration.InternalMeleeUptimeRange,
         AoePackPositioningController.ResolveEffectivePackAoeRange(
             classJobId: 40,
             packAoeRange: 5f,
-            inAoeSituation: true),
-        "SGE Dyskrasia fallback should use melee engagement range");
+            inAoeSituation: true,
+            targetCount: 3),
+        "SGE should run in for Dyskrasia on 3+ target packs when healing pressure is not active");
+
+    AssertEqual(
+        Configuration.InternalMeleeUptimeRange,
+        AoePackPositioningController.ResolveEffectivePackAoeRange(
+            classJobId: 28,
+            packAoeRange: 5f,
+            inAoeSituation: true,
+            targetCount: 2),
+        "SCH Art of War fallback should use melee engagement range");
+
+    AssertEqual(
+        5f,
+        AoePackPositioningController.ResolveEffectivePackAoeRange(
+            classJobId: 40,
+            packAoeRange: 5f,
+            inAoeSituation: true,
+            targetCount: 3,
+            urgentHealingPressure: true),
+        "SGE should hold its normal range instead of forcing melee when healing pressure is active");
 
     AssertEqual(
         25f,
@@ -2600,6 +2877,10 @@ static void MeleeAoeHealerFallbackUsesMeleeRange()
             packAoeRange: 8f,
             inAoeSituation: false),
         "single-target contexts should not force WHM into melee");
+
+    AssertTrue(
+        AoePackPositioningController.ShouldSuppressHealerPackAoeFallback(BossModMechanicPressure.None with { BMRTankbusterIn = 2f }),
+        "incoming tankbuster healing pressure should suppress healer pack AoE fallback");
 }
 
 static void TrashAoePrepSkipsGoodEnoughOneHitChurn()

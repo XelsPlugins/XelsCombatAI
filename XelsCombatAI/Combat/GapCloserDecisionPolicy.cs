@@ -19,6 +19,7 @@ internal static class GapCloserDecisionPolicy
     private const float FriendlyAnchorMinimumTargetDirectionDot = 0.55f;
     private const float FriendlyAnchorMaximumSafeDestinationLoss = 2f;
     private const float FriendlyAnchorClusterOutlierTolerance = 8f;
+    private const float FriendlyAnchorKnockbackRecoveryRangeSlack = 0.5f;
     private const float MeleeStackRecoveryClusterRadius = 2.75f;
     private const float MeleeStackRecoveryRangeSlack = 0.5f;
     private const int MeleeStackRecoveryMinimumAllies = 2;
@@ -188,6 +189,8 @@ internal static class GapCloserDecisionPolicy
         float safetyGain,
         float uptimeGain,
         float pathGain,
+        float engagementRange,
+        bool anchorAntiKnockbackActive,
         out string reason)
     {
         if (pressure.SharedDamageSoon && !currentPositionUnsafe && safetyGain <= 0.1f)
@@ -209,6 +212,16 @@ internal static class GapCloserDecisionPolicy
                 out reason))
         {
             return false;
+        }
+
+        if (pressure.KnockbackRecoveryActive && !anchorAntiKnockbackActive)
+        {
+            var anchorTargetDistance = Geometry.DistanceToHitbox(anchorPosition, playerRadius, targetPosition, targetRadius);
+            if (anchorTargetDistance > engagementRange + FriendlyAnchorKnockbackRecoveryRangeSlack)
+            {
+                reason = $"ally anchor held during knockback recovery: {anchorTargetDistance:0.0}y from target";
+                return false;
+            }
         }
 
         if (safeDestination.HasValue)

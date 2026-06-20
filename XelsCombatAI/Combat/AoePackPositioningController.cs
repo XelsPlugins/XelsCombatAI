@@ -340,10 +340,14 @@ internal sealed class AoePackPositioningController(
             this.bmrMoveImminent,
             bossModuleContext);
         var player = services.ObjectTable.LocalPlayer;
+        var pressure = mechanicPressure();
+        var holdOptionalPackMovement = ShouldHoldOptionalPackMovement(pressure);
         var effectivePackAoeRange = ResolveEffectivePackAoeRange(
             player?.ClassJob.RowId ?? 0,
             jobRangeProvider.PackAoeRange,
-            inAoeSituation);
+            inAoeSituation,
+            targets.Count,
+            ShouldSuppressHealerPackAoeFallback(pressure));
         var meleeAoeHealerFallbackActive = effectivePackAoeRange < jobRangeProvider.PackAoeRange;
         var trashDiagnostics = this.UpdateTrashPullState(targets, allPackTargets, inAoeSituation, bossModuleContext, shouldYieldToMechanicSafety, effectivePackAoeRange);
         if (config.KeepTrashTargetSelected)
@@ -419,8 +423,6 @@ internal sealed class AoePackPositioningController(
             return;
         }
 
-        var pressure = mechanicPressure();
-        var holdOptionalPackMovement = ShouldHoldOptionalPackMovement(pressure);
         if (!config.ManageAoePackPositioning)
         {
             if (!holdOptionalPackMovement &&
@@ -1290,7 +1292,9 @@ internal sealed class AoePackPositioningController(
         var meleeAoeHealerFallbackActive = ShouldUseMeleeAoeHealerFallback(
             player?.ClassJob.RowId ?? 0,
             jobRangeProvider.PackAoeRange,
-            inAoeSituation);
+            inAoeSituation,
+            targets.Count,
+            ShouldSuppressHealerPackAoeFallback(mechanicPressure()));
         aoeRange = this.ResolvePackEngagementRange(meleeAoeHealerFallbackActive, aoeRange);
         if (!this.TryInjectPackCenterMovement(hints, pathfindBounds, targets, "holding near pack", aoeRange, inAoeSituation, contributions))
         {
@@ -1523,7 +1527,12 @@ internal sealed class AoePackPositioningController(
         }
 
         var inAoeSituation = this.lastPriorityTargetCount >= 2 && !this.bossLikeCombatActive;
-        var effectiveRange = ResolveEffectivePackAoeRange(player.ClassJob.RowId, jobRangeProvider.PackAoeRange, inAoeSituation);
+        var effectiveRange = ResolveEffectivePackAoeRange(
+            player.ClassJob.RowId,
+            jobRangeProvider.PackAoeRange,
+            inAoeSituation,
+            this.lastPriorityTargetCount,
+            ShouldSuppressHealerPackAoeFallback(mechanicPressure()));
         return effectiveRange < jobRangeProvider.PackAoeRange
             ? effectiveRange
             : null;
@@ -2316,14 +2325,14 @@ internal sealed class AoePackPositioningController(
             return this.SelectDominantPackCluster(potentialTargets);
         }
 
-        return priorityTargets.ToList();
+        return CopyTargets(priorityTargets);
     }
 
     private List<TargetSnapshot> SelectDominantPackCluster(IReadOnlyList<TargetSnapshot> targets)
     {
         if (targets.Count <= 2)
         {
-            return targets.ToList();
+            return CopyTargets(targets);
         }
 
         var anchor = this.ResolvePackAnchor();
@@ -2335,20 +2344,14 @@ internal sealed class AoePackPositioningController(
 
         foreach (var seed in targets)
         {
-            var cluster = targets
-                .Where(target =>
-                    target.InstanceId == seed.InstanceId ||
-                    Vector2.Distance(target.Position, seed.Position) - target.Radius - seed.Radius <= DominantPackClusterRadius)
-                .OrderBy(target => Vector2.DistanceSquared(target.Position, seed.Position))
-                .ThenBy(target => target.InstanceId)
-                .ToList();
+            var cluster = SelectTargetsInCluster(targets, seed);
             if (cluster.Count < 2)
             {
                 continue;
             }
 
             var anchorDistance = AverageDistanceSquared(cluster, anchor);
-            var containsCurrent = currentTargetId != 0 && cluster.Any(target => target.InstanceId == currentTargetId);
+            var containsCurrent = currentTargetId != 0 && ContainsTargetId(cluster, currentTargetId);
             if (cluster.Count > bestCount ||
                 cluster.Count == bestCount && anchorDistance < bestAnchorDistance ||
                 cluster.Count == bestCount && MathF.Abs(anchorDistance - bestAnchorDistance) <= 1f && containsCurrent && !bestContainsCurrent)
@@ -2360,7 +2363,7 @@ internal sealed class AoePackPositioningController(
             }
         }
 
-        return best ?? targets.ToList();
+        return best ?? CopyTargets(targets);
     }
 
     private List<TargetSnapshot> ApplyRemotePackCurrentTargetFallback(List<TargetSnapshot> effectiveTargets, IReadOnlyList<TargetSnapshot> allTargets)
@@ -2381,21 +2384,12 @@ internal sealed class AoePackPositioningController(
         }
 
         var currentId = currentTarget.GameObjectId;
-        if (effectiveTargets.Any(target => target.InstanceId == currentId))
+        if (ContainsTargetId(effectiveTargets, currentId))
         {
             return effectiveTargets;
         }
 
-        TargetSnapshot? currentSnapshot = null;
-        foreach (var target in allTargets)
-        {
-            if (target.InstanceId == currentId)
-            {
-                currentSnapshot = target;
-                break;
-            }
-        }
-
+        var currentSnapshot = FindTargetById(allTargets, currentId);
         if (!currentSnapshot.HasValue)
         {
             return effectiveTargets;
@@ -2428,13 +2422,7 @@ internal sealed class AoePackPositioningController(
             return effectiveTargets;
         }
 
-        var localTargets = allTargets
-            .Where(target =>
-                target.InstanceId == currentId ||
-                Vector2.Distance(target.Position, current.Position) - target.Radius - current.Radius <= DominantPackClusterRadius)
-            .OrderBy(target => Vector2.DistanceSquared(target.Position, current.Position))
-            .ThenBy(target => target.InstanceId)
-            .ToList();
+        var localTargets = SelectTargetsInCluster(allTargets, current);
 
         return localTargets.Count > 0 ? localTargets : effectiveTargets;
     }
@@ -2523,6 +2511,78 @@ internal sealed class AoePackPositioningController(
         return total / targets.Count;
     }
 
+    private static List<TargetSnapshot> CopyTargets(IReadOnlyList<TargetSnapshot> targets)
+    {
+        var copy = new List<TargetSnapshot>(targets.Count);
+        foreach (var target in targets)
+        {
+            copy.Add(target);
+        }
+
+        return copy;
+    }
+
+    private static List<TargetSnapshot> SelectTargetsInCluster(IReadOnlyList<TargetSnapshot> targets, TargetSnapshot seed)
+    {
+        var cluster = new List<TargetSnapshot>(targets.Count);
+        foreach (var target in targets)
+        {
+            if (target.InstanceId != seed.InstanceId &&
+                Vector2.Distance(target.Position, seed.Position) - target.Radius - seed.Radius > DominantPackClusterRadius)
+            {
+                continue;
+            }
+
+            InsertByDistanceThenId(cluster, target, seed.Position);
+        }
+
+        return cluster;
+    }
+
+    private static void InsertByDistanceThenId(List<TargetSnapshot> targets, TargetSnapshot target, Vector2 origin)
+    {
+        var distanceSq = Vector2.DistanceSquared(target.Position, origin);
+        for (var i = 0; i < targets.Count; i++)
+        {
+            var other = targets[i];
+            var otherDistanceSq = Vector2.DistanceSquared(other.Position, origin);
+            if (distanceSq < otherDistanceSq ||
+                distanceSq == otherDistanceSq && target.InstanceId < other.InstanceId)
+            {
+                targets.Insert(i, target);
+                return;
+            }
+        }
+
+        targets.Add(target);
+    }
+
+    private static bool ContainsTargetId(IEnumerable<TargetSnapshot> targets, ulong instanceId)
+    {
+        foreach (var target in targets)
+        {
+            if (target.InstanceId == instanceId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static TargetSnapshot? FindTargetById(IEnumerable<TargetSnapshot> targets, ulong instanceId)
+    {
+        foreach (var target in targets)
+        {
+            if (target.InstanceId == instanceId)
+            {
+                return target;
+            }
+        }
+
+        return null;
+    }
+
     private bool ShouldUseLongRangeCasterPullFollow(bool inAoeSituation, Vector2 playerPos, Vector2 centroid, float engagementRange)
     {
         if (!inAoeSituation || jobRangeProvider.PackAoeRange <= LongRangePackAoeThreshold)
@@ -2553,26 +2613,63 @@ internal sealed class AoePackPositioningController(
         return Math.Clamp(engagementRange * 0.45f, 2.5f, 8f);
     }
 
-    internal static bool ShouldUseMeleeAoeHealerFallback(uint classJobId, float packAoeRange, bool inAoeSituation)
+    internal static bool ShouldUseMeleeAoeHealerFallback(
+        uint classJobId,
+        float packAoeRange,
+        bool inAoeSituation,
+        int targetCount = int.MaxValue,
+        bool urgentHealingPressure = false)
     {
         return inAoeSituation &&
-               JobRoles.IsMeleeAoEHealer(classJobId) &&
-               packAoeRange <= ProactivePackAoeMaxBodyRange;
+               !urgentHealingPressure &&
+               JobRoles.IsLocalPackAoeFallbackHealer(classJobId) &&
+               packAoeRange <= ProactivePackAoeMaxBodyRange &&
+               targetCount >= LocalPackAoeFallbackTargetThreshold(classJobId);
     }
 
-    internal static float ResolveEffectivePackAoeRange(uint classJobId, float packAoeRange, bool inAoeSituation)
+    internal static float ResolveEffectivePackAoeRange(
+        uint classJobId,
+        float packAoeRange,
+        bool inAoeSituation,
+        int targetCount = int.MaxValue,
+        bool urgentHealingPressure = false)
     {
-        return ShouldUseMeleeAoeHealerFallback(classJobId, packAoeRange, inAoeSituation)
+        return ShouldUseMeleeAoeHealerFallback(classJobId, packAoeRange, inAoeSituation, targetCount, urgentHealingPressure)
             ? Configuration.InternalMeleeUptimeRange
             : packAoeRange;
     }
 
+    internal static bool ShouldSuppressHealerPackAoeFallback(BossModMechanicPressure pressure)
+    {
+        return pressure.RaidwideOrDamageSoon ||
+               pressure.TankbusterSoon ||
+               pressure.KnockbackSoon ||
+               pressure.DowntimeSoon ||
+               pressure.MovementLockSoon;
+    }
+
+    private static int LocalPackAoeFallbackTargetThreshold(uint classJobId)
+    {
+        return classJobId is 28
+            ? 2
+            : classJobId is 6 or 24 or 40
+                ? 3
+                : int.MaxValue;
+    }
+
     private static List<TargetSnapshot> DistinctTargets(IReadOnlyList<TargetSnapshot> targets)
     {
-        return targets
-            .GroupBy(target => target.InstanceId)
-            .Select(group => group.First())
-            .ToList();
+        var distinct = new List<TargetSnapshot>(targets.Count);
+        var seen = new HashSet<ulong>();
+        foreach (var target in targets)
+        {
+            if (seen.Add(target.InstanceId))
+            {
+                distinct.Add(target);
+            }
+        }
+
+        return distinct;
     }
 
     private List<TargetSnapshot> ReadPriorityTargets(object hints)

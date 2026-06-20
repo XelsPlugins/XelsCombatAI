@@ -27,6 +27,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private readonly IPluginLog log;
     private readonly BossModRuntimeGate bossModGate;
     private readonly BossModReflectionSafety bossModSafety;
+    private readonly RotationSolverActionReflection rotationSolverActions;
     private readonly IReadOnlyList<IBossModGoalZoneContributor> contributors;
     private readonly ManualCorrectionFeedback manualCorrectionFeedback;
     private DateTime nextResolveAttempt = DateTime.MinValue;
@@ -36,7 +37,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
     private string status = "unresolved";
     private ReflectedDraw? draw;
 
-    public BossModGoalZoneHook(Configuration config, IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, BossModRuntimeGate bossModGate, BossModReflectionSafety bossModSafety, IReadOnlyList<IBossModGoalZoneContributor> contributors, ManualCorrectionFeedback manualCorrectionFeedback)
+    public BossModGoalZoneHook(Configuration config, IDalamudPluginInterface pluginInterface, DalamudServices services, IPluginLog log, BossModRuntimeGate bossModGate, BossModReflectionSafety bossModSafety, RotationSolverActionReflection rotationSolverActions, IReadOnlyList<IBossModGoalZoneContributor> contributors, ManualCorrectionFeedback manualCorrectionFeedback)
     {
         this.config = config;
         this.pluginInterface = pluginInterface;
@@ -44,6 +45,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         this.log = log;
         this.bossModGate = bossModGate;
         this.bossModSafety = bossModSafety;
+        this.rotationSolverActions = rotationSolverActions;
         this.contributors = contributors;
         this.manualCorrectionFeedback = manualCorrectionFeedback;
         this.SetContributorHookState(this.status);
@@ -149,7 +151,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 return;
             }
 
-            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.manualCorrectionFeedback, this.services, this.log, this.bossModGate, this.bossModSafety, this.HandleFailure, out var reason);
+            var reflectedDraw = ReflectedDraw.TryCreate(plugin, this.config, this.contributors, this.manualCorrectionFeedback, this.services, this.log, this.bossModGate, this.bossModSafety, this.rotationSolverActions, this.HandleFailure, out var reason);
             if (reflectedDraw == null)
             {
                 this.SetStatus(reason);
@@ -311,6 +313,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private readonly IPluginLog log;
         private readonly BossModRuntimeGate bossModGate;
         private readonly BossModReflectionSafety bossModSafety;
+        private readonly RotationSolverActionReflection rotationSolverActions;
         private readonly Action<Exception, string, string> failureHandler;
         private readonly MethodInfo executeHintsMethod;
         private readonly FieldInfo previousUpdateTimeField;
@@ -374,6 +377,8 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private Vector3? lastNavigationMovementIntent;
         private DateTime lastNavigationMovementIntentAcceptedAt = DateTime.MinValue;
         private string lastNavigationMovementIntentStatus = "inactive";
+        private BossModGoalContribution[] lastAdvisoryGoalContributions = [];
+        private Delegate? lastAdvisoryGoalDelegate;
         private static readonly TimeSpan MovementDiagnosticsCaptureInterval = TimeSpan.FromMilliseconds(250);
         private static readonly TimeSpan NavigationMovementIntentUpdateInterval = TimeSpan.FromMilliseconds(150);
         private const string LegacyDirectMovementStatus = "legacy direct contributors";
@@ -382,7 +387,11 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private const float NavigationMovementSettleDistance = 1f;
         private const float NavigationMovementMinimumDistanceSquared = 0.01f;
         private const int MaxSafetyRasterDimension = 48;
+        private static readonly object?[] EmptyArguments = [];
         private static readonly MethodInfo ScoreMechanicEscapeMarginMethod = typeof(ReflectedDraw).GetMethod(nameof(ScoreMechanicEscapeMargin), BindingFlags.Static | BindingFlags.NonPublic)!;
+        private readonly object?[] worldStateSyncUpdateArguments = new object?[1];
+        private readonly object?[] hintsBuilderUpdateArguments = new object?[3];
+        private readonly object?[] rotationUpdateArguments = new object?[3];
 
         private ReflectedDraw(
             object plugin,
@@ -395,6 +404,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             IPluginLog log,
             BossModRuntimeGate bossModGate,
             BossModReflectionSafety bossModSafety,
+            RotationSolverActionReflection rotationSolverActions,
             Action<Exception, string, string> failureHandler,
             ReflectedMembers members)
         {
@@ -409,6 +419,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             this.log = log;
             this.bossModGate = bossModGate;
             this.bossModSafety = bossModSafety;
+            this.rotationSolverActions = rotationSolverActions;
             this.failureHandler = failureHandler;
             this.executeHintsMethod = members.ExecuteHintsMethod;
             this.previousUpdateTimeField = members.PreviousUpdateTimeField;
@@ -469,6 +480,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             IPluginLog log,
             BossModRuntimeGate bossModGate,
             BossModReflectionSafety bossModSafety,
+            RotationSolverActionReflection rotationSolverActions,
             Action<Exception, string, string> failureHandler,
             out string reason)
         {
@@ -554,7 +566,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
 
             try
             {
-                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, manualCorrectionFeedback, services, log, bossModGate, bossModSafety, failureHandler, members);
+                return new ReflectedDraw(plugin, bmrPluginInterface, originalDraw, config, contributors, manualCorrectionFeedback, services, log, bossModGate, bossModSafety, rotationSolverActions, failureHandler, members);
             }
             catch (Exception ex)
             {
@@ -621,48 +633,55 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private void DrawReflected()
         {
             var tsStart = DateTime.Now;
-            var moveRequested = (bool)this.isMoveRequestedMethod.Invoke(this.movementOverride, [])!;
+            var moveRequested = (bool)this.isMoveRequestedMethod.Invoke(this.movementOverride, EmptyArguments)!;
             var preventMovingWhileCasting = ReadBoolMember(this.actionManagerConfig, this.preventMovingWhileCastingMember);
-            var forceUnblocked = (bool)this.isForceUnblockedMethod.Invoke(this.movementOverride, [])!;
+            var forceUnblocked = (bool)this.isForceUnblockedMethod.Invoke(this.movementOverride, EmptyArguments)!;
             var moveImminent = moveRequested && (!preventMovingWhileCasting || forceUnblocked);
             this.currentMoveRequested = moveRequested;
             this.currentMoveImminent = moveImminent;
             this.SetContributorBossModMovementState(moveRequested, moveImminent);
 
-            this.dtrUpdateMethod.Invoke(this.dtr, []);
+            this.dtrUpdateMethod.Invoke(this.dtr, EmptyArguments);
             var camera = this.cameraInstanceField?.GetValue(null);
-            this.cameraUpdateMethod?.Invoke(camera, []);
-            this.worldStateSyncUpdateMethod.Invoke(this.worldStateSync, [this.previousUpdateTimeField.GetValue(this.plugin)]);
-            this.bossModuleUpdateMethod.Invoke(this.bossModuleManager, []);
+            this.cameraUpdateMethod?.Invoke(camera, EmptyArguments);
+            this.worldStateSyncUpdateArguments[0] = this.previousUpdateTimeField.GetValue(this.plugin);
+            this.worldStateSyncUpdateMethod.Invoke(this.worldStateSync, this.worldStateSyncUpdateArguments);
+            this.bossModuleUpdateMethod.Invoke(this.bossModuleManager, EmptyArguments);
             var activeBossModule = this.activeBossModuleProperty?.GetValue(this.bossModuleManager);
             var activeZoneModule = this.activeZoneModuleField.GetValue(this.zoneModuleManager);
             if (activeZoneModule != null)
             {
-                this.activeZoneModuleUpdateMethod?.Invoke(activeZoneModule, []);
+                this.activeZoneModuleUpdateMethod?.Invoke(activeZoneModule, EmptyArguments);
             }
 
             var encounterActive = BossModEncounterClassifier.IsEncounterActive(activeBossModule, activeZoneModule);
             this.SetContributorBossModEncounterState(encounterActive);
 
-            this.hintsBuilderUpdateMethod.Invoke(this.hintsBuilder, [this.hints, (int)this.playerSlotField.GetRawConstantValue()!, moveImminent]);
+            this.hintsBuilderUpdateArguments[0] = this.hints;
+            this.hintsBuilderUpdateArguments[1] = (int)this.playerSlotField.GetRawConstantValue()!;
+            this.hintsBuilderUpdateArguments[2] = moveImminent;
+            this.hintsBuilderUpdateMethod.Invoke(this.hintsBuilder, this.hintsBuilderUpdateArguments);
             this.InjectContributorGoals();
-            this.queueManualActionsMethod.Invoke(this.actionManager, []);
-            this.rotationUpdateMethod.Invoke(this.rotation, [this.animationLockDelayEstimateProperty.GetValue(this.actionManager), (bool)this.isMovingMethod.Invoke(this.movementOverride, [])!, this.services.Condition[ConditionFlag.DutyRecorderPlayback]]);
+            this.queueManualActionsMethod.Invoke(this.actionManager, EmptyArguments);
+            this.rotationUpdateArguments[0] = this.animationLockDelayEstimateProperty.GetValue(this.actionManager);
+            this.rotationUpdateArguments[1] = (bool)this.isMovingMethod.Invoke(this.movementOverride, EmptyArguments)!;
+            this.rotationUpdateArguments[2] = this.services.Condition[ConditionFlag.DutyRecorderPlayback];
+            this.rotationUpdateMethod.Invoke(this.rotation, this.rotationUpdateArguments);
             var forcedMovementBeforeNavigation = ReadVector3(ReadField(this.hints, "ForcedMovement", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
-            this.aiUpdateMethod.Invoke(this.ai, []);
+            this.aiUpdateMethod.Invoke(this.ai, EmptyArguments);
             this.StabilizeNavigationMovementIntent(forcedMovementBeforeNavigation);
             this.CaptureMovementDiagnosticsIfDue(activeBossModule);
-            this.broadcastUpdateMethod.Invoke(this.broadcast, []);
-            this.finishActionGatherMethod.Invoke(this.actionManager, []);
+            this.broadcastUpdateMethod.Invoke(this.broadcast, EmptyArguments);
+            this.finishActionGatherMethod.Invoke(this.actionManager, EmptyArguments);
 
             if (!this.IsUiHidden())
             {
                 var windowSystem = this.windowSystemField?.GetValue(null);
-                this.windowSystemDrawMethod?.Invoke(windowSystem, []);
+                this.windowSystemDrawMethod?.Invoke(windowSystem, EmptyArguments);
             }
 
-            this.executeHintsMethod.Invoke(this.plugin, []);
-            this.cameraDrawWorldPrimitivesMethod?.Invoke(camera, []);
+            this.executeHintsMethod.Invoke(this.plugin, EmptyArguments);
+            this.cameraDrawWorldPrimitivesMethod?.Invoke(camera, EmptyArguments);
             this.previousUpdateTimeField.SetValue(this.plugin, DateTime.Now - tsStart);
         }
 
@@ -765,7 +784,7 @@ internal sealed class BossModGoalZoneHook : IDisposable
             var advisoryContributions = SelectAdvisoryGoalContributions(activeContributions);
             if (advisoryContributions.Length > 0)
             {
-                goalZones.Add(CreateAdvisoryGoalDelegate(advisoryContributions));
+                goalZones.Add(this.GetAdvisoryGoalDelegate(advisoryContributions));
             }
 
             foreach (var rawContribution in SelectRawGoalContributions(activeContributions))
@@ -858,7 +877,19 @@ internal sealed class BossModGoalZoneHook : IDisposable
         private bool ShouldSuppressAdvisoryMovementForCasting()
         {
             var player = this.services.ObjectTable.LocalPlayer;
-            return CasterMovementPolicy.ShouldSuppressAdvisoryMovement(player);
+            if (CasterMovementPolicy.ShouldSuppressAdvisoryMovement(player))
+            {
+                return true;
+            }
+
+            return player != null &&
+                   this.rotationSolverActions.TryGetUpcomingGcdTiming(out var timing, out _) &&
+                   CasterMovementPolicy.ShouldSuppressAdvisoryMovementForGcd(
+                       player.ClassJob.RowId,
+                       timing.GcdRemaining,
+                       timing.GcdElapsed,
+                       timing.GcdTotal,
+                       timing.GcdActionAhead);
         }
 
         private static BossModGoalContribution[] SuppressAdvisoryMovementForCasting(IReadOnlyList<BossModGoalContribution> contributions)
@@ -1911,6 +1942,40 @@ internal sealed class BossModGoalZoneHook : IDisposable
                 double d => (float)d,
                 _ => null
             };
+        }
+
+        private Delegate GetAdvisoryGoalDelegate(IReadOnlyList<BossModGoalContribution> contributions)
+        {
+            if (this.lastAdvisoryGoalDelegate != null &&
+                SameAdvisoryGoalInputs(this.lastAdvisoryGoalContributions, contributions))
+            {
+                return this.lastAdvisoryGoalDelegate;
+            }
+
+            this.lastAdvisoryGoalContributions = contributions.ToArray();
+            this.lastAdvisoryGoalDelegate = CreateAdvisoryGoalDelegate(this.lastAdvisoryGoalContributions);
+            return this.lastAdvisoryGoalDelegate;
+        }
+
+        private static bool SameAdvisoryGoalInputs(IReadOnlyList<BossModGoalContribution> previous, IReadOnlyList<BossModGoalContribution> current)
+        {
+            if (previous.Count != current.Count)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < previous.Count; i++)
+            {
+                if (!Equals(previous[i].Goal, current[i].Goal) ||
+                    previous[i].Priority != current[i].Priority ||
+                    previous[i].ScoreMode != current[i].ScoreMode ||
+                    MathF.Abs(previous[i].AdvisoryWeight - current[i].AdvisoryWeight) > 0.0001f)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static Delegate CreateAdvisoryGoalDelegate(IReadOnlyList<BossModGoalContribution> contributions)

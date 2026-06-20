@@ -59,6 +59,7 @@ internal sealed class HealerAoePositioningController(
     private const float BossRangeComfortSurfaceDistance = 14f;
     private const float MinimumBossCoverageDashDistance = 10f;
     private const float MinimumBossCoverageDashGain = 6f;
+    private const int MinimumUrgentCoverageDashGain = 2;
     private const float MaximumBossCoverageDashTargetDistance = 25f;
     private const float BossCoverageDashTargetRadius = 7.5f;
     private const float MinimumPartyAoeHealEffectRange = 8f;
@@ -241,11 +242,14 @@ internal sealed class HealerAoePositioningController(
         var partyAoeHealActionName = partyAoeHealGcdPending
             ? upcomingGcd!.ActionName
             : pressure.RaidwideOrDamageSoon ? "BossMod damage pressure" : "<none>";
+        var tankbusterHealCoveragePending = pressure.TankbusterSoon ||
+                                            (pressure.NextDamageType == BossModPredictedDamageType.Tankbuster && pressure.DamageSoon);
         var forcedMovementActive = VectorLengthSquared(this.forcedMovementField?.GetValue(hints)) > 0.01f;
         var forbiddenSafetyActive = this.forbiddenZonesField?.GetValue(hints) is ICollection { Count: > 0 };
         var bossModGoalZoneActive = goalZones.Count > 0;
         var downtimeLikely = this.IsDowntimeLikely();
         var mechanicPositioningActive = forcedMovementActive || forbiddenSafetyActive || bossModGoalZoneActive || this.bmrMoveRequested || this.bmrMoveImminent;
+        var slidecastWindow = CasterMovementPolicy.IsCasterSlidecastWindow(player);
         var proactiveCoverageComfort = ShouldImproveCoverageComfort(
             plan.CurrentCoveredCount,
             plan.BestCoveredCount,
@@ -273,12 +277,21 @@ internal sealed class HealerAoePositioningController(
             plan.CurrentBossRangeScore,
             plan.BestBossRangeScore,
             bossModuleContext);
+        var urgentHealingCoverage = ShouldImproveUrgentHealingCoverage(
+            plan.CurrentCoveredCount,
+            plan.BestCoveredCount,
+            plan.TotalMembers,
+            plan.CurrentCoversTank,
+            plan.BestCoversTank,
+            partyAoeHealPending,
+            pressure.SharedDamageSoon,
+            tankbusterHealCoveragePending);
         var boundedTankRestore = restoresTankCoverage &&
-                                 plan.DistanceToCenter <= MaxTankCoverageRestoreDistance;
-        var shouldMove = strongCoverageGain || restoresFullCoverage || proactiveCoverageComfort || criticalCoverageCatchUp || partyAoeHealCatchUp || bossCoverageMove || boundedTankRestore;
+                                 (plan.DistanceToCenter <= MaxTankCoverageRestoreDistance || urgentHealingCoverage);
+        var shouldMove = strongCoverageGain || restoresFullCoverage || proactiveCoverageComfort || criticalCoverageCatchUp || partyAoeHealCatchUp || bossCoverageMove || urgentHealingCoverage || boundedTankRestore;
         var maxMoveDistance = criticalCoverageCatchUp
             ? MaxCriticalCoverageCatchUpMoveDistance
-            : partyAoeHealCatchUp
+            : partyAoeHealCatchUp || urgentHealingCoverage
             ? MaxPartyAoeHealCatchUpMoveDistance
             : bossCoverageMove
             ? MaxBossCoverageRoutineMoveDistance
@@ -317,9 +330,31 @@ internal sealed class HealerAoePositioningController(
             shouldMove = false;
             this.lastReason = "forced mechanic movement active";
         }
+        else if (shouldMove &&
+                 ShouldSuppressBossSlideWindowCoverage(
+                     bossModuleContext,
+                     slidecastWindow,
+                     urgentHealingCoverage,
+                     partyAoeHealCatchUp,
+                     criticalCoverageCatchUp,
+                     partyAoeHealPending,
+                     tankbusterHealCoveragePending))
+        {
+            shouldMove = false;
+            this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
+            this.lastReason = "routine healer coverage held during slidecast";
+        }
         else if (shouldMove && plan.DistanceToCenter > maxMoveDistance)
         {
-            if (bossCoverageMove && this.TryUseBossCoverageDash(gcdWindowId, player, plan, members))
+            var coverageDashReason = ResolveCoverageDashReason(
+                urgentHealingCoverage,
+                partyAoeHealCatchUp,
+                criticalCoverageCatchUp,
+                tankbusterHealCoveragePending,
+                pressure.SharedDamageSoon,
+                partyAoeHealActionName);
+            if ((bossCoverageMove || urgentHealingCoverage || partyAoeHealCatchUp || criticalCoverageCatchUp) &&
+                this.TryUseCoverageDash(gcdWindowId, player, plan, members, coverageDashReason, urgentHealingCoverage || partyAoeHealCatchUp || criticalCoverageCatchUp, tankbusterHealCoveragePending))
             {
                 return;
             }
@@ -335,10 +370,23 @@ internal sealed class HealerAoePositioningController(
                      upcomingGcd?.GcdRemaining ?? -1f,
                      upcomingGcd?.GcdElapsed ?? -1f,
                      upcomingGcd?.GcdTotal ?? -1f,
-                     CasterMovementPolicy.IsCasterSlidecastWindow(player),
+                     slidecastWindow,
                      IsBossModSafetyMovementActive(forcedMovementActive, forbiddenSafetyActive, bossModGoalZoneActive, this.bmrMoveImminent),
                      out var timingSkipReason))
         {
+            var coverageDashReason = ResolveCoverageDashReason(
+                urgentHealingCoverage,
+                partyAoeHealCatchUp,
+                criticalCoverageCatchUp,
+                tankbusterHealCoveragePending,
+                pressure.SharedDamageSoon,
+                partyAoeHealActionName);
+            if ((urgentHealingCoverage || partyAoeHealCatchUp || criticalCoverageCatchUp) &&
+                this.TryUseCoverageDash(gcdWindowId, player, plan, members, coverageDashReason, urgent: true, tankbusterHealCoveragePending))
+            {
+                return;
+            }
+
             shouldMove = false;
             this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
             this.lastReason = timingSkipReason;
@@ -368,6 +416,10 @@ internal sealed class HealerAoePositioningController(
                 ? "critical party coverage; "
                 : restoresTankCoverage
                 ? "tank out of coverage; "
+                : urgentHealingCoverage && tankbusterHealCoveragePending
+                ? "tankbuster healing coverage; "
+                : urgentHealingCoverage
+                ? "urgent healing coverage; "
                 : proactiveCoverageComfort && coverageGain > 0
                 ? downtimeLikely
                     ? "downtime coverage setup; "
@@ -477,11 +529,14 @@ internal sealed class HealerAoePositioningController(
         this.lastReason = $"{decision.ReasonPrefix}covering {currentCoveredCount}/{decision.TotalMembers}, can cover {decision.BestCoveredCount}/{decision.TotalMembers}";
     }
 
-    private bool TryUseBossCoverageDash(
+    private bool TryUseCoverageDash(
         long gcdWindowId,
         IBattleChara player,
         HealerCoverageGoalPlan plan,
-        IReadOnlyList<IBattleChara> members)
+        IReadOnlyList<IBattleChara> members,
+        string reason,
+        bool urgent,
+        bool tankbusterHealCoveragePending)
     {
         if (DateTime.UtcNow < this.nextCoverageDashAttempt ||
             !config.UseGapCloser)
@@ -491,8 +546,8 @@ internal sealed class HealerAoePositioningController(
 
         return player.ClassJob.RowId switch
         {
-            24 when config.GapCloserWHM => this.TryUseWhiteMageCoverageDash(gcdWindowId, player, plan),
-            40 when config.GapCloserSGE => this.TryUseSageCoverageDash(gcdWindowId, player, plan, members),
+            24 when config.GapCloserWHM => this.TryUseWhiteMageCoverageDash(gcdWindowId, player, plan, reason, urgent, tankbusterHealCoveragePending),
+            40 when config.GapCloserSGE => this.TryUseSageCoverageDash(gcdWindowId, player, plan, members, reason, urgent, tankbusterHealCoveragePending),
             _ => false
         };
     }
@@ -500,7 +555,10 @@ internal sealed class HealerAoePositioningController(
     private unsafe bool TryUseWhiteMageCoverageDash(
         long gcdWindowId,
         IBattleChara player,
-        HealerCoverageGoalPlan plan)
+        HealerCoverageGoalPlan plan,
+        string reason,
+        bool urgent,
+        bool tankbusterHealCoveragePending)
     {
         if (!ActionUse.CanUseAction(ActionUse.WhiteMageAetherialShiftActionId))
         {
@@ -525,8 +583,18 @@ internal sealed class HealerAoePositioningController(
         var landingPosition = new Vector2(destination.X, destination.Z);
         var landingDistance = Vector2.Distance(landingPosition, plan.OptimalCenter);
         var gain = currentDistance - landingDistance;
-        if (gain < MinimumBossCoverageDashGain ||
-            CountCovered(landingPosition, plan.AllMembers) < plan.CurrentCoveredCount)
+        var landingCoveredCount = CountCovered(landingPosition, plan.AllMembers);
+        var landingCoversTank = plan.CoversTankAt(landingPosition);
+        if (!ShouldUseCoverageDashLanding(
+                plan.CurrentCoveredCount,
+                plan.BestCoveredCount,
+                plan.TotalMembers,
+                gain,
+                landingCoveredCount,
+                urgent,
+                tankbusterHealCoveragePending,
+                plan.CurrentCoversTank,
+                landingCoversTank))
         {
             return false;
         }
@@ -558,7 +626,7 @@ internal sealed class HealerAoePositioningController(
             facingController.RequestFacing(FacingController.CreateDirectionalDashRequest(desiredRotation, destination, "turn for Aetherial Shift", FacingBossModPolicy.AssistValidatedDash));
             this.lastInjected = false;
             this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: true);
-            this.lastReason = $"turning for Aetherial Shift boss healer coverage ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
+            this.lastReason = $"turning for Aetherial Shift {reason} ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
             return true;
         }
 
@@ -570,7 +638,7 @@ internal sealed class HealerAoePositioningController(
             this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
             this.lastInjected = false;
             this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: true);
-            this.lastReason = $"used Aetherial Shift for boss healer coverage ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
+            this.lastReason = $"used Aetherial Shift for {reason} ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
             return true;
         }
 
@@ -582,7 +650,10 @@ internal sealed class HealerAoePositioningController(
         long gcdWindowId,
         IBattleChara player,
         HealerCoverageGoalPlan plan,
-        IReadOnlyList<IBattleChara> members)
+        IReadOnlyList<IBattleChara> members,
+        string reason,
+        bool urgent,
+        bool tankbusterHealCoveragePending)
     {
         if (!ActionUse.CanUseAction(ActionUse.SageIcarusActionId))
         {
@@ -610,9 +681,19 @@ internal sealed class HealerAoePositioningController(
             var allyPosition = new Vector2(ally.Position.X, ally.Position.Z);
             var landingDistance = Vector2.Distance(allyPosition, plan.OptimalCenter);
             var gain = currentDistance - landingDistance;
-            if (gain < MinimumBossCoverageDashGain ||
-                landingDistance > BossCoverageDashTargetRadius ||
-                CountCovered(allyPosition, plan.AllMembers) < plan.CurrentCoveredCount)
+            var landingCoveredCount = CountCovered(allyPosition, plan.AllMembers);
+            var landingCoversTank = plan.CoversTankAt(allyPosition);
+            if (landingDistance > BossCoverageDashTargetRadius ||
+                !ShouldUseCoverageDashLanding(
+                    plan.CurrentCoveredCount,
+                    plan.BestCoveredCount,
+                    plan.TotalMembers,
+                    gain,
+                    landingCoveredCount,
+                    urgent,
+                    tankbusterHealCoveragePending,
+                    plan.CurrentCoversTank,
+                    landingCoversTank))
             {
                 continue;
             }
@@ -658,7 +739,7 @@ internal sealed class HealerAoePositioningController(
             this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
             this.lastInjected = false;
             this.lastOverlay = plan.CreateOverlay(player.Position.Y, injected: true);
-            this.lastReason = $"used Icarus for boss healer coverage ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
+            this.lastReason = $"used Icarus for {reason} ({plan.CurrentCoveredCount}/{plan.TotalMembers} -> {plan.BestCoveredCount}/{plan.TotalMembers})";
             return true;
         }
 
@@ -1232,6 +1313,127 @@ internal sealed class HealerAoePositioningController(
                bestBossRangeScore >= currentBossRangeScore + 0.15f;
     }
 
+    internal static bool ShouldImproveUrgentHealingCoverage(
+        int currentCoveredCount,
+        int bestCoveredCount,
+        int totalMembers,
+        bool currentCoversTank,
+        bool bestCoversTank,
+        bool partyAoeHealPending,
+        bool sharedDamageSoon,
+        bool tankbusterHealCoveragePending)
+    {
+        if (totalMembers <= 0 || bestCoveredCount < currentCoveredCount)
+        {
+            return false;
+        }
+
+        if (tankbusterHealCoveragePending && !currentCoversTank && bestCoversTank)
+        {
+            return true;
+        }
+
+        if (!partyAoeHealPending && !sharedDamageSoon)
+        {
+            return false;
+        }
+
+        var missingMembers = totalMembers - currentCoveredCount;
+        var coverageGain = bestCoveredCount - currentCoveredCount;
+        return missingMembers >= 2 &&
+               coverageGain >= MinimumUrgentCoverageDashGain &&
+               bestCoveredCount >= Math.Max(1, totalMembers - 1);
+    }
+
+    internal static bool ShouldSuppressBossSlideWindowCoverage(
+        bool bossModuleContext,
+        bool slidecastWindow,
+        bool urgentHealingCoverage,
+        bool partyAoeHealCatchUp,
+        bool criticalCoverageCatchUp,
+        bool partyAoeHealPending,
+        bool tankbusterHealCoveragePending)
+    {
+        if (!bossModuleContext || !slidecastWindow)
+        {
+            return false;
+        }
+
+        return !urgentHealingCoverage &&
+               !partyAoeHealCatchUp &&
+               !criticalCoverageCatchUp &&
+               !partyAoeHealPending &&
+               !tankbusterHealCoveragePending;
+    }
+
+    internal static bool ShouldUseCoverageDashLanding(
+        int currentCoveredCount,
+        int bestCoveredCount,
+        int totalMembers,
+        float distanceGain,
+        int landingCoveredCount,
+        bool urgent,
+        bool tankbusterHealCoveragePending,
+        bool currentCoversTank,
+        bool landingCoversTank)
+    {
+        if (landingCoveredCount < currentCoveredCount)
+        {
+            return false;
+        }
+
+        if (tankbusterHealCoveragePending &&
+            !currentCoversTank &&
+            landingCoversTank &&
+            distanceGain >= MinimumBossCoverageDashGain)
+        {
+            return true;
+        }
+
+        if (!urgent)
+        {
+            return distanceGain >= MinimumBossCoverageDashGain;
+        }
+
+        var coverageGain = landingCoveredCount - currentCoveredCount;
+        return distanceGain >= MinimumBossCoverageDashGain &&
+               (coverageGain >= MinimumUrgentCoverageDashGain ||
+                landingCoveredCount >= Math.Min(bestCoveredCount, Math.Max(1, totalMembers - 1)));
+    }
+
+    private static string ResolveCoverageDashReason(
+        bool urgentHealingCoverage,
+        bool partyAoeHealCatchUp,
+        bool criticalCoverageCatchUp,
+        bool tankbusterHealCoveragePending,
+        bool sharedDamageSoon,
+        string partyAoeHealActionName)
+    {
+        if (tankbusterHealCoveragePending)
+        {
+            return "tankbuster healing coverage";
+        }
+
+        if (partyAoeHealCatchUp)
+        {
+            return $"party AoE heal coverage ({partyAoeHealActionName})";
+        }
+
+        if (criticalCoverageCatchUp)
+        {
+            return "critical party coverage";
+        }
+
+        if (urgentHealingCoverage && sharedDamageSoon)
+        {
+            return "shared damage healing coverage";
+        }
+
+        return urgentHealingCoverage
+            ? "urgent healing coverage"
+            : "boss healer coverage";
+    }
+
     private static float ResolveCoverageComfortMoveDistance(bool downtimeLikely, bool mechanicPositioningActive)
     {
         if (downtimeLikely)
@@ -1472,6 +1674,9 @@ internal sealed class HealerAoePositioningController(
         public IReadOnlyList<Vector2> AllMembers => this.allMembers;
         public float CurrentBossRangeScore => this.currentBossRangeScore;
         public float BestBossRangeScore => this.bossRangePreference?.Score(this.optimalCenter) ?? 0f;
+
+        public bool CoversTankAt(Vector2 candidate)
+            => CoversTank(candidate, this.tankPosition);
 
         public bool SameSource(HealerCoverageGoalPlan other)
         {

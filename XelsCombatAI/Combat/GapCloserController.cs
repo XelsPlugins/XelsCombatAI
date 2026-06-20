@@ -897,6 +897,7 @@ internal sealed class GapCloserController(
                         currentTarget.HitboxRadius,
                         engagementRange,
                         meleeReengagePathBlocked,
+                        HasAntiKnockbackStatus(ally),
                         decision.MoveDistance,
                         decision.SafetyGain,
                         decision.UptimeGain,
@@ -1002,6 +1003,7 @@ internal sealed class GapCloserController(
                 currentTarget.HitboxRadius,
                 engagementRange,
                 meleeReengagePathBlocked,
+                HasAntiKnockbackStatus(ally),
                 decision.MoveDistance,
                 decision.SafetyGain,
                 decision.UptimeGain,
@@ -1085,6 +1087,7 @@ internal sealed class GapCloserController(
         float targetRadius,
         float engagementRange,
         bool meleeReengagePathBlocked,
+        bool anchorAntiKnockbackActive,
         float moveDistance,
         float safetyGain,
         float uptimeGain,
@@ -1128,6 +1131,8 @@ internal sealed class GapCloserController(
             safetyGain,
             uptimeGain,
             pathGain,
+            engagementRange,
+            anchorAntiKnockbackActive,
             out reason);
     }
 

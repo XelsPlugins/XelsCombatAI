@@ -15,7 +15,7 @@ internal static class JobRoles
     public static bool IsTankJob(uint classJobId)
         => classJobId is 1 or 19 or 3 or 21 or 32 or 37;
 
-    public static bool IsMeleeAoEHealer(uint classJobId)
+    public static bool IsLocalPackAoeFallbackHealer(uint classJobId)
         => classJobId is 6 or 24 or 28 or 40;
 
     public static RangeRole GetRangeRole(IBattleChara? player)

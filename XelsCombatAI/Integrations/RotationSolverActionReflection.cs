@@ -93,6 +93,9 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
     private string lastRedMageMeleeQuery = "not checked";
     private uint lastReflectedNextGcdAdjustedId;
     private DateTime lastReflectedNextGcdReadUtc = DateTime.MinValue;
+    private readonly Dictionary<(Type Type, string Name), PropertyInfo?> propertyCache = [];
+    private readonly Dictionary<(Type Type, string Name), MemberInfo?> memberCache = [];
+    private readonly Dictionary<(Type Type, string Name, int ParameterCount), MethodInfo?> methodCache = [];
 
     public string Status => this.status;
     public string Diagnostics
@@ -120,6 +123,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
 
     public void Dispose()
     {
+        this.ClearReflectionCaches();
     }
 
     public void Reset()
@@ -138,6 +142,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
         this.status = "unresolved";
         this.redMageMeleeDiagnostics = "not checked";
         this.lastRedMageMeleeQuery = "not checked";
+        this.ClearReflectionCaches();
     }
 
     private void RecordReflectedNextGcdAdjustedId(uint adjustedId)
@@ -813,6 +818,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
         this.calculatedActionAheadProperty = null;
         this.status = newStatus;
         this.nextRedMageContractProbe = DateTime.MinValue;
+        this.ClearReflectionCaches();
     }
 
     private static float ReadStaticFloat(PropertyInfo? property, float fallback)
@@ -832,29 +838,82 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
         }
     }
 
-    private static object? GetPropertyValue(object value, Type type, string name)
+    private object? GetPropertyValue(object value, Type type, string name)
     {
-        return type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(value);
+        return this.GetCachedProperty(type, name)?.GetValue(value);
     }
 
-    private static object? GetMemberValue(object? instance, Type type, string name)
+    private object? GetMemberValue(object? instance, Type type, string name)
     {
+        var member = this.GetCachedMember(type, name);
+        return member switch
+        {
+            PropertyInfo { GetMethod: { } getMethod } property => property.GetValue(getMethod.IsStatic ? null : instance),
+            FieldInfo field => field.GetValue(field.IsStatic ? null : instance),
+            _ => null
+        };
+    }
+
+    private PropertyInfo? GetCachedProperty(Type type, string name)
+    {
+        var key = (type, name);
+        if (this.propertyCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        var property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        this.propertyCache[key] = property;
+        return property;
+    }
+
+    private MemberInfo? GetCachedMember(Type type, string name)
+    {
+        var key = (type, name);
+        if (this.memberCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
         for (var current = type; current != null; current = current.BaseType)
         {
             var property = current.GetProperty(name, BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             if (property?.GetMethod != null)
             {
-                return property.GetValue(property.GetMethod.IsStatic ? null : instance);
+                this.memberCache[key] = property;
+                return property;
             }
 
             var field = current.GetField(name, BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             if (field != null)
             {
-                return field.GetValue(field.IsStatic ? null : instance);
+                this.memberCache[key] = field;
+                return field;
             }
         }
 
+        this.memberCache[key] = null;
         return null;
+    }
+
+    private MethodInfo? GetCachedMethod(Type type, string name, int parameterCount)
+    {
+        var key = (type, name, parameterCount);
+        if (this.methodCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        var method = GetMethod(type, name, parameterCount);
+        this.methodCache[key] = method;
+        return method;
+    }
+
+    private void ClearReflectionCaches()
+    {
+        this.propertyCache.Clear();
+        this.memberCache.Clear();
+        this.methodCache.Clear();
     }
 
     private static MethodInfo? GetMethod(Type type, string name, int parameterCount)
@@ -940,19 +999,19 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
         return null;
     }
 
-    private static object? InvokeValue(object instance, Type type, string name, params object[] args)
+    private object? InvokeValue(object instance, Type type, string name, params object[] args)
     {
-        var method = GetMethod(type, name, args.Length);
+        var method = this.GetCachedMethod(type, name, args.Length);
         return method?.Invoke(method.IsStatic ? null : instance, args);
     }
 
-    private static bool InvokeBool(object instance, Type type, string name, params object[] args)
+    private bool InvokeBool(object instance, Type type, string name, params object[] args)
     {
         var value = InvokeValue(instance, type, name, args);
         return value != null && ReadBool(value);
     }
 
-    private static float InvokeFloat(object instance, Type type, string name, float fallback, params object[] args)
+    private float InvokeFloat(object instance, Type type, string name, float fallback, params object[] args)
     {
         var value = InvokeValue(instance, type, name, args);
         return value == null ? fallback : ReadFloat(value, fallback);
@@ -1003,7 +1062,7 @@ internal sealed class RotationSolverActionReflection(IDalamudPluginInterface plu
         };
     }
 
-    private static int ReadBeirutaAffectedTargets(object rotation, Type rotationType, RsrRedMageMeleeTrack track)
+    private int ReadBeirutaAffectedTargets(object rotation, Type rotationType, RsrRedMageMeleeTrack track)
     {
         if (track != RsrRedMageMeleeTrack.AoE)
         {

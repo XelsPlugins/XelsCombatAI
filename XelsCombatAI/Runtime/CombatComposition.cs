@@ -67,8 +67,8 @@ internal sealed class CombatComposition : IDisposable
         var bossCenterAvoidanceController = new BossCenterAvoidanceController(config, services, () => runtime?.AutomatedMovementSuppressed == true, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
         var socialSpacingPositioningController = new SocialSpacingPositioningController(config, services, bossModSafety, () => runtime?.AutomatedMovementSuppressed == true);
         var tankBehaviorController = new TankBehaviorController(config, services, () => targetUptimePlanner.CurrentTargetHasBossModule(), () => mechanicPressure.Current);
-        IBossModGoalZoneContributor[] legacyMovementContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, partyHealerRangePositioningController, survivabilityZonePositioningController, tankBehaviorController, positionalsController, pictomancerStarryMusePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController];
-        var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, bossModSafety, legacyMovementContributors, manualCorrectionFeedback);
+        IBossModGoalZoneContributor[] goalContributors = [aoePackPositioningController, passageOfArmsPositioningController, healerAoePositioningController, partyHealerRangePositioningController, survivabilityZonePositioningController, tankBehaviorController, positionalsController, pictomancerStarryMusePositioningController, bossCenterAvoidanceController, arenaEdgePositioningController, socialSpacingPositioningController];
+        var aoeGoalHook = new BossModGoalZoneHook(config, pluginInterface, services, log, bossModGate, bossModSafety, rotationSolverActions, goalContributors, manualCorrectionFeedback);
         var gapCloserController = new GapCloserController(
             config,
             services,
