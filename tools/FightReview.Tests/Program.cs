@@ -50,6 +50,7 @@ var tests = new (string Name, Action Body)[]
     ("melee stack recovery anchor allows blocked stack pockets", MeleeStackRecoveryAnchorAllowsBlockedStackPockets),
     ("gap closer landing policy avoids front and boss center alternatives", GapCloserLandingPolicyAvoidsFrontAndBossCenterAlternatives),
     ("gap closer pressure policy suppresses optional capped dashes", GapCloserPressurePolicySuppressesOptionalCappedDashes),
+    ("reengage dash current GCD policy conserves last charge", ReengageDashCurrentGcdPolicyConservesLastCharge),
     ("trash gap closer conservation yields to spare urgent charges", TrashGapCloserConservationYieldsToSpareUrgentCharges),
     ("paired return policy holds walkable returns", PairedReturnPolicyHoldsWalkableReturns),
     ("knockback recovery direction rejects sideways dashes", KnockbackRecoveryDirectionRejectsSidewaysDashes),
@@ -64,6 +65,8 @@ var tests = new (string Name, Action Body)[]
     ("phantom gap closers inherit base job reengage rules", PhantomGapClosersInheritBaseJobReengageRules),
     ("knockback recovery allows timing bypass", KnockbackRecoveryAllowsTimingBypass),
     ("BMR safety dash requires destination progress", BmrSafetyDashRequiresDestinationProgress),
+    ("friendly escape anchor conserves low-value ally dashes", FriendlyEscapeAnchorConservesLowValueAllyDashes),
+    ("enemy movement tracker holds moving target dashes", EnemyMovementTrackerHoldsMovingTargetDashes),
     ("late safety dash continues while unsafe and far", LateSafetyDashContinuesWhileUnsafeAndFar),
     ("hostile relay dash requires target momentum", HostileRelayDashRequiresTargetMomentum),
     ("trash gap closer rejects stale pack", TrashGapCloserRejectsStalePack),
@@ -1202,6 +1205,96 @@ static void GapCloserPressurePolicySuppressesOptionalCappedDashes()
         "strong uptime gain can still proceed to landing validation under raidwide pressure");
 }
 
+static void ReengageDashCurrentGcdPolicyConservesLastCharge()
+{
+    var action = new RsrGcdActionTimingSnapshot(0, 0, "melee GCD", "test", 0, 0.5f, 2f, 2.5f, 0.35f);
+    var engagementRange = Configuration.InternalMeleeUptimeRange;
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseReengageDashForCurrentGcd(
+            landingDistanceToHitbox: engagementRange,
+            engagementRange: engagementRange,
+            action: action,
+            currentCharges: 1,
+            currentPositionUnsafe: false,
+            safetyGain: 0f,
+            uptimeGain: 5f,
+            pathGain: 0f,
+            out var rangeReason),
+        "last charge may be used when the landing restores useful range");
+    AssertContains("restores useful range", rangeReason, "range-restoring dash reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseReengageDashForCurrentGcd(
+            landingDistanceToHitbox: engagementRange + 0.5f,
+            engagementRange: engagementRange,
+            action: action with { GcdRemaining = 2.5f, GcdElapsed = 0f },
+            currentCharges: 1,
+            currentPositionUnsafe: false,
+            safetyGain: 0f,
+            uptimeGain: 4f,
+            pathGain: 0f,
+            out var walkReason),
+        "last charge may be used when the landing plus short walk still reaches the current GCD");
+    AssertContains("landing plus walk", walkReason, "post-landing walk reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseReengageDashForCurrentGcd(
+            landingDistanceToHitbox: 8f,
+            engagementRange: engagementRange,
+            action: action,
+            currentCharges: 1,
+            currentPositionUnsafe: false,
+            safetyGain: 0f,
+            uptimeGain: 5f,
+            pathGain: 0f,
+            out var lastChargeReason),
+        "last charge should be held when the landing still misses the current GCD");
+    AssertContains("last charge held", lastChargeReason, "last-charge hold reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseReengageDashForCurrentGcd(
+            landingDistanceToHitbox: 8f,
+            engagementRange: engagementRange,
+            action: action,
+            currentCharges: 1,
+            currentPositionUnsafe: true,
+            safetyGain: 4f,
+            uptimeGain: 1f,
+            pathGain: 0f,
+            out var safetyReason),
+        "last charge should still be available for meaningful BossMod safety recovery");
+    AssertContains("safety dash", safetyReason, "safety exception reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseReengageDashForCurrentGcd(
+            landingDistanceToHitbox: 8f,
+            engagementRange: engagementRange,
+            action: action,
+            currentCharges: 2,
+            currentPositionUnsafe: false,
+            safetyGain: 0f,
+            uptimeGain: 4.5f,
+            pathGain: 0f,
+            out var spareReason),
+        "spare charges may be used for strong range progress even if the current GCD is already lost");
+    AssertContains("spare-charge", spareReason, "spare-charge progress reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseReengageDashForCurrentGcd(
+            landingDistanceToHitbox: 8f,
+            engagementRange: engagementRange,
+            action: action,
+            currentCharges: 2,
+            currentPositionUnsafe: false,
+            safetyGain: 0f,
+            uptimeGain: 1f,
+            pathGain: 0f,
+            out var weakReason),
+        "spare charges should still reject weak partial progress");
+    AssertContains("misses", weakReason, "weak spare-charge rejection reason");
+}
+
 static void TrashGapCloserConservationYieldsToSpareUrgentCharges()
 {
     AssertTrue(
@@ -1454,6 +1547,20 @@ static void CasterImmobilityPolicyHoldsOptionalDashes()
 
 static void CasterAdvisoryMovementHoldsNearGcdReady()
 {
+    AssertFalse(
+        CasterMovementPolicy.IsCasterSlidecastWindow(
+            playerCasting: false,
+            totalCastTime: 2.5f,
+            currentCastTime: 2.3f),
+        "stale cast timing should not be treated as an active slidecast window");
+
+    AssertTrue(
+        CasterMovementPolicy.IsCasterSlidecastWindow(
+            playerCasting: true,
+            totalCastTime: 2.5f,
+            currentCastTime: 2.3f),
+        "active casts near completion should count as slidecast windows");
+
     AssertFalse(
         CasterMovementPolicy.ShouldSuppressAdvisoryMovementForActiveCast(
             classJobId: 42,
@@ -1830,6 +1937,214 @@ static void BmrSafetyDashRequiresDestinationProgress()
             new Vector3(4f, 0f, 0f),
             out _),
         "BMR safety dash should scale down the required gain when already close to the destination");
+}
+
+static void FriendlyEscapeAnchorConservesLowValueAllyDashes()
+{
+    var urgentMovement = BossModMovementDiagnostics.Empty with
+    {
+        NavigationDetails = BossModNavigationDiagnostics.Empty with { ForceMovementIn = 1f }
+    };
+    var walkableMovement = BossModMovementDiagnostics.Empty with
+    {
+        NavigationDetails = BossModNavigationDiagnostics.Empty with { ForceMovementIn = 4f }
+    };
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+            moveDistance: 4f,
+            configuredMinimumMoveDistance: 8f,
+            pathGain: 4f,
+            uptimeRelayAvailable: false,
+            uptimeRelayReason: string.Empty,
+            conservativeSingleCharge: false,
+            currentPositionUnsafe: true,
+            safeMovementDistance: 12f,
+            urgentMovement,
+            out var shortReason),
+        "short ally safety anchors should not spend a dash");
+    AssertContains("configured dash distance", shortReason, "short ally escape rejection reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+            moveDistance: 9f,
+            configuredMinimumMoveDistance: 8f,
+            pathGain: 3f,
+            uptimeRelayAvailable: false,
+            uptimeRelayReason: string.Empty,
+            conservativeSingleCharge: false,
+            currentPositionUnsafe: true,
+            safeMovementDistance: 12f,
+            urgentMovement,
+            out var lowProgressReason),
+        "ally safety anchors should need meaningful progress toward the BMR destination");
+    AssertContains("low safety progress", lowProgressReason, "low-progress ally escape rejection reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+            moveDistance: 9f,
+            configuredMinimumMoveDistance: 8f,
+            pathGain: 5f,
+            uptimeRelayAvailable: false,
+            uptimeRelayReason: string.Empty,
+            conservativeSingleCharge: false,
+            currentPositionUnsafe: true,
+            safeMovementDistance: 12f,
+            urgentMovement,
+            out _),
+        "multi-charge ally safety anchors may spend a dash for useful urgent progress");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+            moveDistance: 9f,
+            configuredMinimumMoveDistance: 8f,
+            pathGain: 6f,
+            uptimeRelayAvailable: false,
+            uptimeRelayReason: string.Empty,
+            conservativeSingleCharge: true,
+            currentPositionUnsafe: true,
+            safeMovementDistance: 12f,
+            urgentMovement,
+            out var conservativeReason),
+        "single-charge ally safety anchors should need stronger progress");
+    AssertContains("low safety progress", conservativeReason, "single-charge progress rejection reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+            moveDistance: 12f,
+            configuredMinimumMoveDistance: 8f,
+            pathGain: 9f,
+            uptimeRelayAvailable: false,
+            uptimeRelayReason: string.Empty,
+            conservativeSingleCharge: true,
+            currentPositionUnsafe: true,
+            safeMovementDistance: 12f,
+            walkableMovement,
+            out var walkReason),
+        "single-charge ally safety anchors should hold when walking still reaches BMR safety");
+    AssertContains("single-charge", walkReason, "single-charge walkable safety rejection reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+            moveDistance: 12f,
+            configuredMinimumMoveDistance: 8f,
+            pathGain: 9f,
+            uptimeRelayAvailable: false,
+            uptimeRelayReason: string.Empty,
+            conservativeSingleCharge: true,
+            currentPositionUnsafe: true,
+            safeMovementDistance: 12f,
+            urgentMovement,
+            out _),
+        "single-charge ally safety anchors may still fire when walking would miss urgent BMR safety");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeUptimeRelay(
+            classJobId: 20,
+            currentCharges: 2,
+            finalTargetMoving: false,
+            finalTargetMovementReason: string.Empty,
+            currentTargetDistance: 24f,
+            anchorTargetDistance: 18f,
+            targetDashRange: CombatConstants.GapCloserMaxRange,
+            out var relayRangeReason),
+        "multi-charge MNK should be allowed to Thunderclap to an ally who puts the boss in target dash range");
+    AssertContains("dash range", relayRangeReason, "relay dash-range reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+            moveDistance: 4f,
+            configuredMinimumMoveDistance: 8f,
+            pathGain: 1f,
+            uptimeRelayAvailable: true,
+            uptimeRelayReason: relayRangeReason,
+            conservativeSingleCharge: false,
+            currentPositionUnsafe: true,
+            safeMovementDistance: 12f,
+            urgentMovement,
+            out var relayAnchorReason),
+        "multi-charge melee ally relay should bypass low-value safety thresholds when it creates boss dash access");
+    AssertContains("dash range", relayAnchorReason, "relay anchor reason");
+
+    AssertTrue(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeUptimeRelay(
+            classJobId: 20,
+            currentCharges: 2,
+            finalTargetMoving: false,
+            finalTargetMovementReason: string.Empty,
+            currentTargetDistance: 10f,
+            anchorTargetDistance: CombatConstants.MeleeActionRange,
+            targetDashRange: CombatConstants.GapCloserMaxRange,
+            out var relayMeleeReason),
+        "multi-charge MNK should be allowed to Thunderclap to an ally already in a melee pocket");
+    AssertContains("melee", relayMeleeReason, "relay melee reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeUptimeRelay(
+            classJobId: 40,
+            currentCharges: 1,
+            finalTargetMoving: false,
+            finalTargetMovementReason: string.Empty,
+            currentTargetDistance: 24f,
+            anchorTargetDistance: 18f,
+            targetDashRange: 25f,
+            out var sageRelayReason),
+        "SGE Icarus should not use the melee/tank uptime relay exception");
+    AssertContains("melee or tank", sageRelayReason, "sage relay rejection reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeUptimeRelay(
+            classJobId: 20,
+            currentCharges: 1,
+            finalTargetMoving: false,
+            finalTargetMovementReason: string.Empty,
+            currentTargetDistance: 24f,
+            anchorTargetDistance: 18f,
+            targetDashRange: CombatConstants.GapCloserMaxRange,
+            out var oneChargeReason),
+        "MNK should keep the conservation gate when only one Thunderclap charge remains");
+    AssertContains("spare dash charge", oneChargeReason, "one-charge relay rejection reason");
+
+    AssertFalse(
+        GapCloserDecisionPolicy.ShouldUseFriendlyEscapeUptimeRelay(
+            classJobId: 20,
+            currentCharges: 2,
+            finalTargetMoving: true,
+            finalTargetMovementReason: "enemy target still moving",
+            currentTargetDistance: 24f,
+            anchorTargetDistance: 18f,
+            targetDashRange: CombatConstants.GapCloserMaxRange,
+            out var movingRelayReason),
+        "multi-charge MNK should not use an ally hop for uptime if the final boss dash target is still moving");
+    AssertContains("still moving", movingRelayReason, "moving final target relay rejection reason");
+}
+
+static void EnemyMovementTrackerHoldsMovingTargetDashes()
+{
+    var tracker = new EnemyMovementTracker();
+    var now = DateTime.UtcNow;
+    var targetId = 0xABCul;
+
+    AssertFalse(
+        tracker.ObserveMoving(targetId, Vector3.Zero, now, out _),
+        "first enemy movement observation should not hold a dash");
+
+    AssertFalse(
+        tracker.ObserveMoving(targetId, new Vector3(0.1f, 0f, 0f), now.AddMilliseconds(250), out _),
+        "small position jitter should not hold a dash");
+
+    AssertTrue(
+        tracker.ObserveMoving(targetId, new Vector3(0.7f, 0f, 0f), now.AddMilliseconds(500), out var movingReason),
+        "meaningful enemy movement should hold target dashes");
+    AssertContains("still moving", movingReason, "moving target hold reason");
+
+    AssertFalse(
+        tracker.ObserveMoving(targetId, new Vector3(0.7f, 0f, 0f), now.AddMilliseconds(800), out _),
+        "recent enemy movement should be allowed once the target is stable on the current sample");
+
+    AssertFalse(
+        tracker.ObserveMoving(targetId, new Vector3(0.7f, 0f, 0f), now.AddMilliseconds(1300), out _),
+        "enemy target dashes should stay allowed after the target settles");
 }
 
 static void LateSafetyDashContinuesWhileUnsafeAndFar()
@@ -2505,6 +2820,7 @@ static void HealerCoverageRespectsCastTiming()
             gcdTotal: 2.5f,
             slidecastWindow: false,
             bossModSafetyMovementActive: false,
+            intentfulCoverageMove: false,
             out var lateReason),
         "healer coverage should not start a move that would clip the next cast");
     AssertContains("too late", lateReason, "late healer coverage timing reason");
@@ -2517,6 +2833,7 @@ static void HealerCoverageRespectsCastTiming()
             gcdTotal: 2.5f,
             slidecastWindow: false,
             bossModSafetyMovementActive: false,
+            intentfulCoverageMove: false,
             out _),
         "short healer coverage moves should be allowed inside the non-interrupt window");
 
@@ -2528,6 +2845,7 @@ static void HealerCoverageRespectsCastTiming()
             gcdTotal: 2.5f,
             slidecastWindow: false,
             bossModSafetyMovementActive: true,
+            intentfulCoverageMove: false,
             out _),
         "BossMod safety movement should be allowed to take precedence over cast clipping concerns");
 
@@ -2539,33 +2857,63 @@ static void HealerCoverageRespectsCastTiming()
             gcdTotal: 2.5f,
             slidecastWindow: true,
             bossModSafetyMovementActive: false,
+            intentfulCoverageMove: false,
             out var slideReason),
-        "slidecast window should hold healer coverage movement instead of stepping");
+        "routine slidecast window should hold healer coverage movement instead of stepping");
     AssertContains("instant movement", slideReason, "slidecast healer coverage timing reason");
 
+    AssertFalse(
+        HealerAoePositioningController.ShouldSkipCoverageMoveForGcdTiming(
+            moveDistance: 7f,
+            gcdRemaining: 0.2f,
+            gcdElapsed: 2.3f,
+            gcdTotal: 2.5f,
+            slidecastWindow: true,
+            bossModSafetyMovementActive: false,
+            intentfulCoverageMove: true,
+            out _),
+        "intentful healer coverage movement should not be suppressed by stale slidecast timing");
+
+    AssertFalse(
+        HealerAoePositioningController.ShouldSkipCoverageMoveForGcdTiming(
+            moveDistance: 7f,
+            gcdRemaining: 0.2f,
+            gcdElapsed: 2.3f,
+            gcdTotal: 2.5f,
+            slidecastWindow: false,
+            bossModSafetyMovementActive: false,
+            intentfulCoverageMove: true,
+            out _),
+        "intentful healer coverage movement should trust RSR movement-safe casts near GCD ready");
+
     AssertTrue(
         HealerAoePositioningController.ShouldSuppressSlideWindowCoverage(
-            slidecastWindow: true),
+            slidecastWindow: true,
+            intentfulCoverageMove: false),
         "routine healer coverage should not step just because a slidecast window opened");
 
-    AssertTrue(
+    AssertFalse(
         HealerAoePositioningController.ShouldSuppressSlideWindowCoverage(
-            slidecastWindow: true),
-        "urgent healing coverage should wait for instant movement instead of slidecast stepping");
+            slidecastWindow: true,
+            intentfulCoverageMove: true),
+        "urgent healing coverage should be allowed after it becomes intentional movement");
 
     AssertTrue(
         HealerAoePositioningController.ShouldSuppressSlideWindowCoverage(
-            slidecastWindow: true),
+            slidecastWindow: true,
+            intentfulCoverageMove: false),
         "trash and non-boss contexts should also require healer coverage intent before slide movement");
 
-    AssertTrue(
+    AssertFalse(
         HealerAoePositioningController.ShouldSuppressSlideWindowCoverage(
-            slidecastWindow: true),
-        "many missing party members should still wait for instant movement instead of slidecast stepping");
+            slidecastWindow: true,
+            intentfulCoverageMove: true),
+        "many missing party members should count as healer coverage intent");
 
     AssertTrue(
         HealerAoePositioningController.ShouldSuppressSlideWindowCoverage(
-            slidecastWindow: true),
+            slidecastWindow: true,
+            intentfulCoverageMove: false),
         "mechanic positioning without coverage intent should not allow slidecast stepping");
 
     AssertTrue(

@@ -14,6 +14,7 @@ internal sealed class EscapeGapCloserController(
     BossModReflectionSafety bossModSafety,
     MobilityDecisionEvaluator mobilityEvaluator,
     GapCloserController gapCloserController,
+    EnemyMovementTracker enemyMovementTracker,
     DashStyleController dashStyleController,
     FacingController facingController,
     Func<Positional> positionalIntent,
@@ -36,6 +37,7 @@ internal sealed class EscapeGapCloserController(
         this.escapeDangerDetectedAt = DateTime.MinValue;
         this.lastEscapeGapCloserSafety = "not checked";
         this.lastSafeEscapeDestination = null;
+        enemyMovementTracker.Reset();
     }
 
     public unsafe bool TryUseEscapeGapCloser()
@@ -284,6 +286,12 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
+        var currentPositionUnsafe = bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out _) && !currentSafe;
+        var safeMovementDistance = Geometry.Distance2D(player.Position, safeMovementDestination);
+        var movement = bossModMovementDiagnostics();
+        var conservativeSingleCharge = IsConservativeFriendlyEscapeDash(actionId);
+        var currentCharges = ActionUse.GetCurrentCharges(actionId);
+
         if (dashStyleController.EscapeStyleActive)
         {
             var styleCandidates = new List<DashStyleCandidate<IBattleChara>>();
@@ -307,6 +315,31 @@ internal sealed class EscapeGapCloserController(
                     continue;
                 }
 
+                var uptimeRelayAvailable = this.TryEvaluateFriendlyEscapeUptimeRelay(
+                    player,
+                    ally,
+                    services.TargetManager.Target as IBattleChara,
+                    maxRange,
+                    currentCharges,
+                    out var uptimeRelayReason);
+                if (!GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+                    decision.MoveDistance,
+                    config.MinimumGapCloserDistance,
+                    decision.PathGain,
+                    uptimeRelayAvailable,
+                    uptimeRelayReason,
+                    conservativeSingleCharge,
+                    currentPositionUnsafe,
+                    safeMovementDistance,
+                    movement,
+                    out var anchorReason))
+                {
+                    this.lastEscapeGapCloserSafety = anchorReason;
+                    mobilityEvaluator.RecordIdle(MobilityIntent.Safety, actionName, anchorReason);
+                    continue;
+                }
+
+                var candidateReason = uptimeRelayAvailable ? uptimeRelayReason : "ally anchor";
                 styleCandidates.Add(dashStyleController.ScoreCandidate(
                     ally,
                     player,
@@ -314,7 +347,7 @@ internal sealed class EscapeGapCloserController(
                     services.TargetManager.Target as IBattleChara,
                     safeMovementDestination,
                     decision,
-                    "ally anchor"));
+                    candidateReason));
             }
 
             if (dashStyleController.TrySelectBest(styleCandidates, out var selected))
@@ -362,6 +395,31 @@ internal sealed class EscapeGapCloserController(
                 continue;
             }
 
+            var uptimeRelayAvailable = this.TryEvaluateFriendlyEscapeUptimeRelay(
+                player,
+                ally,
+                services.TargetManager.Target as IBattleChara,
+                maxRange,
+                currentCharges,
+                out var uptimeRelayReason);
+            if (!GapCloserDecisionPolicy.ShouldUseFriendlyEscapeAnchorDash(
+                decision.MoveDistance,
+                config.MinimumGapCloserDistance,
+                decision.PathGain,
+                uptimeRelayAvailable,
+                uptimeRelayReason,
+                conservativeSingleCharge,
+                currentPositionUnsafe,
+                safeMovementDistance,
+                movement,
+                out var anchorReason))
+            {
+                this.lastEscapeGapCloserSafety = anchorReason;
+                mobilityEvaluator.RecordIdle(MobilityIntent.Safety, actionName, anchorReason);
+                continue;
+            }
+
+            var candidateReason = uptimeRelayAvailable ? uptimeRelayReason : "ally anchor";
             candidates.Add(dashStyleController.ScoreCandidate(
                 ally,
                 player,
@@ -369,7 +427,7 @@ internal sealed class EscapeGapCloserController(
                 services.TargetManager.Target as IBattleChara,
                 safeMovementDestination,
                 decision,
-                "ally anchor"));
+                candidateReason));
         }
 
         if (dashStyleController.TrySelectBest(candidates, out var selectedAnchor))
@@ -393,6 +451,39 @@ internal sealed class EscapeGapCloserController(
         }
 
         return false;
+    }
+
+    private bool TryEvaluateFriendlyEscapeUptimeRelay(
+        IBattleChara player,
+        IBattleChara ally,
+        IBattleChara? target,
+        float maxRange,
+        uint currentCharges,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (target is not IBattleNpc battleNpc ||
+            battleNpc.BattleNpcKind != BattleNpcSubKind.Combatant ||
+            battleNpc.GameObjectId == 0 ||
+            battleNpc.IsDead ||
+            battleNpc.CurrentHp <= 0)
+        {
+            reason = "ally relay needs attackable target";
+            return false;
+        }
+
+        var currentTargetDistance = Geometry.DistanceToHitbox(player.Position, player.HitboxRadius, battleNpc.Position, battleNpc.HitboxRadius);
+        var anchorTargetDistance = Geometry.DistanceToHitbox(ally.Position, player.HitboxRadius, battleNpc.Position, battleNpc.HitboxRadius);
+        var finalTargetMoving = enemyMovementTracker.ObserveMoving(battleNpc.GameObjectId, battleNpc.Position, DateTime.UtcNow, out var finalTargetMovementReason);
+        return GapCloserDecisionPolicy.ShouldUseFriendlyEscapeUptimeRelay(
+            player.ClassJob.RowId,
+            currentCharges,
+            finalTargetMoving,
+            finalTargetMovementReason,
+            currentTargetDistance,
+            anchorTargetDistance,
+            maxRange,
+            out reason);
     }
 
     private unsafe bool TryUseLocationEscapeGapCloser(uint actionId, float maxRange, string actionName, Vector3 safeMovementDestination)
@@ -916,6 +1007,12 @@ internal sealed class EscapeGapCloserController(
             return false;
         }
 
+        if (this.ShouldHoldEnemyTargetDashForMovement(target, actionName, MobilityIntent.Safety, ref this.lastEscapeGapCloserSafety))
+        {
+            this.lastSafeEscapeDestination = null;
+            return false;
+        }
+
         var distanceToHitbox = Geometry.DistanceToHitbox(player.Position, player.HitboxRadius, target.Position, target.HitboxRadius);
         if (distanceToHitbox > maxRange)
         {
@@ -1143,6 +1240,18 @@ internal sealed class EscapeGapCloserController(
         return config.UseGapCloser && config.CombatStyle != CombatStyle.Normal;
     }
 
+    private bool ShouldHoldEnemyTargetDashForMovement(IBattleNpc target, string actionName, MobilityIntent intent, ref string lastSafety)
+    {
+        if (!enemyMovementTracker.ObserveMoving(target.GameObjectId, target.Position, DateTime.UtcNow, out var movementReason))
+        {
+            return false;
+        }
+
+        lastSafety = $"{actionName} held: {movementReason}";
+        mobilityEvaluator.RecordIdle(intent, actionName, lastSafety);
+        return true;
+    }
+
     private static bool IsNinjaMudraWindow(IBattleChara player)
     {
         return player.ClassJob.RowId is 29 or 30 &&
@@ -1156,6 +1265,11 @@ internal sealed class EscapeGapCloserController(
     private static bool HasAnyStatus(IBattleChara player, params uint[] statusIds)
     {
         return player.StatusList.Any(status => status.RemainingTime > 0f && statusIds.Contains(status.StatusId));
+    }
+
+    private static bool IsConservativeFriendlyEscapeDash(uint actionId)
+    {
+        return actionId == ActionUse.SageIcarusActionId;
     }
 
     private static bool TryCalculateTargetBackstepDestination(IBattleChara player, IBattleNpc enemy, float backstepDistance, out Vector3 destination)

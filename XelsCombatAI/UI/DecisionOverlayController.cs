@@ -950,7 +950,7 @@ internal sealed class DecisionOverlayController(
                 DecisionOverlaySource.StarryMuse,
                 state,
                 starryMuse.PlayerInZone ? "Stay in Starry Muse" : "Move into Starry Muse",
-                reason ?? "Pictomancer ground buff",
+                reason ?? "Pictomancer landscape",
                 43,
                 [new(DecisionOverlayShapeKind.Circle, state, starryMuse.ZoneCenter, starryMuse.Radius, 0f, 0f, 0f, "Starry Muse")],
                 starryMuse.PlayerInZone
@@ -2219,7 +2219,7 @@ internal sealed class DecisionOverlayController(
                 : ("Move to safe ground", ReadableDetail(snapshot.Reason, "Defensive ground effect")),
             DecisionOverlaySource.StarryMuse => snapshot.State == DecisionOverlayState.Active
                 ? ("Starry Muse", "Stay in the circle")
-                : ("Return to Starry Muse", "Pictomancer damage circle"),
+                : ("Return to Starry Muse", "Pictomancer landscape circle"),
             DecisionOverlaySource.LeyLines => snapshot.State == DecisionOverlayState.Active
                 ? ("Ley Lines", "Stay in the circle")
                 : ("Return to Ley Lines", ReadableDetail(snapshot.Reason, "Use the return path")),

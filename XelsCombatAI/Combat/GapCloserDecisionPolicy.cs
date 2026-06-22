@@ -20,6 +20,12 @@ internal static class GapCloserDecisionPolicy
     private const float FriendlyAnchorMaximumSafeDestinationLoss = 2f;
     private const float FriendlyAnchorClusterOutlierTolerance = 8f;
     private const float FriendlyAnchorKnockbackRecoveryRangeSlack = 0.5f;
+    private const float FriendlyEscapeMinimumSafetyProgress = 5f;
+    private const float FriendlyEscapeConservativeMinimumSafetyProgress = 8f;
+    private const float FriendlyEscapeRelayMeleeSlack = 0.5f;
+    private const float CurrentGcdLandingRangeSlack = 0.25f;
+    private const float SpareChargeStrongRangeGain = 4f;
+    private const float SpareChargeStrongSafetyOrPathGain = 3f;
     private const float MeleeStackRecoveryClusterRadius = 2.75f;
     private const float MeleeStackRecoveryRangeSlack = 0.5f;
     private const int MeleeStackRecoveryMinimumAllies = 2;
@@ -66,6 +72,67 @@ internal static class GapCloserDecisionPolicy
     public static bool CanWalkToPositionalBeforeGcd(Positional requiredPositional, RsrGcdActionTimingSnapshot action, float moveDistance, out string reason)
     {
         return PositionalTrueNorthPolicy.ShouldWalkInsteadOfTrueNorth(requiredPositional, action, moveDistance, out reason);
+    }
+
+    public static bool ShouldUseReengageDashForCurrentGcd(
+        float landingDistanceToHitbox,
+        float engagementRange,
+        RsrGcdActionTimingSnapshot? action,
+        uint currentCharges,
+        bool currentPositionUnsafe,
+        float safetyGain,
+        float uptimeGain,
+        float pathGain,
+        out string reason)
+    {
+        var effectiveEngagementRange = MathF.Max(0f, engagementRange);
+        var landingRange = effectiveEngagementRange + CurrentGcdLandingRangeSlack;
+        if (landingDistanceToHitbox <= landingRange)
+        {
+            reason = $"landing restores useful range: {landingDistanceToHitbox:0.0}y / {effectiveEngagementRange:0.0}y";
+            return true;
+        }
+
+        var timingReason = "RSR GCD timing unavailable";
+        if (action != null &&
+            AoeRepositionPolicy.HasReliableGcdTiming(action.GcdRemaining, action.GcdElapsed, action.GcdTotal))
+        {
+            var remainingWalkDistance = MathF.Max(0f, landingDistanceToHitbox - effectiveEngagementRange);
+            var requiredSeconds = EstimateWalkSeconds(remainingWalkDistance);
+            var budgetSeconds = PositionalTrueNorthPolicy.CalculateMovementBudgetSeconds(action.GcdRemaining, action.GcdActionAhead);
+            if (requiredSeconds <= budgetSeconds)
+            {
+                reason = string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"landing plus walk reaches range for {action.ActionName} ({remainingWalkDistance:0.0}y needs {requiredSeconds:0.0}s, {budgetSeconds:0.0}s before RSR action window)");
+                return true;
+            }
+
+            timingReason = string.Create(
+                CultureInfo.InvariantCulture,
+                $"landing still misses {action.ActionName} ({landingDistanceToHitbox:0.0}y from target, {requiredSeconds:0.0}s walk, {budgetSeconds:0.0}s before RSR action window)");
+        }
+
+        if (currentPositionUnsafe &&
+            (safetyGain >= SpareChargeStrongSafetyOrPathGain || pathGain >= SpareChargeStrongSafetyOrPathGain))
+        {
+            reason = $"safety dash allowed: {timingReason}; safety gain {safetyGain:0.0}y, path gain {pathGain:0.0}y";
+            return true;
+        }
+
+        if (currentCharges >= 2 &&
+            (uptimeGain >= SpareChargeStrongRangeGain ||
+             safetyGain >= SpareChargeStrongSafetyOrPathGain ||
+             pathGain >= SpareChargeStrongSafetyOrPathGain))
+        {
+            reason = $"spare-charge dash allowed: {timingReason}; uptime gain {uptimeGain:0.0}y, safety gain {safetyGain:0.0}y, path gain {pathGain:0.0}y";
+            return true;
+        }
+
+        reason = currentCharges <= 1
+            ? $"last charge held: {timingReason}"
+            : timingReason;
+        return false;
     }
 
     public static bool CanWalkToBossModSafetyBeforeUrgency(float safeMovementDistance, BossModMovementDiagnostics movement, out string reason)
@@ -172,6 +239,106 @@ internal static class GapCloserDecisionPolicy
         }
 
         reason = $"ally anchor gains {targetGain:0.0}y toward target; direction {directionDot:0.00}";
+        return true;
+    }
+
+    public static bool ShouldUseFriendlyEscapeAnchorDash(
+        float moveDistance,
+        float configuredMinimumMoveDistance,
+        float pathGain,
+        bool uptimeRelayAvailable,
+        string uptimeRelayReason,
+        bool conservativeSingleCharge,
+        bool currentPositionUnsafe,
+        float safeMovementDistance,
+        BossModMovementDiagnostics movement,
+        out string reason)
+    {
+        if (uptimeRelayAvailable)
+        {
+            reason = uptimeRelayReason;
+            return true;
+        }
+
+        var minimumMoveDistance = MathF.Max(0f, configuredMinimumMoveDistance);
+        if (moveDistance < minimumMoveDistance)
+        {
+            reason = $"ally anchor below configured dash distance: {moveDistance:0.0}y / {minimumMoveDistance:0.0}y";
+            return false;
+        }
+
+        var minimumProgress = conservativeSingleCharge
+            ? FriendlyEscapeConservativeMinimumSafetyProgress
+            : FriendlyEscapeMinimumSafetyProgress;
+        if (pathGain < minimumProgress)
+        {
+            reason = $"ally anchor low safety progress: {MathF.Max(0f, pathGain):0.0}y / {minimumProgress:0.0}y";
+            return false;
+        }
+
+        if (conservativeSingleCharge &&
+            currentPositionUnsafe &&
+            CanWalkToBossModSafetyBeforeUrgency(safeMovementDistance, movement, out var walkReason))
+        {
+            reason = $"single-charge ally dash held: {walkReason}";
+            return false;
+        }
+
+        reason = $"ally anchor saves {pathGain:0.0}y toward BMR safety";
+        return true;
+    }
+
+    public static bool ShouldUseFriendlyEscapeUptimeRelay(
+        uint classJobId,
+        uint currentCharges,
+        bool finalTargetMoving,
+        string finalTargetMovementReason,
+        float currentTargetDistance,
+        float anchorTargetDistance,
+        float targetDashRange,
+        out string reason)
+    {
+        if (JobRoles.GetRangeRole(classJobId) != RangeRole.Melee &&
+            !JobRoles.IsTankJob(classJobId))
+        {
+            reason = "ally relay requires a melee or tank job";
+            return false;
+        }
+
+        if (currentCharges < 2)
+        {
+            reason = $"ally relay needs spare dash charge: {currentCharges}";
+            return false;
+        }
+
+        if (finalTargetMoving)
+        {
+            reason = $"ally relay held: {finalTargetMovementReason}";
+            return false;
+        }
+
+        var meleeRange = CombatConstants.MeleeActionRange + FriendlyEscapeRelayMeleeSlack;
+        if (anchorTargetDistance <= meleeRange &&
+            currentTargetDistance > meleeRange)
+        {
+            reason = $"ally relay reaches melee: target {anchorTargetDistance:0.0}y, charges={currentCharges}";
+            return true;
+        }
+
+        var effectiveDashRange = MathF.Max(0f, targetDashRange);
+        if (currentTargetDistance <= effectiveDashRange)
+        {
+            reason = "target already in dash range";
+            return false;
+        }
+
+        if (anchorTargetDistance > effectiveDashRange)
+        {
+            reason = $"ally relay outside target dash range: {anchorTargetDistance:0.0}y / {effectiveDashRange:0.0}y";
+            return false;
+        }
+
+        reason = $"ally relay puts target in dash range: {anchorTargetDistance:0.0}y / {effectiveDashRange:0.0}y, charges={currentCharges}";
         return true;
     }
 

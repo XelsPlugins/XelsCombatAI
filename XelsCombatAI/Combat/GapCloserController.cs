@@ -16,6 +16,7 @@ internal sealed class GapCloserController(
     BossModReflectionSafety bossModSafety,
     JobRangeProvider jobRangeProvider,
     MobilityDecisionEvaluator mobilityEvaluator,
+    EnemyMovementTracker enemyMovementTracker,
     DashStyleController dashStyleController,
     FacingController facingController,
     RotationSolverActionReflection rotationSolverActions,
@@ -40,6 +41,7 @@ internal sealed class GapCloserController(
         this.nextGapCloserAttempt = DateTime.MinValue;
         this.lastGapCloserSafety = "not checked";
         this.lastSafeLandingPosition = null;
+        enemyMovementTracker.Reset();
     }
 
     public unsafe bool TryUseReengageGapCloser()
@@ -669,6 +671,11 @@ internal sealed class GapCloserController(
             return false;
         }
 
+        if (this.ShouldHoldEnemyTargetDashForMovement(currentTarget, request.ActionName, MobilityIntent.Uptime, ref this.lastGapCloserSafety))
+        {
+            return false;
+        }
+
         var pairedReturnTiming = this.TryGetOffensiveGcdTiming(currentTarget, out var returnTiming, out _)
             ? returnTiming
             : null;
@@ -931,6 +938,18 @@ internal sealed class GapCloserController(
                     return false;
                 }
 
+                if (!this.ShouldUseValidatedReengageDash(
+                        actionName,
+                        actionId,
+                        selected.Destination,
+                        currentTarget,
+                        selected.Decision,
+                        reengageTiming))
+                {
+                    this.lastSafeLandingPosition = null;
+                    return false;
+                }
+
                 if (!this.TryCommitGapCloserTarget(currentTarget, out var targetCommitReason))
                 {
                     this.lastGapCloserSafety = targetCommitReason;
@@ -1016,6 +1035,18 @@ internal sealed class GapCloserController(
             }
 
             var anchorLabel = FormatFriendlyReengageAnchorLabel(anchorReason);
+            if (!this.ShouldUseValidatedReengageDash(
+                    actionName,
+                    actionId,
+                    ally.Position,
+                    currentTarget,
+                    decision,
+                    reengageTiming))
+            {
+                this.lastSafeLandingPosition = null;
+                return false;
+            }
+
             if (!this.TryCommitGapCloserTarget(currentTarget, out var targetCommitReason))
             {
                 this.lastGapCloserSafety = targetCommitReason;
@@ -1150,6 +1181,13 @@ internal sealed class GapCloserController(
             return false;
         }
 
+        if (target is IBattleNpc movingTarget &&
+            this.ShouldHoldEnemyTargetDashForMovement(movingTarget, actionName, MobilityIntent.Uptime, ref this.lastGapCloserSafety))
+        {
+            this.lastSafeLandingPosition = null;
+            return false;
+        }
+
         if (!Geometry.TryCalculateTargetDashDestination(player.Position, target.Position, distanceToHitbox, out var destination))
         {
             this.lastGapCloserSafety = "could not calculate dash destination";
@@ -1185,6 +1223,18 @@ internal sealed class GapCloserController(
         }
 
         if (!this.AcceptStyleOpportunity(styleOpportunity, decision, ref this.lastGapCloserSafety))
+        {
+            this.lastSafeLandingPosition = null;
+            return false;
+        }
+
+        if (!this.ShouldUseValidatedReengageDash(
+                actionName,
+                actionId,
+                destination,
+                target as IBattleChara,
+                decision,
+                knownTiming: null))
         {
             this.lastSafeLandingPosition = null;
             return false;
@@ -1298,6 +1348,18 @@ internal sealed class GapCloserController(
             return false;
         }
 
+        if (!this.ShouldUseValidatedReengageDash(
+                actionName,
+                actionId,
+                destination,
+                target as IBattleChara,
+                decision,
+                knownTiming: null))
+        {
+            this.lastSafeLandingPosition = null;
+            return false;
+        }
+
         this.lastSafeLandingPosition = destination;
         var used = ActionManager.Instance()->UseAction(ActionType.Action, actionId, player.GameObjectId);
         mobilityEvaluator.RecordActionResult(decision, used, used ? "action used" : "action failed");
@@ -1331,6 +1393,12 @@ internal sealed class GapCloserController(
             return false;
         }
 
+        if (target is IBattleNpc movingTarget &&
+            this.ShouldHoldEnemyTargetDashForMovement(movingTarget, "Shukuchi", MobilityIntent.Uptime, ref this.lastGapCloserSafety))
+        {
+            return false;
+        }
+
         if (!this.TryFindSafeShukuchiDestination(
                 player,
                 target as IBattleChara,
@@ -1353,6 +1421,17 @@ internal sealed class GapCloserController(
         }
 
         if (!this.AcceptStyleOpportunity(styleOpportunity, decision, ref this.lastGapCloserSafety))
+        {
+            return false;
+        }
+
+        if (!this.ShouldUseValidatedReengageDash(
+                "Shukuchi",
+                ActionUse.NinjaShukuchiActionId,
+                destination,
+                target as IBattleChara,
+                decision,
+                knownTiming: null))
         {
             return false;
         }
@@ -1841,6 +1920,55 @@ internal sealed class GapCloserController(
         return false;
     }
 
+    private bool ShouldUseValidatedReengageDash(
+        string actionName,
+        uint actionId,
+        Vector3 destination,
+        IBattleChara? target,
+        MobilityDecisionDiagnostics decision,
+        RsrGcdActionTimingSnapshot? knownTiming)
+    {
+        var player = services.ObjectTable.LocalPlayer;
+        if (player == null || target == null)
+        {
+            return true;
+        }
+
+        var action = knownTiming;
+        if (action == null &&
+            this.TryGetOffensiveGcdTiming(target, out var nextAction, out _))
+        {
+            action = nextAction;
+        }
+
+        var landingDistanceToHitbox = Geometry.DistanceToHitbox(
+            destination,
+            player.HitboxRadius,
+            target.Position,
+            target.HitboxRadius);
+        var currentCharges = ActionUse.GetCurrentCharges(actionId);
+        var currentPositionUnsafe = bossModSafety.TryIsPositionSafe(player.Position, out var currentSafe, out _) && !currentSafe;
+        var engagementRange = MathF.Max(CombatConstants.MeleeActionRange, jobRangeProvider.EngagementRange);
+        if (GapCloserDecisionPolicy.ShouldUseReengageDashForCurrentGcd(
+                landingDistanceToHitbox,
+                engagementRange,
+                action,
+                currentCharges,
+                currentPositionUnsafe,
+                decision.SafetyGain,
+                decision.UptimeGain,
+                decision.PathGain,
+                out var reason))
+        {
+            return true;
+        }
+
+        this.lastGapCloserSafety = reason;
+        this.lastSafeLandingPosition = null;
+        mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, actionName, reason);
+        return false;
+    }
+
     private bool ShouldHoldOptionalReengageDash(BossModMechanicPressure pressure)
     {
         return pressure.BadForOptionalMovement &&
@@ -2069,6 +2197,11 @@ internal sealed class GapCloserController(
                 continue;
             }
 
+            if (enemyMovementTracker.ObserveMoving(candidate.GameObjectId, candidate.Position, DateTime.UtcNow, out _))
+            {
+                continue;
+            }
+
             var candidateDistance = Geometry.DistanceToHitbox(player.Position, player.HitboxRadius, candidate.Position, candidate.HitboxRadius);
             if (candidateDistance <= CombatConstants.MeleeActionRange || candidateDistance > maxRange)
             {
@@ -2134,6 +2267,18 @@ internal sealed class GapCloserController(
 
     private static bool IsConservativeTrashPullContext(TrashPullDiagnostics trash)
         => GapCloserDecisionPolicy.IsConservativeTrashPullContext(trash);
+
+    private bool ShouldHoldEnemyTargetDashForMovement(IBattleNpc target, string actionName, MobilityIntent intent, ref string lastSafety)
+    {
+        if (!enemyMovementTracker.ObserveMoving(target.GameObjectId, target.Position, DateTime.UtcNow, out var movementReason))
+        {
+            return false;
+        }
+
+        lastSafety = $"{actionName} held: {movementReason}";
+        mobilityEvaluator.RecordIdle(intent, actionName, lastSafety);
+        return true;
+    }
 
     private static bool IsNinjaMudraWindow(IBattleChara player)
     {

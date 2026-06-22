@@ -52,8 +52,9 @@ internal sealed class CombatComposition : IDisposable
         var mobilityDecisionEvaluator = new MobilityDecisionEvaluator(bossModSafety, vnavmesh, jobRangeProvider);
         var arenaEdgePositioningController = new ArenaEdgePositioningController(config, services);
         var dashStyleController = new DashStyleController(config, jobRangeProvider, arenaEdgePositioningController);
+        var enemyMovementTracker = new EnemyMovementTracker();
         var facingController = new FacingController(config, services, bossMod, () => mechanicPressure.Current, manualMovement, new LocalPlayerFacingActuator());
-        var redMageMeleeComboController = new RedMageMeleeComboController(config, services, rotationSolverActions, bossModSafety, mobilityDecisionEvaluator, facingController, () => targetUptimePlanner.CurrentTargetHasBossModule());
+        var redMageMeleeComboController = new RedMageMeleeComboController(config, services, rotationSolverActions, bossModSafety, mobilityDecisionEvaluator, enemyMovementTracker, facingController, () => targetUptimePlanner.CurrentTargetHasBossModule());
         var aoePackPositioningController = new AoePackPositioningController(config, services, rotationSolverActions, () => runtime?.AutomatedMovementSuppressed == true, rotationSolver, () => targetUptimePlanner.CurrentTargetHasBossModule(), jobRangeProvider, () => mechanicPressure.Current);
         targetUptimePlanner.TargetUptimeRangeOverride = () =>
             redMageMeleeComboController.GetTargetUptimeRangeOverride() ??
@@ -77,6 +78,7 @@ internal sealed class CombatComposition : IDisposable
             bossModSafety,
             jobRangeProvider,
             mobilityDecisionEvaluator,
+            enemyMovementTracker,
             dashStyleController,
             facingController,
             rotationSolverActions,
@@ -90,6 +92,7 @@ internal sealed class CombatComposition : IDisposable
             bossModSafety,
             mobilityDecisionEvaluator,
             gapCloserController,
+            enemyMovementTracker,
             dashStyleController,
             facingController,
             () => presetController?.LastPositional ?? Positional.Any,

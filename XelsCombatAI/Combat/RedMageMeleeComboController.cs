@@ -52,6 +52,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
     private readonly RotationSolverActionReflection rotationSolverActions;
     private readonly BossModReflectionSafety bossModSafety;
     private readonly MobilityDecisionEvaluator mobilityEvaluator;
+    private readonly EnemyMovementTracker enemyMovementTracker;
     private readonly FacingController facingController;
     private readonly Func<bool> currentTargetHasBossModule;
 
@@ -86,6 +87,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         RotationSolverActionReflection rotationSolverActions,
         BossModReflectionSafety bossModSafety,
         MobilityDecisionEvaluator mobilityEvaluator,
+        EnemyMovementTracker enemyMovementTracker,
         FacingController facingController,
         Func<bool> currentTargetHasBossModule)
     {
@@ -94,6 +96,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         this.rotationSolverActions = rotationSolverActions;
         this.bossModSafety = bossModSafety;
         this.mobilityEvaluator = mobilityEvaluator;
+        this.enemyMovementTracker = enemyMovementTracker;
         this.facingController = facingController;
         this.currentTargetHasBossModule = currentTargetHasBossModule;
         ActionEffect.ActionEffectEvent += this.OnActionEffect;
@@ -119,6 +122,7 @@ internal sealed class RedMageMeleeComboController : IDisposable
         this.lastCandidateDestination = null;
         this.lastJumpLanding = null;
         this.lastNextActionSource = "none";
+        this.enemyMovementTracker.Reset();
         this.status = this.status with
         {
             Enabled = false,
@@ -214,6 +218,13 @@ internal sealed class RedMageMeleeComboController : IDisposable
         if (!ActionUse.CanUseAction(ActionUse.RedMageCorpsACorpsActionId))
         {
             this.UpdateStatus(decision, "jump rejected: Corps-a-corps unavailable");
+            return false;
+        }
+
+        if (this.enemyMovementTracker.ObserveMoving(target.GameObjectId, target.Position, DateTime.UtcNow, out var movementReason))
+        {
+            this.UpdateStatus(decision, $"jump rejected: {movementReason}");
+            mobilityEvaluator.RecordIdle(MobilityIntent.Uptime, "Corps-a-corps", movementReason);
             return false;
         }
 

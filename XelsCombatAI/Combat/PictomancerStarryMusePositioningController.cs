@@ -33,13 +33,14 @@ internal sealed record PictomancerStarryMuseOverlaySnapshot(
 internal sealed class PictomancerStarryMusePositioningController : IBossModGoalZoneContributor, IDisposable
 {
     private const uint PictomancerJobId = 42;
-    private const float StarryMuseRadius = 5f;
+    // The damage buff is 20s; the landscape/Inspiration window is 30s with a 30y effect range.
+    private const float StarryMuseRadius = 30f;
     private const float PreferredEntryRadius = 1.25f;
     private const float ZoneEntryMargin = 0.75f;
     private const float EstimatedCombatMoveSpeed = 6f;
     private const float WalkArrivalBufferSeconds = 0.2f;
     private const float MinimumStarryMuseSmudgeDistance = 8f;
-    private static readonly TimeSpan StarryMuseDuration = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan StarryMuseLandscapeDuration = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan CachedZoneGrace = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan OverlayRefreshInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan SmudgeAttemptCooldown = TimeSpan.FromMilliseconds(250);
@@ -351,7 +352,7 @@ internal sealed class PictomancerStarryMusePositioningController : IBossModGoalZ
 
             var position = set.Position == default ? source.Position : set.Position;
             var now = DateTime.UtcNow;
-            this.cachedZone = new CachedStarryMuseZone(position, now, now.Add(StarryMuseDuration).Add(CachedZoneGrace));
+            this.cachedZone = new CachedStarryMuseZone(position, now, now.Add(StarryMuseLandscapeDuration).Add(CachedZoneGrace));
         }
         catch (Exception ex)
         {

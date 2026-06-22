@@ -288,6 +288,13 @@ internal sealed class HealerAoePositioningController(
                                  tankbusterHealCoveragePending &&
                                  (plan.DistanceToCenter <= MaxTankCoverageRestoreDistance || urgentHealingCoverage);
         var shouldMove = strongCoverageGain || proactiveCoverageComfort || criticalCoverageCatchUp || partyAoeHealCatchUp || bossCoverageMove || urgentHealingCoverage || boundedTankRestore;
+        var intentfulCoverageMove = strongCoverageGain ||
+                                    criticalCoverageCatchUp ||
+                                    partyAoeHealCatchUp ||
+                                    urgentHealingCoverage ||
+                                    boundedTankRestore ||
+                                    bossCoverageMove ||
+                                    (mechanicPositioningActive && proactiveCoverageComfort);
         var maxMoveDistance = criticalCoverageCatchUp
             ? MaxCriticalCoverageCatchUpMoveDistance
             : partyAoeHealCatchUp || urgentHealingCoverage
@@ -359,7 +366,8 @@ internal sealed class HealerAoePositioningController(
         }
         else if (shouldMove &&
                  ShouldSuppressSlideWindowCoverage(
-                     slidecastWindow))
+                     slidecastWindow,
+                     intentfulCoverageMove))
         {
             shouldMove = false;
             this.evaluatedHealerCoverageGcdWindowId = gcdWindowId;
@@ -393,6 +401,7 @@ internal sealed class HealerAoePositioningController(
                      upcomingGcd?.GcdTotal ?? -1f,
                      slidecastWindow,
                      IsBossModSafetyMovementActive(forcedMovementActive, forbiddenSafetyActive, bossModGoalZoneActive, this.bmrMoveImminent),
+                     intentfulCoverageMove,
                      out var timingSkipReason))
         {
             var coverageDashReason = ResolveCoverageDashReason(
@@ -1375,9 +1384,9 @@ internal sealed class HealerAoePositioningController(
                bestCoveredCount >= Math.Max(1, totalMembers - 1);
     }
 
-    internal static bool ShouldSuppressSlideWindowCoverage(bool slidecastWindow)
+    internal static bool ShouldSuppressSlideWindowCoverage(bool slidecastWindow, bool intentfulCoverageMove)
     {
-        return slidecastWindow;
+        return slidecastWindow && !intentfulCoverageMove;
     }
 
     internal static bool ShouldAllowCoverageDashDuringBossModMovement(
@@ -1509,9 +1518,15 @@ internal sealed class HealerAoePositioningController(
         float gcdTotal,
         bool slidecastWindow,
         bool bossModSafetyMovementActive,
+        bool intentfulCoverageMove,
         out string reason)
     {
         reason = string.Empty;
+        if (intentfulCoverageMove)
+        {
+            return false;
+        }
+
         if (slidecastWindow)
         {
             reason = "healer coverage waits for instant movement instead of slidecast stepping";

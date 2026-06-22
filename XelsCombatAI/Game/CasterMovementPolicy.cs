@@ -106,8 +106,16 @@ internal static class CasterMovementPolicy
             return false;
         }
 
-        var totalCastTime = player.TotalCastTime;
-        var currentCastTime = player.CurrentCastTime;
+        return IsCasterSlidecastWindow(player.IsCasting, player.TotalCastTime, player.CurrentCastTime);
+    }
+
+    internal static bool IsCasterSlidecastWindow(bool playerCasting, float totalCastTime, float currentCastTime)
+    {
+        if (!playerCasting)
+        {
+            return false;
+        }
+
         if (!float.IsFinite(totalCastTime) ||
             !float.IsFinite(currentCastTime) ||
             totalCastTime < MinimumCastTimeForSlidecastSeconds)
